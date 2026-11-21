@@ -25,6 +25,7 @@ export function evalTabs(active, datasetId) {
   return `<nav class="ev-catalog-tabs" aria-label="${datasetId ? "Dataset views" : "Evaluation views"}">
     <a href="${root}" ${active === "runs" ? "" : 'aria-current="page"'}>${datasetId ? "Cases" : "Datasets"}</a>
     <a href="${root}?view=runs" ${active === "runs" ? 'aria-current="page"' : ""}>Runs</a>
+    ${datasetId ? "" : '<a href="#evals/replays">Replays</a><a href="#evals/schedules">Schedules</a>'}
   </nav>`;
 }
 

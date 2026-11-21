@@ -208,6 +208,36 @@ app. To run an evaluation from a guardrail hit, expand the finding and choose
 **Evaluate matching turns**. A pre-admission finding with no turn remains visible
 in Guardrails.
 
+### Versioned cases and replays
+
+Expand a batch result and choose **Add to dataset** to keep it as a named case.
+Review the observed output separately from the expected outcome. Choose whether
+to save the request. Editing or archiving a case creates a dataset version.
+Use **View version** to inspect or run a previous snapshot.
+
+Choose **Replay and compare releases** from a dataset version with saved requests.
+Select two activated release revisions. The service admits up to four cases
+through the normal worker pool, with a separate fresh sandbox for each side of
+each case. The saved plain-text request is the replay fixture. The comparison
+shows score changes, available latency and usage, and links to both executions.
+Interrupted runs or provisioning failures appear as incomplete.
+
+### Model judges and schedules
+
+To enable model judges, set `config.observability.eval_model_judges: true` on
+the Helm release and make the configured model credentials available to the
+eval worker. In **Evaluate tagged turns**, save a rubric and choose a granted
+model profile. **Preview judge** runs one selected turn. Judges receive the saved
+response and rubric, and their usage is reported separately. Per-job limits
+bound case count, input bytes and generated tokens. Quota and timeout failures
+appear as evaluator errors and can be rerun.
+
+In **Evals → Schedules**, select a dataset version or a tag, evaluator and
+lookback period. The eval worker uses the ordinary queue and advances a durable
+checkpoint through non-overlapping tag windows. Scheduled jobs use the service
+credential that created the schedule. Expiry or revocation pauses it. The page
+shows the next scheduled run, source limits, recent runs and pause/resume.
+
 Set `OW_EVALS_VOLUME=1` when running the `evals_flow` integration test with an
 isolated PostgreSQL database and the optional Playwright setup. The fixture
 adds 96 synthetic datasets and queues 1,426 jobs through the existing scorer

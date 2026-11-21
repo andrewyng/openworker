@@ -176,7 +176,7 @@ fn principals(p: &[String]) -> Result<()> {
     }
     Ok(())
 }
-fn revision(s: &str) -> Result<()> {
+pub(crate) fn revision(s: &str) -> Result<()> {
     name(s)?;
     let (id, version) = s.split_once('@').ok_or(SubmissionError::InvalidRequest)?;
     ensure!(

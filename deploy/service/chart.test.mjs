@@ -293,4 +293,11 @@ test("eval worker is independently sized and only mounts the execution database"
   assert.doesNotMatch(worker, /mountPath: \/openshell|mountPath: \/models|\/run\/observability|\/run\/telemetry|registry-key|ports:/);
   const disabled = await render({ config, evalWorker: { enabled: false } });
   assert.equal(deployment(disabled, "eval-worker"), undefined);
+  const optedIn = deployment(await render({
+    config: { ...config, observability: { eval_model_judges: true } },
+    secrets: { model: "judge-model", modelRegistry: "model-registry", observability: "recording-db" },
+  }), "eval-worker");
+  assert.match(optedIn, /mountPath: \/models/);
+  assert.match(optedIn, /registry-key/);
+  assert.doesNotMatch(optedIn, /\/openshell|\/run\/observability|\/run\/telemetry/);
 });

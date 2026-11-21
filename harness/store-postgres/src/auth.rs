@@ -692,6 +692,20 @@ impl PostgresStore {
         });
         Ok(store)
     }
+    /// Restore only the scoped credential recorded at admission of a durable job.
+    /// Trusted workers use this internally. Revocation and expiry still apply.
+    pub fn for_background_credential(&self, credential: &str) -> Result<Self> {
+        ensure!(self.auth.is_none(), Error::Forbidden);
+        let credential = credential.to_owned();
+        let digest = self.call(move |db| {
+            Ok(db.client.query_opt("SELECT token_hash FROM api_credentials WHERE id=$1 AND NOT revoked
+                AND ((spec->>'expires_at') IS NULL OR (spec->>'expires_at')::bigint > extract(epoch FROM clock_timestamp()))",
+                &[&credential])?.ok_or(Error::Unauthorized)?.get(0))
+        })?;
+        let mut store = self.clone();
+        store.auth = Some(Context { digest });
+        Ok(store)
+    }
     pub fn authorize(
         &self,
         action: Action,

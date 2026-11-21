@@ -243,7 +243,10 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
             config.observability.is_some(),
             "Enable cluster observability to run evaluations"
         );
-        let service = config.service.context("Service configuration required")?;
+        let service = config
+            .service
+            .clone()
+            .context("Service configuration required")?;
         let readiness = openworker_server_reference::readiness::Readiness::new(Default::default());
         let health = if let Some(address) = health_listen {
             anyhow::ensure!(
@@ -262,7 +265,7 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
             None
         };
         println!("Evaluation worker started");
-        openworker_server_reference::evals::run_worker(db, service, readiness, stop).await;
+        openworker_server_reference::evals::run_worker(db, service, config, readiness, stop).await;
         if let Some(health) = health {
             health.await??;
         }
@@ -407,6 +410,13 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
             )?;
             let listener = tokio::net::TcpListener::bind(listen).await?;
             println!("API {node} ready at http://{}", listener.local_addr()?);
+            let replays = if config.observability.is_some() && !config.recovery_read_only {
+                Some(tokio::spawn(openworker_server_reference::eval_replay::run(
+                    app.clone(),
+                )))
+            } else {
+                None
+            };
             let monitor_stop = stop.child_token();
             let _monitor_guard = monitor_stop.clone().drop_guard();
             let monitor = config.operational_metrics.clone().map(|options| {
@@ -428,6 +438,9 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
                 _=stop.cancelled()=>tokio::time::timeout(std::time::Duration::from_secs(30),serving).await.context("API drain timed out; closing remaining streams")??,
             }
             runtime.shutdown().await?;
+            if let Some(replays) = replays {
+                replays.abort();
+            }
             monitor_stop.cancel();
             if let Some(task) = monitor {
                 let _ = tokio::time::timeout(std::time::Duration::from_secs(6), task).await;

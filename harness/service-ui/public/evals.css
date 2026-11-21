@@ -191,6 +191,7 @@
 .ev-evaluator > .ev-disclosure { margin-top: 11px; }
 .ev-evaluator-lookup { margin-top: 11px; }
 .ev-evaluator-editor { margin-top: 12px; max-width: 460px; }
+.ev-evaluator-editor [hidden], .ev-actions [hidden] { display: none; }
 .ev-selection [role=status]:empty, .ev-selection [role=alert]:empty { display: none; }
 .ev-selection-footer:not([hidden]) {
   display: flex;
@@ -205,6 +206,8 @@
 .ev-case-edit { margin-top: 12px; }
 .ev-case-edit form { margin-top: 12px; max-width: 540px; }
 .ev-case-detail a + a { margin-left: 10px; }
+.ev-replay-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
+.ev-replay-row a { color: #425780; font-weight: 600; }
 .ev-run-selection p { margin: 10px 0; }
 .ev-tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .ev-tag-list > span {

@@ -45,8 +45,16 @@ export function mountEvalSelection(root, { api, query, signal, canRun }) {
           <summary>Save an evaluator</summary>
           <form class="ev-capture ev-evaluator-editor">
             <label>Name<input name="name" maxlength="100" required></label>
-            <label>Check<select name="comparison"><option value="contains">Contains text</option><option value="equals">Exact match</option></select></label>
-            <label>Expected text<textarea name="expected" rows="3" maxlength="4000" required></textarea></label>
+            <label data-judge-option hidden>Evaluator type<select name="kind" aria-label="Evaluator type"><option value="text">Text check</option><option value="judge">Model judge</option></select></label>
+            <div class="ev-capture" data-text-editor>
+              <label>Check<select name="comparison"><option value="contains">Contains text</option><option value="equals">Exact match</option></select></label>
+              <label>Expected text<textarea name="expected" rows="3" maxlength="4000" required></textarea></label>
+            </div>
+            <div class="ev-capture" data-judge-editor hidden>
+              <label>Judge model profile<select name="profile" aria-label="Judge model profile" disabled required></select></label>
+              <label>Rubric<textarea name="rubric" rows="4" maxlength="4000" disabled required></textarea></label>
+              <label>Maximum turns per run<input name="max_cases" type="number" min="1" max="10" value="5" disabled required></label>
+            </div>
             <p class="ev-muted">Saving under the same name creates a new version.</p>
             <div><button class="button" type="submit">Save evaluator</button></div>
           </form>
@@ -56,7 +64,7 @@ export function mountEvalSelection(root, { api, query, signal, canRun }) {
       <p class="ev-error" role="alert"></p>
     </section>
     <section class="ev-section" data-targets aria-label="Matching turns"></section>
-    ${canRun ? '<footer class="ev-section ev-selection-footer" hidden><span class="ev-muted" role="status"></span><button class="button primary" type="button" disabled>Queue evaluation</button></footer>' : ""}`;
+    ${canRun ? '<footer class="ev-section ev-selection-footer" hidden><span class="ev-muted" role="status"></span><div class="ev-actions"><a class="button" data-schedule-link hidden>Schedule</a><button class="button" type="button" data-preview-judge hidden>Preview judge</button><button class="button primary" type="button" data-queue disabled>Queue evaluation</button></div></footer><section class="ev-section" data-judge-preview></section>' : ""}`;
   const $ = (selector) => root.querySelector(selector);
   const filters = $(".ev-selection-filters");
   const results = $("[data-targets]");
@@ -67,15 +75,26 @@ export function mountEvalSelection(root, { api, query, signal, canRun }) {
   const editor = $(".ev-evaluator-editor");
   const message = $(".ev-error");
   const footer = $(".ev-selection-footer");
-  const queue = footer?.querySelector("button");
+  const queue = $("[data-queue]");
+  const judgePreview = $("[data-preview-judge]");
+  const previewResult = $("[data-judge-preview]");
+  const scheduleLink = $("[data-schedule-link]");
+  const versions = new Map();
   const selected = new Set();
   const saveKey = requestKey(), queueKey = requestKey();
   let evaluatorQuery = "", nextEvaluator = null, evaluatorRequest = 0, previewRequest = 0;
-  let filter, turns = [], submitting = false;
+  let filter, turns = [], submitting = false, previewing = false, judgeTimer;
+  signal.addEventListener("abort", () => clearTimeout(judgeTimer), { once: true });
   filters.elements.tag.value = (query.get("tag") || "").slice(0, 138);
   const update = () => {
     if (!queue) return;
-    queue.disabled = submitting || !selected.size || !evaluator.value;
+    const judge = versions.get(evaluator.value)?.judge;
+    queue.disabled = submitting || !selected.size || !evaluator.value || (judge && selected.size > judge.max_cases);
+    judgePreview.hidden = !judge;
+    judgePreview.disabled = !selected.size || previewing;
+    judgePreview.textContent = previewing ? "Previewing…" : "Preview judge";
+    scheduleLink.hidden = !filter || !evaluator.value;
+    if (!scheduleLink.hidden) scheduleLink.href="#evals/schedules?"+new URLSearchParams({tag:filter.tag,evaluator:evaluator.value});
     footer.querySelector("[role=status]").textContent = selected.size + " of " + turns.length + " selected";
   };
   const loadEvaluators = async ({ append = false, select } = {}) => {
@@ -89,11 +108,13 @@ export function mountEvalSelection(root, { api, query, signal, canRun }) {
       if (signal.aborted || current !== evaluatorRequest) return;
       if (!append) evaluator.length = 1;
       for (const entry of page.evaluators) {
+        versions.set(entry.id, entry);
         if (![...evaluator.options].some((option) => option.value === entry.id)) {
           evaluator.add(new Option(entry.name + " · v" + entry.version, entry.id));
         }
       }
       if (select) {
+        versions.set(select.id, select);
         evaluator.value = select.id;
         if (!evaluator.value) {
           evaluator.add(new Option(select.name + " · v" + select.version, select.id));
@@ -178,6 +199,20 @@ export function mountEvalSelection(root, { api, query, signal, canRun }) {
     update();
   }, { signal });
   if (!canRun) return;
+  const switchEditor = () => {
+    const judge = editor.elements.kind.value === "judge";
+    for (const [selector, visible] of [["[data-text-editor]", !judge], ["[data-judge-editor]", judge]]) {
+      const panel = editor.querySelector(selector);
+      panel.hidden = !visible;
+      panel.querySelectorAll("input,select,textarea").forEach((field) => field.disabled = !visible);
+    }
+  };
+  editor.elements.kind.addEventListener("change", switchEditor, { signal });
+  api(evalEndpoint + "/judge-profiles", "GET", undefined, undefined, signal).then(({ profiles }) => {
+    if (signal.aborted || !profiles.length) return;
+    editor.elements.profile.replaceChildren(...profiles.map((profile) => new Option(profile, profile)));
+    editor.querySelector("[data-judge-option]").hidden = false;
+  }).catch(() => {});
   evaluator.addEventListener("change", update, { signal });
   search.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -189,7 +224,12 @@ export function mountEvalSelection(root, { api, query, signal, canRun }) {
     event.preventDefault();
     const button = editor.querySelector("button");
     const data = new FormData(editor);
-    const body = { name: data.get("name").trim(), check: { comparison: data.get("comparison"), expected: data.get("expected") } };
+    const body = { name: data.get("name").trim() };
+    if (data.get("kind") === "judge") {
+      body.judge = { profile: data.get("profile"), instructions: data.get("rubric"), max_cases: Number(data.get("max_cases")) };
+    } else {
+      body.check = { comparison: data.get("comparison"), expected: data.get("expected") };
+    }
     button.disabled = true;
     try {
       const saved = await api(evalEndpoint + "/evaluators", "POST", body, saveKey(body), signal);
@@ -198,6 +238,7 @@ export function mountEvalSelection(root, { api, query, signal, canRun }) {
       search.elements.q.value = saved.name;
       editor.closest("details").open = false;
       editor.reset();
+      switchEditor();
       await loadEvaluators({ select: saved });
     } catch {
       if (!signal.aborted) evaluatorStatus.textContent = "Couldn’t save this evaluator. Check the name and expected text.";
@@ -205,9 +246,43 @@ export function mountEvalSelection(root, { api, query, signal, canRun }) {
       button.disabled = false;
     }
   }, { signal });
+  const selectedTurns = () => turns.filter((_, index) => selected.has(index))
+    .map(({ session_id, turn_id }) => ({ session_id, turn_id }));
+  judgePreview.addEventListener("click", async () => {
+    const body = { evaluator_id: evaluator.value, filter, turns: selectedTurns().slice(0, 1) };
+    previewing = true;
+    update();
+    previewResult.textContent = "Scoring the first selected turn…";
+    const finish = () => { previewing = false; update(); };
+    try {
+      const job = await api(evalEndpoint + "/batches", "POST", body, crypto.randomUUID(), signal);
+      const poll = async () => {
+        try {
+          const current = await api(evalEndpoint + "/batches/" + id(job.id), "GET", undefined, undefined, signal);
+          if (signal.aborted) return;
+          if (current.status !== "completed") {
+            judgeTimer = setTimeout(poll, 1000);
+            return;
+          }
+          const result = current.results[0].result;
+          previewResult.innerHTML = `<div class="ev-empty"><h3>Judge preview · ${esc(evalOutcome(result)[1])}</h3>
+            <p>${esc(result.explanation || "")}</p><p><a href="${jobHref(null, job.id)}">Open preview run ↗</a></p></div>`;
+          finish();
+        } catch {
+          if (signal.aborted) return;
+          previewResult.textContent = "Couldn’t load the judge preview.";
+          finish();
+        }
+      };
+      await poll();
+    } catch {
+      if (signal.aborted) return;
+      previewResult.textContent = "Couldn’t queue the judge preview.";
+      finish();
+    }
+  }, { signal });
   queue.addEventListener("click", async () => {
-    const body = { evaluator_id: evaluator.value, filter, turns: turns
-      .filter((_, index) => selected.has(index)).map(({ session_id, turn_id }) => ({ session_id, turn_id })) };
+    const body = { evaluator_id: evaluator.value, filter, turns: selectedTurns() };
     submitting = true;
     update();
     message.textContent = "";

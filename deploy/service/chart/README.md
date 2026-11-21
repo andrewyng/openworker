@@ -173,8 +173,13 @@ to size it independently. It reads and writes the execution database and exposes
 a loopback readiness check. Set `evalWorker.enabled: false` to pause scoring.
 Submitted jobs stay queued until a worker is available.
 
+Set `config.observability.eval_model_judges: true` to enable model judges.
+The eval worker then receives the chart's configured `secrets.model` and
+`secrets.modelRegistry` references. Existing model profile grants still apply.
+
 Before upgrading an existing release, run the normal execution store migration
-with the new image. This adds checkpoint storage for jobs already queued.
+with the new image. This adds judge claim fields and tables for replays and
+schedules. Checkpoints for jobs already queued are preserved.
 Use the same image revision for the API and eval worker.
 
 ## Azure artifact storage (experimental)

@@ -2,6 +2,8 @@ import { esc } from "./observability-data.js";
 
 import { datasetHref, evalEndpoint as endpoint, evalTabs, jobHref, mountEvalList, runStatus } from "./eval-lists.js";
 import { evalOutcome as outcome, evalSelectionLink, mountEvalSelection } from "./eval-selection.js";
+import { bindReplayForm, mountReplays, replayForm } from "./eval-replay.js";
+import { mountSchedules } from "./eval-schedule.js";
 const id = encodeURIComponent;
 const traceLink = ({ session_id, turn_id }) =>
   `#observability/${id(session_id)}/${id(turn_id)}`;
@@ -165,9 +167,11 @@ function renderDataset(root, dataset, canRun, view) {
     <nav class="ev-breadcrumb" aria-label="Evaluation breadcrumb"><a href="#evals">Evals</a><span aria-hidden="true">/</span><span>${esc(dataset.name)}</span></nav>
     <header class="ev-heading">
       <div><h1>${esc(dataset.name)}</h1><p>${count(dataset.cases.length, "case")} · Version ${dataset.version}</p></div>
-      ${canRun && dataset.cases.length ? '<button class="button primary" type="button" data-ev-run>Run eval</button>' : ""}
+      ${canRun && dataset.cases.length ? `<div class="ev-actions"><a class="button" href="#evals/schedules?${new URLSearchParams({dataset:dataset.id,version:dataset.version})}">Schedule</a>
+        <button class="button primary" type="button" data-ev-run>Run eval</button></div>` : ""}
     </header>
     <p class="ev-error ev-run-error" role="alert"></p>
+    ${canRun && dataset.cases.length ? replayForm() : ""}
     ${evalTabs(view, dataset.id)}
     ${view === "runs" ? '<section class="ev-section" data-eval-list></section>' : `<section class="ev-section" aria-labelledby="ev-cases">
       <div class="ev-section-head"><h2 id="ev-cases">Cases</h2><a href="#observability">Add from trace ↗</a></div>
@@ -219,7 +223,8 @@ function renderJob(root, dataset, job, canRun) {
     </header>
     ${dataset ? "" : `<section class="ev-section ev-run-selection">
       <details class="ev-disclosure"><summary>${job.targets.length} ${job.targets.length === 1 ? "turn" : "turns"} · ${esc(job.selection.tag)}</summary>
-        <p>Check: ${checkLabel(job.evaluator.check)}</p>${textBlock(job.evaluator.check.expected)}
+        ${job.evaluator.judge ? `<p>Judge model · ${esc(job.resolved_model)}</p>${textBlock(job.evaluator.judge.instructions)}`
+          : `<p>Check: ${checkLabel(job.evaluator.check)}</p>${textBlock(job.evaluator.check.expected)}`}
         ${job.selection.from_ms == null ? "" : `<p>Tag applied since ${esc(date(job.selection.from_ms))}</p>`}
         ${job.status === "completed" ? "" : `<ul>${job.targets.map((turn) =>
           `<li><a href="${traceLink(turn)}">${esc(turn.name || "Agent turn")}</a> · ${esc(turn.status)}</li>`).join("")}</ul>`}
@@ -229,13 +234,17 @@ function renderJob(root, dataset, job, canRun) {
       <div class="ev-metrics">${[["passed", "Passed"], ["failed", "Failed"], ["error", "Evaluator errors"]].map(([kind, label]) => `
         <div><span>${label}</span><strong>${states.filter((state) => state === kind).length}</strong></div>`).join("")}</div>
       <section class="ev-section" aria-labelledby="ev-results">
-        <div class="ev-section-head"><h2 id="ev-results">Results</h2></div>
+        <div class="ev-section-head"><h2 id="ev-results">Results</h2>
+          ${canRun && job.evaluator?.judge && states.includes("error") ? '<button type="button" class="button" data-retry-judge>Retry evaluator errors</button>' : ""}</div>
+        <p class="ev-error" role="alert" data-retry-message></p>
         <div class="ev-list">${results.map(({ turn, result }, index) => {
           const entry = cases.get(result.dataset_case);
           return `<details class="ev-case" ${entry ? `data-case="${esc(entry.id)}"` : ""}>
             <summary><span>${entry ? caseName(entry) : esc(turn.name || "Agent turn")}</span>${pill(...outcome(result))}</summary>
             <div class="ev-case-detail">
               ${result.explanation ? `<p class="ev-result-note">${esc(result.explanation)}</p>` : ""}
+              ${result.evaluator.model ? `<p class="ev-muted">Judge · ${esc(result.evaluator.model)} · ${result.evaluator.usage ?
+                `${result.evaluator.usage.input ?? "—"} input tokens · ${result.evaluator.usage.output ?? "—"} output tokens` : "Usage unavailable"}</p>` : ""}
               ${turn.status ? `<p class="ev-muted">Turn status · ${esc(turn.status)}</p>` : ""}
               <div data-ev-evidence>${entry ? '<p class="ev-muted" role="status">Loading captured evidence…</p>' : `<a href="${traceLink(turn)}">Open source turn ↗</a>`}</div>
               ${!dataset && canRun ? `<button class="button ev-case-edit" type="button" data-promote="${index}">Add to dataset</button>` : ""}
@@ -307,6 +316,14 @@ export function mountEvals(root, { api, datasetId, jobId, canRun, query }) {
   }
   async function load() {
     try {
+      if (datasetId === "replays") {
+        mountReplays(root,{api,jobId,signal});
+        return;
+      }
+      if (datasetId === "schedules") {
+        mountSchedules(root,{api,query,canRun,signal});
+        return;
+      }
       if (datasetId === "selection" && !jobId) {
         mountEvalSelection(root, { api, query, signal, canRun });
         return;
@@ -333,6 +350,17 @@ export function mountEvals(root, { api, datasetId, jobId, canRun, query }) {
               root.querySelectorAll("[data-promote]").forEach((button) => button.addEventListener("click", () => {
                 captureEvalCase(root, api, job.results[Number(button.dataset.promote)].turn, signal, job);
               }, { signal }));
+              const retry=root.querySelector("[data-retry-judge]");
+              const retryKey=retry ? crypto.randomUUID() : null;
+              retry?.addEventListener("click",async()=>{
+                retry.disabled=true;
+                try {
+                  const queued=await api(`${endpoint}/batches/${id(job.id)}/retry`,"POST",{},retryKey,signal);
+                  if (!signal.aborted) location.hash=jobHref(null,queued.id);
+                } catch (error) {
+                  if (!signal.aborted) root.querySelector("[data-retry-message]").textContent=errorText(error);
+                } finally { retry.disabled=false; }
+              }, {signal});
             }
             if (job.status !== "completed") timer = setTimeout(poll, 1500);
           } catch (error) { showError(error); }
@@ -341,6 +369,7 @@ export function mountEvals(root, { api, datasetId, jobId, canRun, query }) {
         return;
       }
       renderDataset(root, dataset, canRun, view);
+      bindReplayForm(root.querySelector("[data-replay-config]"),{api,dataset,signal});
       if (view === "runs") loadList();
       else loadCaseEvidence(dataset, canRun && dataset.version === dataset.latest_version);
       root.querySelector(".ev-versions")?.addEventListener("submit", (event) => {

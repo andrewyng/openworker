@@ -292,7 +292,18 @@ impl Manager {
         if path.exists() && crate::platform::linked(&path.symlink_metadata()?) {
             bail!("Credential database cannot be a link");
         }
-        let db = Connection::open(path)?;
+        Self::with_database(
+            Connection::open(path)?,
+            root.canonicalize()?.to_string_lossy().into(),
+        )
+    }
+    pub fn in_memory() -> Result<Self> {
+        Self::with_database(
+            Connection::open_in_memory()?,
+            "ephemeral-model-connections".into(),
+        )
+    }
+    fn with_database(db: Connection, scope: String) -> Result<Self> {
         db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; BEGIN IMMEDIATE;
             CREATE TABLE IF NOT EXISTS connections(id TEXT PRIMARY KEY,label TEXT NOT NULL,identity TEXT NOT NULL,persistence TEXT NOT NULL,secret BLOB);
             CREATE TABLE IF NOT EXISTS settings(id INTEGER PRIMARY KEY CHECK(id=1),value TEXT NOT NULL);")?;
@@ -339,7 +350,7 @@ impl Manager {
         db.execute_batch("COMMIT")?;
         Ok(Self {
             integrations: Default::default(),
-            scope: root.canonicalize()?.to_string_lossy().into(),
+            scope,
             state: Mutex::new(State {
                 db,
                 memory: BTreeMap::new(),

@@ -1,4 +1,5 @@
 {{- if and .Values.evalWorker.enabled (hasKey .Values.config "observability") (not .Values.config.recovery_read_only) }}
+{{- $judge := dig "eval_model_judges" false (.Values.config.observability | default dict) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -32,11 +33,22 @@ spec:
             timeoutSeconds: 3
           securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
           resources: {{ .Values.evalWorker.resources | toYaml | nindent 12 }}
+          {{- if and $judge .Values.secrets.modelRegistry }}
+          env:
+            - name: OPENWORKER_MODEL_REGISTRY_KEY
+              valueFrom: {secretKeyRef: {name: {{ .Values.secrets.modelRegistry | quote }}, key: registry-key}}
+          {{- end }}
           volumeMounts:
             - {name: service, mountPath: /run/service/database-url, subPath: database-url, readOnly: true}
             - {name: service, mountPath: /run/service/pg-ca.crt, subPath: pg-ca.crt, readOnly: true}
             - {name: service, mountPath: /run/service/config.json, subPath: config.json, readOnly: true}
+            {{- if and $judge .Values.secrets.model }}
+            - {name: model, mountPath: /models, readOnly: true}
+            {{- end }}
       volumes:
+        {{- if and $judge .Values.secrets.model }}
+        - {name: model, secret: {secretName: {{ .Values.secrets.model | quote }}, defaultMode: 0440}}
+        {{- end }}
         - name: service
           projected:
             defaultMode: 0440

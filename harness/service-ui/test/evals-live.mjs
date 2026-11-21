@@ -260,6 +260,55 @@ try {
   assert.deepEqual(await page.locator(".ev-metrics strong").allInnerTexts(), ["0", "0", "1"]);
   await capture("eval-versioned-case");
   console.log("Chrome passed promoting a failed turn, retaining evidence, revising and archiving a case, and scoring its old dataset snapshot.");
+  await page.goto(app.url + "/#evals/selection?tag=judge-check");
+  await page.getByRole("button", { name: "Preview turns", exact: true }).click();
+  await page.getByRole("table", { name: "Matching turns" }).waitFor();
+  await page.getByText("Save an evaluator", { exact: true }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Browser rubric");
+  await page.getByLabel("Evaluator type", { exact: true }).selectOption("judge");
+  await page.getByLabel("Judge model profile", { exact: true }).selectOption("judge-fixture");
+  await page.getByLabel("Rubric", { exact: true }).fill("Check the expected link.");
+  await page.getByRole("button", { name: "Save evaluator", exact: true }).click();
+  await page.getByText("Saved Browser rubric · v1.", { exact: true }).waitFor();
+  await page.locator(".ev-target-table tbody tr")
+    .filter({ has: page.locator(`a[href="#observability/${session_id}/${turn_id}"]`) }).getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Preview judge", exact: true }).click();
+  await page.getByRole("heading", { name: "Judge preview · Passed", exact: true }).waitFor();
+  await capture("eval-judge-preview");
+  await page.getByRole("link", { name: "Open preview run" }).click();
+  await page.locator(".ev-case summary").click();
+  await page.getByText("Judge · fixture-judge · 48 input tokens · 12 output tokens", { exact: true }).waitFor();
+  console.log("Chrome passed model judge configuration, single-turn preview, resolved model and reported usage.");
+
+  await page.goto(app.url + "/#evals/replays/" + process.env.OW_EVALS_REPLAY_ID);
+  await page.getByRole("table", { name: "Replay comparison" }).waitFor();
+  await page.getByText("Regression", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("link", { name: "Open execution" }).count(), 2);
+  await capture("eval-replay-comparison");
+  await page.goto(app.url + "/#evals/replays/" + process.env.OW_EVALS_INCOMPLETE_REPLAY_ID);
+  const incompleteTable=page.getByRole("table", {name:"Replay comparison"});
+  await incompleteTable.getByText("Incomplete",{exact:true}).first().waitFor();
+  assert.equal(await incompleteTable.getByText("Failed",{exact:true}).count(),0);
+  console.log("Chrome passed baseline/candidate comparison and links to both executions.");
+
+  await page.goto(app.url + "/#evals/schedules");
+  const periodic=page.locator(".ev-case").filter({hasText:"daily-tags"});
+  await periodic.locator("summary").click();
+  await periodic.getByRole("link", {name:"Open run"}).waitFor();
+  await periodic.getByRole("button", {name:"Pause",exact:true}).click();
+  await periodic.getByText("Paused",{exact:true}).waitFor();
+  await periodic.locator("summary").click();
+  await periodic.getByRole("button", {name:"Resume",exact:true}).click();
+  await periodic.getByText("Active",{exact:true}).waitFor();
+  await page.getByText("New schedule",{exact:true}).click();
+  await page.getByLabel("Name",{exact:true}).fill("Every six hours");
+  await page.getByLabel("Tag",{exact:true}).fill("judge-check");
+  await page.getByLabel("Evaluator",{exact:true}).selectOption({label:"Plans link · v2"});
+  await page.getByLabel("Run every (hours)",{exact:true}).fill("6");
+  await page.getByRole("button",{name:"Save schedule",exact:true}).click();
+  await page.locator(".ev-case summary").filter({hasText:"Every six hours"}).waitFor();
+  await capture("eval-schedules");
+  console.log("Chrome passed creating, pausing and resuming schedules with recent run links.");
   assert.deepEqual(errors, []);
   console.log("Chrome passed trace capture, on-demand execution, three scoring outcomes and source navigation.");
 } finally {

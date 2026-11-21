@@ -26,6 +26,13 @@ pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
             id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL, version INTEGER NOT NULL,
             check_spec JSONB NOT NULL, UNIQUE(owner,name,version)
         );
+        ALTER TABLE eval_evaluators ADD COLUMN IF NOT EXISTS judge_spec JSONB;
+        ALTER TABLE eval_jobs ADD COLUMN IF NOT EXISTS judge_model JSONB;
+        ALTER TABLE eval_jobs ADD COLUMN IF NOT EXISTS judge_lease TEXT;
+        ALTER TABLE eval_jobs ADD COLUMN IF NOT EXISTS judge_until TIMESTAMPTZ;
+        ALTER TABLE eval_jobs ADD COLUMN IF NOT EXISTS judge_attempts INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE eval_jobs ADD COLUMN IF NOT EXISTS judge_credential TEXT;
+        ALTER TABLE eval_jobs ADD COLUMN IF NOT EXISTS judge_retry_of TEXT;
         CREATE TABLE IF NOT EXISTS eval_job_targets(
             job TEXT NOT NULL REFERENCES eval_jobs(id) ON DELETE CASCADE,
             ordinal INTEGER NOT NULL, session_id TEXT NOT NULL, turn_id TEXT NOT NULL,
@@ -50,7 +57,8 @@ pub struct UpdateTag {
 #[serde(deny_unknown_fields)]
 pub struct SaveEvaluator {
     name: String,
-    check: Check,
+    check: Option<Check>,
+    pub judge: Option<crate::eval_judge::Rubric>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -58,7 +66,10 @@ pub(crate) struct SavedEvaluator {
     id: String,
     pub(crate) name: String,
     pub(crate) version: i32,
-    pub(crate) check: Check,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) check: Option<Check>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) judge: Option<crate::eval_judge::Rubric>,
 }
 
 #[derive(Deserialize)]
@@ -75,6 +86,10 @@ impl SavedEvaluator {
             name: row.get("name"),
             version: row.get("version"),
             check: serde_json::from_value(row.get("check_spec"))?,
+            judge: row
+                .get::<_, Option<Value>>("judge_spec")
+                .map(serde_json::from_value)
+                .transpose()?,
         })
     }
 }
@@ -82,19 +97,21 @@ impl SavedEvaluator {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TagFilter {
-    tag: String,
-    from_ms: Option<i64>,
+    pub(crate) tag: String,
+    pub(crate) from_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) before_ms: Option<i64>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Enqueue {
-    evaluator_id: String,
-    filter: TagFilter,
-    turns: Vec<Turn>,
+    pub(crate) evaluator_id: String,
+    pub(crate) filter: TagFilter,
+    pub(crate) turns: Vec<Turn>,
 }
 
-fn validate_tag(tag: &str, allow_guardrail: bool) -> Result<()> {
+pub(crate) fn validate_tag(tag: &str, allow_guardrail: bool) -> Result<()> {
     let guardrail = allow_guardrail && tag.starts_with("guardrail:");
     let id = if guardrail {
         &tag["guardrail:".len()..]
@@ -122,6 +139,11 @@ impl TagFilter {
                 .is_none_or(|from| (0..=MAX_TIME).contains(&from)),
             SubmissionError::InvalidRequest
         );
+        ensure!(
+            self.before_ms
+                .is_none_or(|before| (self.from_ms.unwrap_or(0)..=MAX_TIME).contains(&before)),
+            SubmissionError::InvalidRequest
+        );
         Ok(())
     }
 }
@@ -143,7 +165,7 @@ fn candidates(
     let sql = format!(
         "WITH tagged AS (
             SELECT session_id, NULLIF(turn_id,'') AS turn_id, assigned_ms
-            FROM eval_tags WHERE tag=$1 AND assigned_ms >= $2
+            FROM eval_tags WHERE tag=$1 AND assigned_ms >= $2 AND assigned_ms < $7
             UNION ALL
             SELECT a.session_id, COALESCE(e.turn_id,s.turn_id), (extract(epoch FROM a.created)*1000)::bigint
             FROM events e JOIN audit a USING(session_id,cursor)
@@ -152,6 +174,7 @@ fn candidates(
             WHERE starts_with($1,'guardrail:') AND e.kind='safety_evaluation'
               AND a.kind='safety_evaluation' AND e.data->>'check'=substring($1 from 11)
               AND a.created >= TIMESTAMPTZ 'epoch'+$2*INTERVAL '1 millisecond'
+              AND a.created < TIMESTAMPTZ 'epoch'+$7*INTERVAL '1 millisecond'
               AND COALESCE(e.turn_id,s.turn_id) IS NOT NULL
               AND ({NORMALIZED_OUTCOME}) IN {HIT_OUTCOMES}
         ), eligible AS (
@@ -183,6 +206,7 @@ fn candidates(
             &principal.principal,
             &selected,
             &i64::from(MAX_CASES + 1),
+            &filter.before_ms.unwrap_or(MAX_TIME),
         ],
     )?)
 }
@@ -280,7 +304,7 @@ impl PostgresStore {
             let mut tx = db.client.transaction()?;
             let p = identity(&mut tx, db.auth.as_ref(), Action::Read, None)?;
             let rows = tx.query(
-                "SELECT DISTINCT ON (name) id,name,version,check_spec FROM eval_evaluators
+                "SELECT DISTINCT ON (name) id,name,version,check_spec,judge_spec FROM eval_evaluators
                  WHERE owner=$1 AND ($2='' OR strpos(lower(name),lower($2))>0)
                    AND ($3::text IS NULL OR name>(SELECT name FROM eval_evaluators WHERE owner=$1 AND id=$3))
                  ORDER BY name,version DESC LIMIT 21",
@@ -301,30 +325,40 @@ impl PostgresStore {
                 && name == openworker_runtime::telemetry::redact(&name),
             SubmissionError::InvalidRequest
         );
-        validate_check(&request.check)?;
+        ensure!(
+            request.check.is_some() != request.judge.is_some(),
+            SubmissionError::InvalidRequest
+        );
+        if let Some(check) = &request.check {
+            validate_check(check)?;
+        }
+        if let Some(rubric) = &request.judge {
+            rubric.validate()?;
+        }
         self.call(move |db| {
             let mut tx = db.client.transaction()?;
             let p = identity(&mut tx, db.auth.as_ref(), Action::Submit, None)?;
+            if let Some(rubric)=&request.judge { crate::eval_judge::require_profile(&mut tx,&p,&rubric.profile)?; }
             tx.query_one(
                 "SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))",
                 &[&p.principal, &name],
             )?;
             let spec = json!(request.check);
             tx.execute(
-                "INSERT INTO eval_evaluators(id,owner,name,version,check_spec)
-                 SELECT $1,$2,$3,COALESCE(max(version),0)+1,$4 FROM eval_evaluators
+                "INSERT INTO eval_evaluators(id,owner,name,version,check_spec,judge_spec)
+                 SELECT $1,$2,$3,COALESCE(max(version),0)+1,$4,$5 FROM eval_evaluators
                  WHERE owner=$2 AND name=$3 ON CONFLICT(id) DO NOTHING",
-                &[&id, &p.principal, &name, &spec],
+                &[&id, &p.principal, &name, &spec, &request.judge.as_ref().map(|r|json!(r))],
             )?;
             let row = tx.query_one(
-                "SELECT id,name,version,check_spec,owner FROM eval_evaluators WHERE id=$1",
+                "SELECT id,name,version,check_spec,judge_spec,owner FROM eval_evaluators WHERE id=$1",
                 &[&id],
             )?;
             let saved = SavedEvaluator::from_row(&row)?;
             ensure!(
                 row.get::<_, String>("owner") == p.principal
                     && saved.name == name
-                    && saved.check == request.check,
+                    && saved.check == request.check && saved.judge==request.judge,
                 SubmissionError::Conflict
             );
             tx.commit()?;
@@ -345,7 +379,12 @@ impl PostgresStore {
         })
     }
 
-    pub fn enqueue_tag_eval(&self, id: String, request: Enqueue) -> Result<Value> {
+    pub fn enqueue_tag_eval(
+        &self,
+        id: String,
+        request: Enqueue,
+        judges_enabled: bool,
+    ) -> Result<Value> {
         request.filter.validate()?;
         validate_id(&request.evaluator_id, 100)?;
         ensure!(
@@ -379,9 +418,14 @@ impl PostgresStore {
                 return Ok(summary(&row));
             }
             let evaluator = tx.query_opt(
-                "SELECT id,name,version,check_spec FROM eval_evaluators WHERE id=$1 AND owner=$2", &[&request.evaluator_id,&p.principal],
+                "SELECT id,name,version,check_spec,judge_spec FROM eval_evaluators WHERE id=$1 AND owner=$2", &[&request.evaluator_id,&p.principal],
             )?.ok_or(SubmissionError::NotFound)?;
-            let evaluator = json!(SavedEvaluator::from_row(&evaluator)?);
+            let evaluator = SavedEvaluator::from_row(&evaluator)?;
+            let judge_model = if let Some(rubric)=&evaluator.judge {
+                ensure!(judges_enabled && request.turns.len()<=usize::from(rubric.max_cases), SubmissionError::InvalidRequest);
+                crate::eval_judge::require_profile(&mut tx,&p,&rubric.profile)?;
+                Some(json!(crate::model_registry::resolve_profile(&mut tx,&rubric.profile)?.selection))
+            } else { None };
             let matched = candidates(&mut tx, &p, &request.filter, Some(&request.turns))?;
             ensure!(matched.len()==request.turns.len(), SubmissionError::Conflict);
             let mut inputs = std::collections::HashMap::new();
@@ -390,14 +434,20 @@ impl PostgresStore {
                 inputs.insert((row.get::<_,String>("session_id"),row.get::<_,String>("turn_id")), input);
             }
             let inserted = tx.query_one(
-                "INSERT INTO eval_jobs(id,version,created_ms,owner,selection,evaluator)
-                 VALUES($1,$2,(extract(epoch FROM clock_timestamp())*1000)::bigint,$3,$4,$5)
+                "INSERT INTO eval_jobs(id,version,created_ms,owner,selection,evaluator,judge_model,judge_credential)
+                 VALUES($1,$2,(extract(epoch FROM clock_timestamp())*1000)::bigint,$3,$4,$5,$6,$7)
                  RETURNING id,version,created_ms,FALSE AS ready",
-                &[&id,&(request.turns.len() as i32),&p.principal,&selection,&evaluator],
+                &[&id,&(request.turns.len() as i32),&p.principal,&selection,&json!(evaluator),&judge_model,
+                    &judge_model.as_ref().map(|_|&p.credential_id)],
             )?;
+            let mut judge_input_bytes = 0;
             for (index, turn) in request.turns.into_iter().enumerate() {
                 auth::guard(&mut tx, db.auth.as_ref(), Action::Submit, Some(&turn.session_id), None)?;
                 let evidence = capture(&mut tx, turn, false)?;
+                if let Some(rubric)=&evaluator.judge {
+                    judge_input_bytes += rubric.instructions.len() + evidence.output.as_ref().map_or(0,String::len);
+                    ensure!(judge_input_bytes<=crate::eval_judge::MAX_JOB_BYTES,SubmissionError::InvalidRequest);
+                }
                 let source = &inputs[&(evidence.turn.session_id.clone(),evidence.turn.turn_id.clone())];
                 tx.execute("INSERT INTO eval_job_targets(job,ordinal,session_id,turn_id,source,output)
                     VALUES($1,$2,$3,$4,$5,$6)", &[&id,&(index as i32 + 1),&evidence.turn.session_id,
@@ -414,7 +464,7 @@ impl PostgresStore {
             let mut tx = db.client.transaction()?;
             let p = identity(&mut tx, db.auth.as_ref(), Action::Read, None)?;
             let row = tx.query_opt(
-                "SELECT id,version,created_ms,results IS NOT NULL AS ready,selection,evaluator,results,processed
+                "SELECT id,version,created_ms,results IS NOT NULL AS ready,selection,evaluator,results,processed,judge_model->>'model' AS resolved_model
                  FROM eval_jobs WHERE dataset IS NULL AND id=$1 AND ($2 OR owner=$3)",
                 &[&id,&(p.scope==Scope::All),&p.principal],
             )?.ok_or(SubmissionError::NotFound)?;
@@ -422,11 +472,43 @@ impl PostgresStore {
             job.as_object_mut().unwrap().remove("dataset_version");
             job["selection"] = row.get("selection");
             job["evaluator"] = row.get("evaluator");
+            job["resolved_model"] = json!(row.get::<_,Option<String>>("resolved_model"));
             job["progress"] = json!({"completed":row.get::<_,i32>("processed"),"total":row.get::<_,i32>("version")});
             job["targets"] = json!(tx.query("SELECT source FROM eval_job_targets WHERE job=$1 ORDER BY ordinal",
                 &[&id])?.iter().map(|r| r.get::<_,Value>(0)).collect::<Vec<_>>());
             job["results"] = row.get::<_,Option<Value>>("results").unwrap_or(Value::Null);
             Ok(job)
+        })
+    }
+
+    pub fn retry_eval_judge(&self, id: String, original: String) -> Result<Value> {
+        validate_id(&original, 100)?;
+        self.call(move|db|{
+            let mut tx=db.client.transaction()?;
+            let p=identity(&mut tx,db.auth.as_ref(),Action::Submit,None)?;
+            let row=tx.query_opt("SELECT selection,evaluator,judge_model,results FROM eval_jobs
+                WHERE id=$1 AND owner=$2 AND judge_model IS NOT NULL AND results IS NOT NULL",
+                &[&original,&p.principal])?.ok_or(SubmissionError::NotFound)?;
+            let evaluator:SavedEvaluator=serde_json::from_value(row.get(1))?;
+            let rubric=evaluator.judge.as_ref().ok_or(SubmissionError::InvalidRequest)?;
+            crate::eval_judge::require_profile(&mut tx,&p,&rubric.profile)?;
+            let inserted=tx.execute("INSERT INTO eval_jobs(id,version,created_ms,owner,selection,evaluator,judge_model,judge_credential,judge_retry_of)
+                SELECT $1,count(*)::int,(extract(epoch FROM clock_timestamp())*1000)::bigint,$2,$3,$4,$5,$6,$7
+                FROM jsonb_array_elements($8::jsonb) r WHERE r->'result'->>'status'='error'
+                HAVING count(*)>0 ON CONFLICT(id) DO NOTHING",
+                &[&id,&p.principal,&row.get::<_,Value>(0),&json!(evaluator),&row.get::<_,Value>(2),&p.credential_id,&original,&row.get::<_,Value>(3)])?;
+            let found=tx.query_opt("SELECT owner,judge_retry_of FROM eval_jobs WHERE id=$1",&[&id])?
+                .ok_or(SubmissionError::InvalidRequest)?;
+            ensure!(found.get::<_,String>(0)==p.principal && found.get::<_,Option<String>>(1).as_deref()==Some(original.as_str()),
+                SubmissionError::Conflict);
+            if inserted>0 {
+                tx.execute("INSERT INTO eval_job_targets(job,ordinal,session_id,turn_id,source,output)
+                    SELECT $1,row_number() OVER (ORDER BY t.ordinal)::int,t.session_id,t.turn_id,t.source,t.output
+                    FROM eval_job_targets t WHERE t.job=$2 AND ($3::jsonb->(t.ordinal-1))->'result'->>'status'='error'",
+                    &[&id,&original,&row.get::<_,Value>(3)])?;
+            }
+            tx.commit()?;
+            Ok(json!({"id":id}))
         })
     }
 }

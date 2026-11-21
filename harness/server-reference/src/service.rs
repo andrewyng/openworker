@@ -49,8 +49,14 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
     }
     let p = path.split('/').collect::<Vec<_>>();
     match (method, p.as_slice()) {
-        ("GET", ["", "v1", "evals", "datasets" | "runs" | "evaluators" | "candidates"])
+        (
+            "GET",
+            ["", "v1", "evals", "datasets" | "runs" | "evaluators" | "candidates" | "judge-profiles"],
+        )
         | ("GET", ["", "v1", "evals", "tags" | "batches", _])
+        | ("GET", ["", "v1", "evals", "replays"])
+        | ("GET", ["", "v1", "evals", "schedules"])
+        | ("GET", ["", "v1", "evals", "replays", _])
         | ("GET", ["", "v1", "evals", "tags", _, _])
         | ("GET", ["", "v1", "evals", "datasets", _])
         | ("GET", ["", "v1", "evals", "datasets", _, "cases" | "jobs", _])
@@ -59,6 +65,10 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
         | ("POST", ["", "v1", "evals", "tags", _])
         | ("POST", ["", "v1", "evals", "tags", _, _])
         | ("POST", ["", "v1", "evals", "datasets", _, "cases", _])
+        | ("POST", ["", "v1", "evals", "datasets", _, "replays"])
+        | ("POST", ["", "v1", "evals", "schedules"])
+        | ("POST", ["", "v1", "evals", "schedules", _])
+        | ("POST", ["", "v1", "evals", "batches", _, "retry"])
         | ("POST", ["", "v1", "evals", "datasets", _, "jobs"]) => Some(Action::Submit),
         ("GET" | "POST", ["", "v1", "model-providers"])
         | ("POST", ["", "v1", "model-providers", _, "rotate" | "disable"])
@@ -156,8 +166,30 @@ pub(crate) fn router() -> Router<App> {
             get(crate::evals::evaluators).post(crate::evals::save_evaluator),
         )
         .route("/v1/evals/candidates", get(crate::evals::candidates))
+        .route(
+            "/v1/evals/judge-profiles",
+            get(crate::evals::judge_profiles),
+        )
         .route("/v1/evals/batches", post(crate::evals::enqueue_tagged))
         .route("/v1/evals/batches/:id", get(crate::evals::tagged_job))
+        .route(
+            "/v1/evals/batches/:id/retry",
+            post(crate::evals::retry_judge),
+        )
+        .route("/v1/evals/replays", get(crate::eval_replay::list))
+        .route("/v1/evals/replays/:id", get(crate::eval_replay::get))
+        .route(
+            "/v1/evals/datasets/:id/replays",
+            post(crate::eval_replay::enqueue),
+        )
+        .route(
+            "/v1/evals/schedules",
+            get(crate::evals::schedules).post(crate::evals::save_schedule),
+        )
+        .route(
+            "/v1/evals/schedules/:id",
+            post(crate::evals::schedule_state),
+        )
         .route(
             "/v1/model-providers",
             get(crate::model_registry::catalog).post(crate::model_registry::register),

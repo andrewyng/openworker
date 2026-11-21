@@ -19,6 +19,8 @@ pub struct Options {
     pub queue_capacity: usize,
     #[serde(default = "retention")]
     pub retention_days: u16,
+    #[serde(default)]
+    pub eval_model_judges: bool,
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

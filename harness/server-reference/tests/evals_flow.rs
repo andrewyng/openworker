@@ -4,6 +4,7 @@ use openworker_runtime::{
     model::Model,
     runtime::Runtime,
     safety::{Action, Config as SafetyConfig, Guardrails, Rule},
+    store::StateStore,
 };
 use openworker_server_reference::{http::App, Config};
 use openworker_store_postgres::{
@@ -74,6 +75,10 @@ async fn run_turn(
         )
         .await
         .unwrap();
+    wait_for_turn(runtime, sid, expected).await
+}
+
+async fn wait_for_turn(runtime: &Runtime, sid: &str, expected: &str) -> Value {
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             let session = runtime.store.lock().unwrap().metadata(sid).unwrap();
@@ -196,14 +201,14 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
         },
         ..Default::default()
     };
-    let configuration = json!({
+    let mut configuration = json!({
         "database_env": env, "schema": schema, "database_loopback_plaintext": true,
         "state_root":path, "bundle":installed, "runner":runner, "model":"unused",
         "api_token_file":"unused", "actor":"admin",
-        "openshell":{"identity":"unused","endpoint":"https://127.0.0.1:1","certificates":"unused","workspace":"unused","image":"unused"},
+        "openshell":{"identity":"unused","endpoint":"https://127.0.0.1:1","certificates":"unused","workspace":"unused","image":format!("example.invalid/replay@sha256:{}","a".repeat(64))},
         "service":{"id":"eval-qualification","namespace":"test","agent":"page-editor"},
         "safety":safety,
-        "observability":{"schema":recording_schema}
+        "observability":{"schema":recording_schema,"eval_model_judges":true}
     });
     let config: Config = serde_json::from_value(configuration.clone()).unwrap();
     let config_path = path.join("eval-service.json");
@@ -225,7 +230,24 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
                     expires_at: Some((openworker_runtime::store::now_ms() / 1000 + 3600) as i64),
                 },
                 token,
-                Grants::default(),
+                Grants {
+                    model_profiles: if name == "app_editor" {
+                        vec!["judge-fixture".into()]
+                    } else {
+                        vec![]
+                    },
+                    models: if name == "app_editor" {
+                        ["page-editor", "replay-candidate"]
+                            .into_iter()
+                            .map(|model| {
+                                openworker_runtime::connections::Choice::new("fixture", model)
+                            })
+                            .collect()
+                    } else {
+                        vec![]
+                    },
+                    ..Default::default()
+                },
             )
             .unwrap();
     }
@@ -233,6 +255,18 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     let (model_url, model_task) = listen(Router::new().route("/v1/chat/completions", post(|Json(body): Json<Value>| async move {
         let request = body["messages"].as_array().unwrap().iter().rev()
             .find(|item| item["role"] == "user").unwrap()["content"].to_string();
+        if body["model"]=="fixture-judge" {
+            assert_eq!(body["max_tokens"], 256);
+            if request.contains("quota-fixture") {
+                return (axum::http::StatusCode::TOO_MANY_REQUESTS, [("content-type","application/json")],
+                    r#"{"error":{"message":"Model fixture quota exhausted"}}"#.into());
+            }
+            if request.contains("timeout-fixture") { tokio::time::sleep(Duration::from_secs(30)).await; }
+            let passed=request.contains("/pricing");
+            let response=json!({"passed":passed,"explanation":if passed { "Matches the expected link." } else { "The requested link is missing." }}).to_string();
+            let chunk=json!({"choices":[{"index":0,"delta":{"content":response},"finish_reason":"stop"}],"usage":{"prompt_tokens":48,"completion_tokens":12,"total_tokens":60}});
+            return (axum::http::StatusCode::OK,[("content-type","text/event-stream")],format!("data: {chunk}\n\ndata: [DONE]\n\n"));
+        }
         if request.contains("MODEL_ERROR_FIXTURE") {
             return (axum::http::StatusCode::BAD_REQUEST, [("content-type","application/json")],
                 r#"{"error":{"message":"Synthetic provider failure"}}"#.to_owned());
@@ -241,14 +275,42 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
             "a".repeat(16500)
         } else if request.contains("REDACT_FIXTURE") {
             "Synthetic card 4111111111111111 removed from this response.".into()
-        } else if request.contains("FAIL_FIXTURE") {
+        } else if request.contains("FAIL_FIXTURE") || body["model"]=="replay-candidate" {
             "<header>Field Notes</header>\n<a href=\"/plans\">Plans</a>".into()
         } else {
             "<header>Field Notes</header>\n<a href=\"/pricing\">Plans</a>".into()
         };
-        let chunk = json!({"choices":[{"index":0,"delta":{"content":response},"finish_reason":"stop"}]});
+        let chunk = json!({"choices":[{"index":0,"delta":{"content":response},"finish_reason":"stop"}],
+            "usage":{"prompt_tokens":42,"completion_tokens":18,"total_tokens":60}});
         (axum::http::StatusCode::OK, [("content-type","text/event-stream")], format!("data: {chunk}\n\ndata: [DONE]\n\n"))
     }))).await;
+    std::env::set_var("OW_EVAL_TEST_MODEL_KEY", "disposable-judge-fixture-key");
+    configuration["model_connections"] = json!([{
+        "id":"fixture-judge-connection", "provider":"openai", "identity":"local-fixture-v1", "key_env":"OW_EVAL_TEST_MODEL_KEY",
+        "endpoint":{"api":"chat-completions","baseUrl":format!("{model_url}/v1"),"allowPrivateHttp":true,"contextLimit":4096}
+    }]);
+    let config: Config = serde_json::from_value(configuration.clone()).unwrap();
+    std::fs::write(&config_path, configuration.to_string()).unwrap();
+    let manager = openworker_runtime::connections::Manager::in_memory().unwrap();
+    let route = &config.model_connections[0];
+    manager
+        .register_host_endpoint(
+            &route.id,
+            route.provider,
+            &route.identity,
+            None,
+            route.endpoint.clone(),
+        )
+        .unwrap();
+    let choice = openworker_runtime::connections::Choice::new(&route.id, "fixture-judge");
+    admin
+        .set_profile_binding(
+            "judge-fixture",
+            choice.clone(),
+            Some(manager.resolve(&choice).unwrap()),
+            "fixture-profile-v1",
+        )
+        .unwrap();
 
     let recording_config = config.clone();
     let started = tokio::task::spawn_blocking(move || {
@@ -379,6 +441,8 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
 
     let stop = CancellationToken::new();
     let app = App::new(&config, editor.clone(), store.clone(), stop.clone()).unwrap();
+    let replay_dispatcher =
+        tokio::spawn(openworker_server_reference::eval_replay::run(app.clone()));
     let (url, api_task) = listen(app.router()).await;
     let client = reqwest::Client::new();
     let send = |method, endpoint: String, key: &str, request_id: String| {
@@ -730,6 +794,273 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     assert_eq!(pinned["targets"][0]["turn_id"], failed_turn["turn_id"]);
     assert_eq!(pinned["targets"][1]["turn_id"], pass["turn_id"]);
 
+    let judge =
+        |token: &str, key: &str, instructions: &str| {
+            send(reqwest::Method::POST, "evaluators".into(), token, key.into()).json(&json!({
+            "name":key,"judge":{"profile":"judge-fixture","instructions":instructions,"max_cases":2}
+        }))
+        };
+    assert_eq!(
+        eval_json(get("judge-profiles", EDITOR), 200).await["profiles"],
+        json!(["judge-fixture"])
+    );
+    assert_eq!(
+        eval_json(get("judge-profiles", OTHER), 200).await["profiles"],
+        json!([])
+    );
+    eval_json(judge(OTHER, "other-judge", "Check the expected link."), 403).await;
+    eval_json(tag_request(&pass, EDITOR, "judge-check", true), 200).await;
+    eval_json(tag_request(&fail, EDITOR, "judge-check", true), 200).await;
+    let mut judge_jobs = Vec::new();
+    for (number, rubric) in [
+        "Check that the requested pricing link is present.",
+        "quota-fixture",
+        "timeout-fixture",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let key = format!("judge-fixture-{number}");
+        let saved = eval_json(judge(EDITOR, &key, rubric), 200).await;
+        let turns = if number == 0 {
+            json!([pass, fail])
+        } else {
+            json!([pass])
+        };
+        let queued = eval_json(
+            enqueue_batch(
+                &format!("judge-run-{number}"),
+                &json!({
+                    "evaluator_id":saved["id"],"filter":{"tag":"judge-check"},"turns":turns
+                }),
+            ),
+            202,
+        )
+        .await;
+        judge_jobs.push(format!("batches/{}", queued["id"].as_str().unwrap()));
+    }
+
+    let save_schedule = |name: &str, target: Value| {
+        send(
+            reqwest::Method::POST,
+            "schedules".into(),
+            EDITOR,
+            name.into(),
+        )
+        .json(&json!({"name":name,"every_hours":24,"target":target}))
+    };
+    let tag_schedule = eval_json(
+        save_schedule(
+            "daily-tags",
+            json!({"type":"tags","tag":"judge-check","evaluator_id":first["id"],
+        "lookback_hours":24,"max_cases":1}),
+        ),
+        200,
+    )
+    .await;
+    let dataset_schedule = eval_json(
+        save_schedule(
+            "daily-dataset",
+            json!({"type":"dataset","dataset_id":dataset,"version":3}),
+        ),
+        200,
+    )
+    .await;
+    let change_schedule = |id: &Value, token: &str, enabled: bool| {
+        send(
+            reqwest::Method::POST,
+            format!("schedules/{}", id["id"].as_str().unwrap()),
+            token,
+            "change-schedule".into(),
+        )
+        .json(&json!({"enabled":enabled}))
+    };
+    eval_json(change_schedule(&tag_schedule, OTHER, false), 404).await;
+    eval_json(change_schedule(&tag_schedule, EDITOR, false), 200).await;
+    let tag_schedule_id = tag_schedule["id"].as_str().unwrap().to_owned();
+    let dataset_schedule_id = dataset_schedule["id"].as_str().unwrap().to_owned();
+    let schedules_db = (connection.clone(), schema.clone());
+    let interrupted_schedule = (tag_schedule_id.clone(), json!([pass]));
+    let schedule_end = tokio::task::spawn_blocking(move || {
+        let mut pg = postgres::Client::connect(&schedules_db.0, postgres::NoTls).unwrap();
+        let end: i64 = pg
+            .query_one(
+                "SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint+25",
+                &[],
+            )
+            .unwrap()
+            .get(0);
+        pg.execute(
+            &format!("UPDATE {}.eval_schedules SET next_ms=$1", schedules_db.1),
+            &[&end],
+        )
+        .unwrap();
+        let job=openworker_runtime::bundle::digest(format!("eval.schedule:{}:{end}",interrupted_schedule.0).as_bytes());
+        pg.execute(&format!("INSERT INTO {}.eval_schedule_runs(schedule,end_ms,job_id,turns,clipped) VALUES($1,$2,$3,$4,TRUE)",schedules_db.1),
+            &[&interrupted_schedule.0,&end,&job,&interrupted_schedule.1]).unwrap();
+        pg.execute(&format!("UPDATE {}.eval_schedules SET lease='interrupted-fixture',lease_until=clock_timestamp()-interval '1 second' WHERE id=$1",schedules_db.1),&[&interrupted_schedule.0]).unwrap();
+        end
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        eval_json(get("schedules", OTHER), 200).await["schedules"],
+        json!([])
+    );
+
+    let installed = openworker_server_reference::management::installation(&config).unwrap();
+    let profile = "replay-test@1";
+    admin.catalog_put("replay-profile","profile",json!({"id":profile,"provider":"openshell","cpu":1,"memoryMB":512,"sharing":"exclusive","allowedPrincipals":["app_editor"]}),&installed).unwrap();
+    admin
+        .catalog_activate("activate-replay-profile", "profile", profile, None)
+        .unwrap();
+    for name in ["baseline@1", "candidate@1"] {
+        let model = if name == "baseline@1" {
+            "page-editor"
+        } else {
+            "replay-candidate"
+        };
+        admin.catalog_put(name,"release",json!({"id":name,"instructions":"Return a pricing link.","tools":[],"subagents":{"enabled":true},
+            "runtimeProfiles":[profile],"defaultRuntimeProfile":profile,"allowedPrincipals":["app_editor"],
+            "defaultModel":{"connection":"fixture","model":model}}),&installed).unwrap();
+        admin
+            .catalog_activate(&format!("activate-{name}"), "release", name, None)
+            .unwrap();
+    }
+    let replay_case = eval_json(
+        send(
+            reqwest::Method::POST,
+            "cases".into(),
+            EDITOR,
+            "replay-case".into(),
+        )
+        .json(&json!({
+            "dataset":"Replay pricing","name":"Pricing regression","turn":pass,"include_input":true,
+            "check":{"comparison":"contains","expected":"/pricing"}
+        })),
+        200,
+    )
+    .await;
+    let replay_request=send(reqwest::Method::POST,format!("datasets/{}/replays",replay_case["dataset_id"].as_str().unwrap()),EDITOR,"control-replay".into()).json(&json!({
+        "dataset_version":1,"baseline":"baseline@1","candidate":"candidate@1","runtime_profile":profile
+    }));
+    let replay = eval_json(replay_request.try_clone().unwrap(), 202).await;
+    assert_eq!(eval_json(replay_request, 202).await, replay);
+    let replay_path = format!("replays/{}", replay["id"].as_str().unwrap());
+    eval_json(get(&replay_path, OTHER), 404).await;
+    let operations = tokio::time::timeout(Duration::from_secs(8), async {
+        let mut operations = Vec::new();
+        while operations.len() < 2 {
+            if let Some((op, create)) = store.service_claim().unwrap() {
+                assert!(create);
+                operations.push(op);
+            } else {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+        operations
+    })
+    .await
+    .unwrap();
+    assert!(operations.iter().all(|op| op.project == "eval-replay"));
+    assert_ne!(operations[0].environment_id, operations[1].environment_id);
+    for op in &operations {
+        // The fixture supplies the provisioned environment binding. Admission,
+        // initial task identity and scoring all use the normal service store.
+        let environment = store.clone().environment(&op.environment_id).unwrap();
+        let binding = openworker_runtime::environment::Binding {
+            environment_id: op.environment_id.clone(),
+            spec: environment.spec,
+            remote_id: format!("fixture-{}", op.environment_id),
+            remote_name: op.environment_id.clone(),
+            workspace_scope: "replay-test".into(),
+            policy_hash: "fixture".into(),
+            policy_version: 1,
+        };
+        store
+            .complete_environment(
+                &op.environment_id,
+                environment.revision,
+                Some(binding.clone()),
+            )
+            .unwrap();
+        store
+            .service_update_operation(&op.id, "ready", None)
+            .unwrap();
+        let workspace = tempfile::tempdir_in(&path).unwrap().keep();
+        let session=editor.prepare_session(json!({"name":"Replay fixture","coworker":editor.coworker(),"workspace":workspace,
+            "model":{"connection":"fixture","model":if op.release_id=="candidate@1" {"replay-candidate"} else {"page-editor"}}})).unwrap();
+        // Use a local disposable workspace after the fake gateway admission.
+        store
+            .service_finish(&op.id, session, "eval-qualification", "test")
+            .unwrap();
+        store.claim(&op.session_id).unwrap();
+        let submitted = store.next_turn(&op.session_id).unwrap().unwrap();
+        editor
+            .dispatch("turn/start", serde_json::to_value(submitted).unwrap())
+            .await
+            .unwrap();
+        let turn = wait_for_turn(&editor, &op.session_id, "completed").await;
+        assert_eq!(turn["turn_id"], op.run_id.as_deref().unwrap());
+        store.release(&op.session_id).unwrap();
+    }
+    let comparison = tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let value = eval_json(get(&replay_path, ADMIN), 200).await;
+            if value["runs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r["result"].is_object())
+            {
+                break value;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(comparison["runs"][0]["result"]["passed"], true);
+    assert_eq!(comparison["runs"][1]["result"]["passed"], false);
+    assert!(comparison["runs"][0]["result"]["latency_ms"].is_number());
+    assert_eq!(comparison["runs"][0]["result"]["input_tokens"], 42);
+    assert_eq!(comparison["runs"][1]["result"]["output_tokens"], 18);
+    let incomplete=eval_json(send(reqwest::Method::POST,format!("datasets/{}/replays",replay_case["dataset_id"].as_str().unwrap()),EDITOR,"incomplete-replay".into()).json(&json!({
+        "dataset_version":1,"baseline":"baseline@1","candidate":"candidate@1","runtime_profile":profile
+    })),202).await;
+    let incomplete_path = format!("replays/{}", incomplete["id"].as_str().unwrap());
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            if let Some((op, _)) = store.service_claim().unwrap() {
+                store
+                    .service_update_operation(
+                        &op.id,
+                        "failed",
+                        Some("Synthetic provisioning failure".into()),
+                    )
+                    .unwrap();
+            }
+            let job = eval_json(get(&incomplete_path, EDITOR), 200).await;
+            if job["runs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|row| row["result"]["status"] == "incomplete")
+            {
+                assert!(job["runs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|row| row["result"]["passed"].is_null()));
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .unwrap();
+    replay_dispatcher.abort();
+
     let volume = std::env::var_os("OW_EVALS_VOLUME").is_some();
     if volume {
         let (connection, schema, dataset) = (connection.clone(), schema.clone(), dataset.clone());
@@ -758,6 +1089,8 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
         .unwrap();
     assert_eq!(pending_after_restart["status"], "queued");
 
+    editor.shutdown().await.unwrap();
+    other.shutdown().await.unwrap();
     let mut workers = Vec::new();
     let mut health_addresses = Vec::new();
     for _ in 0..2 {
@@ -880,6 +1213,103 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
         json!([])
     );
 
+    for (index, path) in judge_jobs.iter().enumerate() {
+        let judged = tokio::time::timeout(Duration::from_secs(35), async {
+            loop {
+                let job = eval_json(get(path, EDITOR), 200).await;
+                if job["status"] == "completed" {
+                    break job;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let first = &judged["results"][0]["result"];
+        assert_eq!(first["evaluator"]["model"], "fixture-judge");
+        if index == 0 {
+            assert_eq!(first["score"]["value"], true);
+            assert_eq!(first["evaluator"]["usage"]["input"], 48);
+            assert_eq!(judged["results"][1]["result"]["score"]["value"], false);
+        } else {
+            assert_eq!(first["status"], "error");
+            assert!(first["explanation"]
+                .as_str()
+                .unwrap()
+                .contains(if index == 1 { "quota" } else { "timed out" }));
+        }
+    }
+    let retry = send(
+        reqwest::Method::POST,
+        format!("{}/retry", judge_jobs[1]),
+        EDITOR,
+        "judge-retry".into(),
+    )
+    .json(&json!({}));
+    let retried = eval_json(retry.try_clone().unwrap(), 202).await;
+    assert_eq!(eval_json(retry, 202).await, retried);
+    let retry_job = eval_json(
+        get(
+            &format!("batches/{}", retried["id"].as_str().unwrap()),
+            EDITOR,
+        ),
+        200,
+    )
+    .await;
+    assert_eq!(retry_job["targets"][0]["turn_id"], pass["turn_id"]);
+    assert_eq!(retry_job["evaluator"]["version"], 1);
+    let schedules = eval_json(get("schedules", EDITOR), 200).await;
+    let tagged = schedules["schedules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == tag_schedule_id)
+        .unwrap();
+    let daily = schedules["schedules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == dataset_schedule_id)
+        .unwrap();
+    assert_eq!(tagged["runs"][0]["state"], "pending");
+    assert_eq!(daily["runs"].as_array().unwrap().len(), 1);
+    assert_eq!(daily["runs"][0]["state"], "queued");
+    eval_json(change_schedule(&tag_schedule, EDITOR, true), 200).await;
+    let scheduled = tokio::time::timeout(Duration::from_secs(6), async {
+        loop {
+            let all = eval_json(get("schedules", EDITOR), 200).await;
+            let entry = &all["schedules"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["id"] == tag_schedule_id)
+                .unwrap();
+            if entry["runs"][0]["state"] == "queued" {
+                break (*entry).clone();
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(scheduled["runs"].as_array().unwrap().len(), 1);
+    assert_eq!(scheduled["runs"][0]["end_ms"], schedule_end);
+    assert_eq!(scheduled["runs"][0]["clipped"], true);
+    assert_eq!(scheduled["next_ms"], schedule_end + 86_400_000);
+    let scheduled_job = eval_json(
+        get(
+            &format!(
+                "batches/{}",
+                scheduled["runs"][0]["job_id"].as_str().unwrap()
+            ),
+            EDITOR,
+        ),
+        200,
+    )
+    .await;
+    assert_eq!(scheduled_job["targets"].as_array().unwrap().len(), 1);
+    assert_eq!(scheduled_job["targets"][0]["turn_id"], pass["turn_id"]);
+    assert_eq!(scheduled_job["evaluator"], first);
     if volume {
         // Let the worker fill the historical catalog before capturing it in Chrome.
         tokio::time::timeout(Duration::from_secs(45), async {
@@ -958,6 +1388,11 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
             .env("OW_GUARDRAIL_BLOCKED_SESSION", blocked_sid)
             .env("OW_EVALS_DATASET", &dataset)
             .env("OW_EVALS_JOB", queued["id"].as_str().unwrap())
+            .env("OW_EVALS_REPLAY_ID", replay["id"].as_str().unwrap())
+            .env(
+                "OW_EVALS_INCOMPLETE_REPLAY_ID",
+                incomplete["id"].as_str().unwrap(),
+            )
             .output()
             .await
             .unwrap();
@@ -974,8 +1409,6 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     for mut worker in workers {
         worker.kill().await.unwrap();
     }
-    editor.shutdown().await.unwrap();
-    other.shutdown().await.unwrap();
     api_task.abort();
     model_task.abort();
 }

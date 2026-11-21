@@ -47,10 +47,13 @@ export function allowed(method, path) {
       new RegExp(`^/v1/evals/evidence/${id}/${id}$`).test(p) && new RegExp(`^\\?batch_id=${id}$`).test(u.search));
     const tags = new RegExp(`^/v1/evals/tags/${id}(?:/${id})?$`).test(p);
     if (method === "GET") {
-      return tags || new RegExp(`^/v1/evals/(datasets/${id}(?:/(?:cases|jobs)/${id})?|evidence/${id}/${id}|batches/${id})$`).test(p);
+      return tags || ["/v1/evals/judge-profiles","/v1/evals/replays","/v1/evals/schedules"].includes(p)
+        || new RegExp(`^/v1/evals/(datasets/${id}(?:/(?:cases|jobs)/${id})?|evidence/${id}/${id}|(?:batches|replays)/${id})$`).test(p);
     }
-    return method === "POST" && (tags || ["/v1/evals/cases", "/v1/evals/evaluators", "/v1/evals/batches"].includes(p) ||
-      new RegExp(`^/v1/evals/datasets/${id}/(?:jobs|cases/${id})$`).test(p));
+    return method === "POST" && (tags || ["/v1/evals/cases", "/v1/evals/evaluators", "/v1/evals/batches", "/v1/evals/schedules"].includes(p) ||
+      new RegExp(`^/v1/evals/schedules/${id}$`).test(p) ||
+      new RegExp(`^/v1/evals/batches/${id}/retry$`).test(p) ||
+      new RegExp(`^/v1/evals/datasets/${id}/(?:replays|jobs|cases/${id})$`).test(p));
   }
   if (method === "GET") {
     const list = ["/v1/sessions", "/v1/credentials", "/v1/audit"];
@@ -555,6 +558,8 @@ export async function start(config) {
         "/tracing.css": ["tracing.css", "text/css"],
         "/evals.js": ["evals.js", "text/javascript"],
         "/eval-selection.js": ["eval-selection.js", "text/javascript"],
+        "/eval-replay.js": ["eval-replay.js", "text/javascript"],
+        "/eval-schedule.js": ["eval-schedule.js", "text/javascript"],
         "/eval-lists.js": ["eval-lists.js", "text/javascript"],
         "/evals.css": ["evals.css", "text/css"],
         "/observability.js": ["observability.js", "text/javascript"],

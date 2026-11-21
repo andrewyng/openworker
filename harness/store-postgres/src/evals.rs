@@ -49,6 +49,8 @@ pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
         CREATE INDEX IF NOT EXISTS eval_datasets_owner_name ON eval_datasets(owner,lower(name),id);",
     )?;
     crate::eval_selection::migrate(tx)?;
+    crate::eval_replay::migrate(tx)?;
+    crate::eval_schedule::migrate(tx)?;
     Ok(())
 }
 
@@ -77,6 +79,14 @@ pub enum Match {
 pub struct Check {
     pub comparison: Match,
     pub expected: String,
+}
+impl Check {
+    pub fn passes(&self, output: &str) -> bool {
+        match self.comparison {
+            Match::Contains => output.contains(&self.expected),
+            Match::Equals => output == self.expected,
+        }
+    }
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -639,7 +649,7 @@ impl PostgresStore {
             ensure!(db.auth.is_none(), auth::Error::Forbidden);
             let mut tx = db.client.transaction()?;
             let Some(job) = tx.query_opt(
-                "SELECT id,dataset,version,processed,partial_results,evaluator,COALESCE(target_count,version) FROM eval_jobs WHERE results IS NULL
+                "SELECT id,dataset,version,processed,partial_results,evaluator,COALESCE(target_count,version) FROM eval_jobs WHERE results IS NULL AND judge_model IS NULL
                  ORDER BY created_ms,id LIMIT 1 FOR UPDATE SKIP LOCKED",
                 &[],
             )? else {
@@ -673,13 +683,10 @@ impl PostgresStore {
                 processed = ordinal;
                 let output = row.get::<_, Option<String>>(3);
                 let spec: Check = match &evaluator {
-                    Some(evaluator) => evaluator.check.clone(),
+                    Some(evaluator) => evaluator.check.clone().ok_or_else(|| anyhow::anyhow!("Missing deterministic evaluator"))?,
                     None => serde_json::from_value(row.get(4))?,
                 };
-                let score = output.as_deref().map(|text| Score::Boolean(match spec.comparison {
-                    Match::Contains => text.contains(&spec.expected),
-                    Match::Equals => text == spec.expected,
-                }));
+                let score = output.as_deref().map(|text| Score::Boolean(spec.passes(text)));
                 let missing = score.is_none();
                 let result = Input {
                     id: format!("{id}-{ordinal}"),
