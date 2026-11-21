@@ -25,6 +25,8 @@ Use `responses`, `chat-completions` or `anthropic` for the corresponding wire AP
 
 Register a new provider name to change a route’s URL, wire protocol or context limit. Point `coding` at the new provider or model to change the default for **new sessions**. Existing sessions keep the resolved provider and model. The provider’s context limit caps the compaction window and the requested output after the runtime estimates input size. App grants can allow a named profile or specific provider/model pairs. Granting a profile lets the admin change its default without redeploying the app.
 
+In the Management UI, open **Settings → Models** to create a managed profile or change its model using an installed connection or an enabled provider.
+
 ```sh
 owcluster model-provider list
 owcluster model-provider rotate spark --key-file /path/to/new-inference-key

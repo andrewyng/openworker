@@ -340,6 +340,19 @@ try {
     await row.getByRole("button", { name: "Revoke" }).click();
     await page.locator("#save").click();
     await expect(page.locator("tr").filter({hasText:"app_browser-issued"}).filter({hasText:"Revoked"})).toHaveCount(2);
+    await page.getByRole("button", { name: "Models", exact: true }).click();
+    await page.getByRole("button", { name: "New model profile" }).click();
+    await page.getByLabel("Profile name").fill("coding");
+    await page.getByLabel("Model connection").selectOption("fixture");
+    await page.getByLabel("Model ID").fill("editor-v1");
+    await page.locator("#save").click();
+    const codingProfile = page.getByRole("row").filter({hasText:"coding"});
+    await expect(codingProfile).toContainText("editor-v1");
+    await codingProfile.getByRole("button", { name:"Change model" }).click();
+    await page.getByLabel("Model ID").fill("editor-v2");
+    await page.locator("#save").click();
+    await expect(codingProfile).toContainText("editor-v2");
+    assert.equal((await request(alice, "/v1/model-providers")).status, 403);
     await page.locator("#profile-button").click();
     await page.getByRole("button", { name: "Sign out", exact: true }).click();
     await page

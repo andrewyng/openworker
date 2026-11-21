@@ -294,6 +294,27 @@ pub(crate) async fn admit(
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     admit_kind(app, headers, input, "session").await
 }
+
+pub(crate) fn admission_checks(
+    app: &App,
+    release: &Release,
+    model: Option<&openworker_runtime::connections::Selection>,
+    requested: Option<&openworker_runtime::connections::Choice>,
+    preferences: &openworker_runtime::integrations::Preferences,
+) -> Result<openworker_runtime::safety::Config> {
+    let configured = &app.runtime.integrations;
+    let mut agent_prefs = release.integrations.clone();
+    let mut session_prefs = preferences.clone();
+    configured.model_preference(
+        &mut agent_prefs,
+        release.default_model.as_ref().filter(|choice| {
+            model.is_some_and(|selection| selection.connection == choice.connection)
+        }),
+    )?;
+    configured.model_preference(&mut session_prefs, requested)?;
+    let admission = configured.admit_for_model(&agent_prefs, &session_prefs, model)?;
+    app.runtime.integration_checks(&admission)
+}
 pub(crate) async fn admit_kind(
     app: App,
     headers: HeaderMap,
@@ -331,7 +352,7 @@ pub(crate) async fn admit_with_fixture(
         input
             .runtime_profile
             .clone()
-            .or(r.default_runtime_profile)
+            .or_else(|| r.default_runtime_profile.clone())
             .unwrap_or_else(|| "default".into())
     };
     let profile = match app.store.catalog_get("profile", &profile_id) {
@@ -377,18 +398,13 @@ pub(crate) async fn admit_with_fixture(
             .or(r.default_model.as_ref())
             .map(|c| app.runtime.connections.resolve(c))
             .transpose()?;
-        let configured = &app.runtime.integrations;
-        let mut agent_prefs = r.integrations.clone();
-        let mut session_prefs = input.integrations.clone();
-        configured.model_preference(
-            &mut agent_prefs,
-            r.default_model
-                .as_ref()
-                .filter(|m| model.as_ref().is_some_and(|s| s.connection == m.connection)),
+        let checks = admission_checks(
+            &app,
+            &r,
+            model.as_ref(),
+            input.model.as_ref(),
+            &input.integrations,
         )?;
-        configured.model_preference(&mut session_prefs, input.model.as_ref())?;
-        let pref = configured.admit_for_model(&agent_prefs, &session_prefs, model.as_ref())?;
-        let checks = app.runtime.integration_checks(&pref)?;
         input.initial_message = Some(
             crate::service_safety::inspect_with(&app, None, &request, text, Some(&checks)).await?,
         );

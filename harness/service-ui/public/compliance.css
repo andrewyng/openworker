@@ -82,6 +82,13 @@
 .cp-delivery ul { list-style: none; margin: 0; padding: 0; }
 .cp-delivery li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 9px; border-top: 1px solid var(--line); padding: 8px 2px; }
 .cp-delivery li span, .cp-delivery p { color: var(--muted); }
+.cp-coverage { display: grid; gap: 18px; padding: 14px; }
+.cp-coverage section { min-width: 0; }
+.cp-coverage h2 { margin: 0 0 4px; font-size: 16px; }
+.cp-coverage p { margin: 0 0 9px; color: var(--muted); }
+.cp-coverage .cp-table td { font-variant-numeric: tabular-nums; }
+.cp-coverage .cp-table td strong { overflow-wrap: anywhere; }
+.cp-coverage .cp-pill[data-tone="unavailable"] { color: #81510e; background: #faf1df; }
 @media (max-width: 1080px) {
   .cp-inspecting .cp-app-cell { display: none; }
   .cp-inspecting .cp-mobile-app { display: inline; }

@@ -83,7 +83,7 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
         ("GET", ["", "v1", "compliance", "sessions", _, "activities" | "delivery"]) => {
             Some(Action::ComplianceRead)
         }
-        ("GET", ["", "v1", "compliance", "decisions" | "agents" | "audit"]) => {
+        ("GET", ["", "v1", "compliance", "decisions" | "agents" | "audit" | "coverage"]) => {
             Some(Action::ComplianceRead)
         }
         ("POST", ["", "v1", "compliance", "export"]) => Some(Action::EvidenceExport),
@@ -275,6 +275,10 @@ pub(crate) fn router() -> Router<App> {
         .route(
             "/v1/compliance/audit",
             get(crate::compliance_catalog::audit),
+        )
+        .route(
+            "/v1/compliance/coverage",
+            get(crate::compliance_catalog::coverage),
         )
         .route(
             "/v1/compliance/export",

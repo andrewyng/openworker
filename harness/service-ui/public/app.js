@@ -402,7 +402,7 @@ function agentsPage() {
       "",
       can.publish() ? btn("Publish release", "new-release", true, "plus") : "",
     ) +
-    `<div class="agent-grid">${releases.map((a) => `<article class="card agent-card"><div class="agent-card-top"><span class="row-icon">${icon("agents")}</span><span class="tag">${a.activated ? "Active" : "Unactivated"}</span></div><h2>${esc(a.id)}</h2><p>${esc(a.definition.instructions.slice(0, 160))}</p><div class="agent-card-meta"><span class="tag">${esc(a.definition.defaultModel?.model || "Service default")}</span><span class="tag">${a.definition.tools.length} tools</span></div><div class="agent-card-foot">${btn("Details", "release:" + a.id)}${can.admin() && appAgents.some(row=>row.releaseId===a.id)?btn("Share revision","share-app:"+a.id):""}${can.activate() && !a.activated ? btn("Activate", "activate-release:" + a.id) : ""}${can.run() && a.activated ? btn("Run", "run:" + a.id, true) : ""}</div></article>`).join("")}</div>${releases.length ? "" : empty("No visible agent releases.")}`
+    `<div class="agent-grid">${releases.map((a) => `<article class="card agent-card"><div class="agent-card-top"><span class="row-icon">${icon("agents")}</span><span class="tag">${a.activated ? "Active" : "Unactivated"}</span></div><h2>${esc(a.id)}</h2><p>${esc(a.definition.instructions.slice(0, 160))}</p><div class="agent-card-meta"><span class="tag">${esc(a.definition.modelProfile ? "Model profile · " + a.definition.modelProfile : a.definition.defaultModel?.model || "Service default")}</span><span class="tag">${a.definition.tools.length} tools</span></div><div class="agent-card-foot">${btn("Details", "release:" + a.id)}${can.admin() && appAgents.some(row=>row.releaseId===a.id)?btn("Share revision","share-app:"+a.id):""}${can.activate() && !a.activated ? btn("Activate", "activate-release:" + a.id) : ""}${can.run() && a.activated ? btn("Run", "run:" + a.id, true) : ""}</div></article>`).join("")}</div>${releases.length ? "" : empty("No visible agent releases.")}`
   );
 }
 function sessionList() {
@@ -431,12 +431,26 @@ function infrastructure() {
     `<div class="pool-layout">${pools.map((p) => `<section class="card pool-card"><div class="pool-top"><h2>${esc(p.binding.id)}</h2><span class="tag">${esc(p.binding.ownership)}</span></div><div class="pool-count">${p.desiredReplicas}<small>desired workers</small></div><p class="small-note">${esc(human(p.observed.status || "unknown"))} · ${p.observed.readyReplicas ?? "—"} ready</p><p class="small-note">${esc(p.observed.reason || "")}</p><div class="pool-footer">${btn("Details", "pool:" + p.binding.id)}${can.admin() && p.binding.ownership === "manual" ? btn("Scale", "scale:" + p.binding.id) : ""}</div></section>`).join("") || empty("No registered worker pools.")}</div><div class="section-heading"><h2>Runtime profiles</h2>${can.configure() ? btn("New profile", "new-profile", false, "plus") : ""}</div>${profileTable()}${can.admin() ? `<div class="section-heading activity-heading"><h2>Environments</h2>${btn("View environments", "environments")}</div>` : ""}`
   );
 }
+const hasModelRegistry = () => can.admin() && auth.capabilities.features?.modelRegistry;
+function modelProfiles({ profiles, available }) {
+  return `<div class="section-heading"><h2>Managed model profiles</h2>${available ? btn("New model profile","new-model-profile",true,"plus") : ""}</div>
+    <p class="small-note">Changing a profile updates new sessions using it.</p>
+    ${profiles.length ? `<div class="card table-wrap"><table class="table" aria-label="Managed model profiles">
+      <thead><tr><th>Profile</th><th>Connection</th><th>Model</th><th></th></tr></thead>
+      <tbody>${profiles.map(({name, model}) => `<tr><td>${esc(name)}</td><td>${esc(model.connection)}</td>
+        <td>${esc(model.model)}</td><td>${available ? btn("Change model","edit-model-profile:"+esc(name)) : ""}</td></tr>`).join("")}</tbody></table></div>`
+      : empty(available ? "No managed model profiles." : "No model connections are available.")}`;
+}
+const modelConnections = (catalog) => [...new Set([
+  ...(catalog.installedConnections || []),
+  ...catalog.providers.filter(provider => provider.enabled).map(provider => provider.name),
+])].sort();
 let visibleCredentials=[];
 function settings(value) {
   if(settingsTab === "Access") visibleCredentials = value.credentials || [];
   return (
     head("Settings") +
-    `<div class="tabs">${["Defaults", ...(can.admin() ? ["Access", "Audit"] : []), "Integrations"].map((t) => `<button class="tab ${t === settingsTab ? "active" : ""}" data-settings-tab="${t}">${t}</button>`).join("")}</div><div class="settings-layout">${settingsTab === "Defaults" ? `<div class="settings-section"><div class="setting-row"><span>Admissions</span><span>${value.configuration.admissionsPaused ? "Paused" : "Open"}</span></div><div class="setting-row"><span>Compaction threshold</span><span>${esc(Math.round(value.configuration.compaction.threshold_pct * 100))}%</span></div><div class="setting-row"><span>Environments per principal</span><span>${value.configuration.maxEnvironmentsPerPrincipal}</span></div><div class="setting-row"><span>Revision</span><span>${value.revision}</span></div></div>${can.admin() ? btn("Edit configuration", "configuration", true) : ""}` : settingsTab === "Access" ? `<div class="section-heading"><h2>Service credentials</h2>${btn("Issue token", "issue", true)}</div><div class="card table-wrap"><table class="table"><thead><tr><th>Principal</th><th>Role</th><th>Expires</th><th></th></tr></thead><tbody>${(value.credentials || []).map((c) => `<tr><td>${esc(c.principal || c.spec?.principal || c.id)}</td><td>${esc(c.role || c.spec?.role)}</td><td>${c.expires_at || c.spec?.expires_at ? esc(new Date((c.expires_at || c.spec.expires_at) * 1000).toLocaleString()) : "—"}</td><td>${c.revoked ? "Revoked" : (c.spec?.role==="app"?btn("Rotate","rotate-app:"+c.id):"")+btn("Revoke", "revoke:" + c.id)}</td></tr>`).join("")}</tbody></table></div>${value.next_after ? btn("Next page", "credentials-next:" + value.next_after) : ""}` : settingsTab === "Audit" ? `<details open><summary>Security audit</summary><pre>${esc(pretty(value))}</pre></details>` : `<div class="integration-card"><div><h3>Grafana and Langfuse</h3><p>Export configuration will be added here.</p></div></div>`}</div>`
+    `<div class="tabs">${["Defaults", ...(can.admin() ? ["Access", "Audit"] : []), ...(hasModelRegistry() ? ["Models"] : []), "Integrations"].map((t) => `<button class="tab ${t === settingsTab ? "active" : ""}" data-settings-tab="${t}">${t}</button>`).join("")}</div><div class="settings-layout">${settingsTab === "Defaults" ? `<div class="settings-section"><div class="setting-row"><span>Admissions</span><span>${value.configuration.admissionsPaused ? "Paused" : "Open"}</span></div><div class="setting-row"><span>Compaction threshold</span><span>${esc(Math.round(value.configuration.compaction.threshold_pct * 100))}%</span></div><div class="setting-row"><span>Environments per principal</span><span>${value.configuration.maxEnvironmentsPerPrincipal}</span></div><div class="setting-row"><span>Revision</span><span>${value.revision}</span></div></div>${can.admin() ? btn("Edit configuration", "configuration", true) : ""}` : settingsTab === "Access" ? `<div class="section-heading"><h2>Service credentials</h2>${btn("Issue token", "issue", true)}</div><div class="card table-wrap"><table class="table"><thead><tr><th>Principal</th><th>Role</th><th>Expires</th><th></th></tr></thead><tbody>${(value.credentials || []).map((c) => `<tr><td>${esc(c.principal || c.spec?.principal || c.id)}</td><td>${esc(c.role || c.spec?.role)}</td><td>${c.expires_at || c.spec?.expires_at ? esc(new Date((c.expires_at || c.spec.expires_at) * 1000).toLocaleString()) : "—"}</td><td>${c.revoked ? "Revoked" : (c.spec?.role==="app"?btn("Rotate","rotate-app:"+c.id):"")+btn("Revoke", "revoke:" + c.id)}</td></tr>`).join("")}</tbody></table></div>${value.next_after ? btn("Next page", "credentials-next:" + value.next_after) : ""}` : settingsTab === "Models" ? modelProfiles({profiles:value.profiles,available:modelConnections(value).length > 0}) : settingsTab === "Audit" ? `<details open><summary>Security audit</summary><pre>${esc(pretty(value))}</pre></details>` : `<div class="integration-card"><div><h3>Grafana and Langfuse</h3><p>Export configuration will be added here.</p></div></div>`}</div>`
   );
 }
 function renderTrace() {
@@ -588,6 +602,7 @@ async function render() {
       disposeObservability = mountComplianceCatalog(main, {
         api, icon, view: id, params: new URLSearchParams(search),
         canExport: role() !== "compliance_reader", canTrace: !auditOnly(), canForward: role() === "administrator",
+        canCoverage: role() === "administrator" && auth.identity.scope?.kind === "all",
       });
       return;
     }
@@ -654,6 +669,8 @@ async function render() {
       pools = (await api("/v1/worker-pools")).pools;
       html = infrastructure();
     } else if (page === "settings") {
+      if ((["Access", "Audit"].includes(settingsTab) && !can.admin()) ||
+          (settingsTab === "Models" && !hasModelRegistry())) settingsTab = "Defaults";
       const value =
         settingsTab === "Defaults"
           ? await api("/v1/configuration")
@@ -661,7 +678,7 @@ async function render() {
             ? await api("/v1/credentials")
             : settingsTab === "Audit"
               ? await api("/v1/audit?after=0")
-              : {};
+              : settingsTab === "Models" ? await api("/v1/model-providers") : {};
       html = settings(value);
     } else if (page === "sessions" && id) {
       safetyActivity=null;
@@ -850,6 +867,40 @@ async function act(action) {
     );
     $("#replicas").min = 0;
     $("#replicas").max = p.binding.maxReplicas;
+    return;
+  }
+  if (kind === "new-model-profile" || kind === "edit-model-profile") {
+    const catalog = await api("/v1/model-providers");
+    const existing = catalog.profiles.find(profile => profile.name === id);
+    if (kind === "edit-model-profile" && !existing) throw Error("This model profile is no longer available.");
+    const connections = modelConnections(catalog);
+    if (!connections.length) throw Error("Configure a model connection before binding a profile.");
+    const oldModel = existing?.model;
+    drawer(
+      existing ? "Change model · " + existing.name : "New model profile",
+      (existing ? "" : field("Profile name", "managed-profile-name", "")) +
+      select("Model connection", "managed-connection", [["", "Choose connection"], ...connections.map(name => [name, name])]) +
+      field("Model ID", "managed-model-id", oldModel?.model || "") +
+      '<p class="small-note">New sessions use the saved model. Running sessions keep their selected model.</p>',
+      async () => {
+        const name = existing?.name || $("#managed-profile-name").value.trim();
+        if (!/^[\w.@-]{1,80}$/.test(name) || name === "." || name.includes("..")) throw Error("Use up to 80 letters, numbers, hyphens, underscores, periods or @ signs.");
+        if (!existing && catalog.profiles.some(profile => profile.name === name)) throw Error("This profile already exists. Use Change model to update it.");
+        const connection = $("#managed-connection").value;
+        if (!connection) throw Error("Choose an active model connection.");
+        const model = $("#managed-model-id").value.trim();
+        const choice = { connection, model };
+        if (oldModel?.connection === connection && oldModel.notify_on_session_state !== undefined) {
+          choice.notify_on_session_state = oldModel.notify_on_session_state;
+        }
+        await mutate("/v1/model-profiles/" + name, "PUT", choice, render);
+      },
+    );
+    const picker = $("#managed-connection");
+    if (picker) {
+      picker.required = true;
+      if (oldModel && connections.includes(oldModel.connection)) picker.value = oldModel.connection;
+    }
     return;
   }
   if (kind === "configuration") {

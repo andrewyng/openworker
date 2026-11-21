@@ -115,6 +115,15 @@ async fn scoped_compliance_routes_work_across_two_api_nodes() {
     std::fs::write(&runner, b"\x7fELF-api-fixture-not-executed").unwrap();
     config.bundle = bundle.clone();
     config.runner = runner.clone();
+    let install = openworker_server_reference::management::installation(&config).unwrap();
+    admin.catalog_put("coverage-profile","profile",json!({"id":"coverage@1","provider":"openshell","cpu":1,"memoryMB":512,"sharing":"exclusive"}),&install).unwrap();
+    admin
+        .catalog_activate("activate-coverage-profile", "profile", "coverage@1", None)
+        .unwrap();
+    admin.catalog_put("coverage-release","release",json!({"id":"coverage@v1","instructions":"Coverage fixture","tools":["read_file"],"runtimeProfiles":["coverage@1"],"defaultRuntimeProfile":"coverage@1"}),&install).unwrap();
+    admin
+        .catalog_activate("activate-coverage-release", "release", "coverage@v1", None)
+        .unwrap();
     let runtime = Runtime::open(
         &root.path().join("runtime"),
         &bundle,
@@ -190,6 +199,7 @@ async fn scoped_compliance_routes_work_across_two_api_nodes() {
         }
     }
     verify_catalog(&client, &urls[0], &urls[1]).await;
+    verify_coverage(&client, &urls[0]).await;
     #[cfg(feature = "compliance-export")]
     verify_delivery(&client, &urls[0], &urls[1], &received).await;
     tokio::task::block_in_place(|| {
@@ -318,6 +328,12 @@ fn seed_catalog(store: &mut PostgresStore, db: &openworker_store_postgres::Confi
                 json!({"phase":"modelOutput","check":"response-scanner","version":"5","outcome":"unavailable"}),
             ),
             (
+                "s_finance",
+                Some("t_finance"),
+                "safety_evaluation",
+                json!({"phase":"modelOutput","check":"response-scanner","version":"5","outcome":"allow"}),
+            ),
+            (
                 "s_support",
                 None,
                 "safety_evaluation",
@@ -354,6 +370,55 @@ fn seed_catalog(store: &mut PostgresStore, db: &openworker_store_postgres::Confi
             SELECT 's_support',1000+i,'safety_evaluation',0,clock_timestamp()-i*INTERVAL '1 minute'
             FROM generate_series(1,280) i;").unwrap();
     });
+}
+
+async fn verify_coverage(client: &reqwest::Client, url: &str) {
+    let request = |token, suffix: &str| {
+        client
+            .get(format!("{url}/v1/compliance/coverage{suffix}"))
+            .header("x-openworker-namespace", "test")
+            .bearer_auth(token)
+    };
+    let response: Value = request(ADMIN, "")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(response["releases"], json!(["coverage@v1"]));
+    assert_eq!(response["configured"][0]["policy"], "input-secret");
+    assert_eq!(response["configured"][0]["phase"], "userInput");
+    assert!(!response.to_string().contains("SECRET_[A-Z]+"));
+    let observed = response["observed"].as_array().unwrap();
+    assert!(observed
+        .iter()
+        .any(|row| row["policy"] == "response-scanner"
+            && row["phase"] == "modelOutput"
+            && row["checks"] == 2
+            && row["unavailable"] == 1));
+    let release: Value = request(ADMIN, "?release=coverage%40v1")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(release["release_defaults_resolved"], true);
+    assert_eq!(release["observed"], json!([]));
+    assert_eq!(request(APP_AUDITOR, "").send().await.unwrap().status(), 403);
+    assert_eq!(
+        request(ADMIN, "?release=coverage")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
 }
 
 async fn verify_catalog(client: &reqwest::Client, url: &str, other_node: &str) {

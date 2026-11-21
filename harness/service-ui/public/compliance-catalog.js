@@ -1,4 +1,5 @@
 import { esc } from "./observability-data.js";
+import { mountPolicyCoverage } from "./policy-coverage.js";
 
 const endpoint = "/v1/compliance";
 const day = 86_400_000;
@@ -87,10 +88,19 @@ function inspector(row, icon, canTrace) {
       ${row.turn_id ? `<a class="cp-session-link" href="${session}">Open session</a>` : ""}</div>` : ""}`;
 }
 
-export function mountComplianceCatalog(root, { api, icon, view, params, canExport, canTrace, canForward }) {
+export function mountComplianceCatalog(root, { api, icon, view, params, canExport, canTrace, canForward, canCoverage }) {
   const lifetime = new AbortController();
   const { signal } = lifetime;
-  const tab = Object.hasOwn(viewNames, view) ? view : "decisions";
+  const views = canCoverage ? { ...viewNames, coverage: "Policy coverage" } : viewNames;
+  const tab = Object.hasOwn(views, view) ? view : "decisions";
+  const heading = `<header class="cp-heading"><div><h1>Compliance</h1><p>Policy decisions and agent activity</p></div></header>
+    <nav class="cp-nav" aria-label="Compliance views">${Object.entries(views).map(([name,label]) =>
+      `<a href="${hash(name)}" ${tab === name ? 'aria-current="page"' : ""}>${icon(name === "decisions" || name === "coverage" ? "shield" : name === "agents" ? "layers" : "file")}${label}</a>`).join("")}</nav>`;
+  if (tab === "coverage") {
+    root.innerHTML = `<section class="cp-page">${heading}<div class="cp-panel" data-coverage></div></section>`;
+    mountPolicyCoverage(root.querySelector("[data-coverage]"), { api, params, signal });
+    return () => lifetime.abort();
+  }
   const isDecisions = tab === "decisions";
   const isAgents = tab === "agents";
   const initialDay = ["1","7","30"].includes(params.get("days")) ? params.get("days") : "7";
@@ -98,10 +108,7 @@ export function mountComplianceCatalog(root, { api, icon, view, params, canExpor
   const headers = isDecisions ? ["Event","App","Decision","Time UTC"] : isAgents
     ? ["Agent release","Turns","Decisions","Blocked / denied","Redacted","Unavailable"]
     : ["Action","Actor","App","Target","Outcome","Time UTC"];
-  root.innerHTML = `<section class="cp-page">
-    <header class="cp-heading"><div><h1>Compliance</h1><p>Policy decisions and agent activity</p></div></header>
-    <nav class="cp-nav" aria-label="Compliance views">${Object.entries(viewNames).map(([name,label]) =>
-      `<a href="${hash(name)}" ${tab === name ? 'aria-current="page"' : ""}>${icon(name === "decisions" ? "shield" : name === "agents" ? "layers" : "file")}${label}</a>`).join("")}</nav>
+  root.innerHTML = `<section class="cp-page">${heading}
     <section class="cp-panel" aria-label="${viewNames[tab]}">
       <form class="cp-filters">
         <div class="cp-toolbar">

@@ -115,7 +115,14 @@ pub(crate) fn check_static(config: &Config, name: &str) -> Result<()> {
     Ok(())
 }
 pub(crate) async fn catalog(Extension(app): Extension<App>) -> Result<Json<Value>, ApiError> {
-    Ok(Json(app.store.model_catalog()?))
+    let mut catalog = app.store.model_catalog()?;
+    catalog["installedConnections"] = json!(app
+        .config
+        .model_connections
+        .iter()
+        .map(|connection| &connection.id)
+        .collect::<Vec<_>>());
+    Ok(Json(catalog))
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

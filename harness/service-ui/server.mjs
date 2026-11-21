@@ -82,7 +82,7 @@ export function allowed(method, path) {
       return false;
     }
     return (
-      /^\/v1\/(capabilities|auth\/me|sessions|profiles|releases|app-agents|configuration|worker-pools|credentials|audit|environments)$/.test(
+      /^\/v1\/(capabilities|auth\/me|sessions|profiles|releases|app-agents|model-providers|configuration|worker-pools|credentials|audit|environments)$/.test(
         p,
       ) ||
       new RegExp(
@@ -94,7 +94,8 @@ export function allowed(method, path) {
     );
   }
   if (u.search) return false;
-  if (method === "PUT") return p === "/v1/configuration" || new RegExp(`^/v1/app-agents/${id}/sharing$`).test(p);
+  if (method === "PUT") return p === "/v1/configuration" ||
+    new RegExp(`^/v1/(?:app-agents/${id}/sharing|model-profiles/${id})$`).test(p);
   return (
     method === "POST" &&
     (/^\/v1\/(releases|profiles|submissions|sessions|credentials)$/.test(p) ||
@@ -150,13 +151,17 @@ function allowedCompliance(path){
  if(path.length>1000||path.includes("#"))return false;
  const u=new URL(path,"http://local");
  if(u.pathname+u.search!==path)return false;
- const catalog = /^\/v1\/compliance\/(decisions|agents|audit)$/.exec(u.pathname)?.[1];
+ const catalog = /^\/v1\/compliance\/(decisions|agents|audit|coverage)$/.exec(u.pathname)?.[1];
  if (catalog) {
    const keys = new Set();
    for (const [key, value] of u.searchParams) {
      if (keys.has(key)) return false;
      keys.add(key);
      if (["from_ms", "until_ms"].includes(key) && /^\d{1,15}$/.test(value)) continue;
+     if (catalog === "coverage") {
+       if (key === "release" && value.length <= 80 && /^[\w.-]+@[\w.-]+$/.test(value)) continue;
+       return false;
+     }
      if (catalog === "agents" && key === "after" && /^[\w.@-]{0,128}:[\w.@-]{0,128}$/.test(value)) continue;
      if (catalog === "agents") return false;
      if (key === "q" && Buffer.byteLength(value) <= 160 && !/\p{Cc}/u.test(value)) continue;
@@ -579,6 +584,7 @@ export async function start(config) {
         "/app.js": ["app.js", "text/javascript"],
         "/compliance.js": ["compliance.js", "text/javascript"],
         "/compliance-catalog.js": ["compliance-catalog.js", "text/javascript"],
+        "/policy-coverage.js": ["policy-coverage.js", "text/javascript"],
         "/compliance.css": ["compliance.css", "text/css"],
         "/tracing.js": ["tracing.js", "text/javascript"],
         "/guardrail-view.js": ["guardrail-view.js", "text/javascript"],

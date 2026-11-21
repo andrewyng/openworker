@@ -1439,7 +1439,7 @@ async fn registered_provider_streams_tools_and_uses_rotated_secret_after_reconne
         assert_eq!(shown["contextLimit"], 8192);
         assert!(shown.get("apiKey").is_none());
     }
-    let apps_profile = json!({"id":"apps@1","provider":"openshell","cpu":1,"memoryMB":512,"sharing":"shared","allowedPrincipals":["app_genie","app_preview"]});
+    let apps_profile = json!({"id":"apps@1","provider":"openshell","cpu":1,"memoryMB":512,"sharing":"shared","allowedPrincipals":["app_builder-test","app_preview-test"]});
     for (path, body) in [
         ("profiles", apps_profile),
         ("profiles/apps@1/activate", json!({})),
@@ -1464,10 +1464,13 @@ async fn registered_provider_streams_tools_and_uses_rotated_secret_after_reconne
             .status()
             .is_success()
     );
-    let genie = "genie-backend-key-".repeat(3);
-    let preview = "preview-backend-key-".repeat(3);
-    for (principal, token) in [("app_genie", &genie), ("app_preview", &preview)] {
-        let issue = json!({"token":token,"spec":{"role":"app","scope":{"kind":"owned"},"principal":principal,"expires_at":openworker_runtime::store::now_ms()/1000+3600},"grants":{"modelProfiles":["coding"],"tools":if principal=="app_preview"{vec!["web_search"]}else{vec![]}}});
+    let builder = "builder-fixture-key-".repeat(3);
+    let preview = "preview-fixture-key-".repeat(3);
+    for (principal, token) in [
+        ("app_builder-test", &builder),
+        ("app_preview-test", &preview),
+    ] {
+        let issue = json!({"token":token,"spec":{"role":"app","scope":{"kind":"owned"},"principal":principal,"expires_at":openworker_runtime::store::now_ms()/1000+3600},"grants":{"modelProfiles":["coding"],"tools":if principal=="app_preview-test"{vec!["web_search"]}else{vec![]}}});
         assert!(request(reqwest::Method::POST, "credentials", &admin)
             .json(&issue)
             .send()
@@ -1478,8 +1481,8 @@ async fn registered_provider_streams_tools_and_uses_rotated_secret_after_reconne
     }
     let publish = json!({"instructions":"Use the project files.","tools":["coding.read_file","write_file","shell"],"runtimeProfiles":["apps@1"],"defaultRuntimeProfile":"apps@1","modelProfile":"coding"});
     for (name, token, expected) in [
-        ("web_search", &genie, 403),
-        ("lookalike", &genie, 403),
+        ("web_search", &builder, 403),
+        ("lookalike", &builder, 403),
         ("web_search", &preview, 200),
     ] {
         let mut proposed = publish.clone();
@@ -1491,7 +1494,7 @@ async fn registered_provider_streams_tools_and_uses_rotated_secret_after_reconne
             .unwrap();
         assert_eq!(reply.status().as_u16(), expected, "{name}");
     }
-    let response = request(reqwest::Method::POST, "app-agents/builder", &genie)
+    let response = request(reqwest::Method::POST, "app-agents/builder", &builder)
         .json(&publish)
         .send()
         .await
@@ -1514,7 +1517,7 @@ async fn registered_provider_streams_tools_and_uses_rotated_secret_after_reconne
         &format!("app-agents/{rid}/sharing"),
         &admin
     )
-    .json(&json!({"sharedWith":["app_preview"]}))
+    .json(&json!({"sharedWith":["app_preview-test"]}))
     .send()
     .await
     .unwrap()
@@ -1526,7 +1529,7 @@ async fn registered_provider_streams_tools_and_uses_rotated_secret_after_reconne
         .unwrap()
         .status()
         .is_success());
-    let submit = request(reqwest::Method::POST, "sessions", &genie)
+    let submit = request(reqwest::Method::POST, "sessions", &builder)
         .json(&json!({"agent":rid,"project":"demo"}))
         .send()
         .await
@@ -1534,6 +1537,39 @@ async fn registered_provider_streams_tools_and_uses_rotated_secret_after_reconne
     let status = submit.status();
     let admit: Value = submit.json().await.unwrap();
     assert!(status.is_success(), "{status}: {admit}");
+    assert_eq!(
+        f.store
+            .operation_model(admit["operation"]["id"].as_str().unwrap())
+            .unwrap(),
+        Some(choice.clone())
+    );
+
+    let updated = openworker_runtime::connections::Choice::new("spark", "local-code-v2");
+    assert!(
+        request(reqwest::Method::PUT, "model-profiles/coding", &admin)
+            .json(&updated)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+    );
+    let next = request(reqwest::Method::POST, "sessions", &builder)
+        .json(&json!({"agent":rid,"project":"next-run"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(
+        f.store
+            .operation_model(next["operation"]["id"].as_str().unwrap())
+            .unwrap(),
+        Some(updated)
+    );
     assert_eq!(
         f.store
             .operation_model(admit["operation"]["id"].as_str().unwrap())

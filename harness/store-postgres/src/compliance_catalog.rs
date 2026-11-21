@@ -70,6 +70,14 @@ pub struct AuditSearch {
     pub limit: Option<u16>,
 }
 
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CoverageSearch {
+    pub release: Option<String>,
+    pub from_ms: Option<i64>,
+    pub until_ms: Option<i64>,
+}
+
 struct Window {
     from: i64,
     until: i64,
@@ -376,6 +384,70 @@ fn export_window(q: &Search, request: &str) -> Result<Window> {
 }
 
 impl PostgresStore {
+    /// Evidence of completed or unavailable checks, including clean passes.
+    /// This is a journal summary. Current policy is resolved by the service.
+    pub fn compliance_coverage(&self, q: CoverageSearch) -> Result<Value> {
+        let window = Search {
+            from_ms: q.from_ms,
+            until_ms: q.until_ms,
+            ..Default::default()
+        }
+        .window()?;
+        if let Some(release) = &q.release {
+            crate::service_catalog::revision(release)?;
+        }
+        self.call(move |db| {
+            let mut tx = db.client.transaction()?;
+            let identity = authorized(&mut tx, db.auth.as_ref(), Action::ComplianceRead)?;
+            ensure!(identity.role == auth::Role::Administrator && identity.scope == Scope::All, auth::Error::Forbidden);
+            let rows = tx.query(
+                "WITH checks AS (
+                   SELECT o.release_id, left(s.data->>'coworker',128) AS agent,
+                          left(e.data->>'check',128) AS policy, left(e.data->>'version',80) AS version,
+                          e.data->>'phase' AS phase, e.data->>'outcome' AS outcome, a.created
+                   FROM audit a
+                   JOIN events e USING(session_id,cursor)
+                   JOIN sessions s ON s.id=a.session_id
+                   LEFT JOIN service_operations o ON o.session_id=a.session_id
+                   WHERE a.kind='safety_evaluation'
+                     AND a.created>=TIMESTAMPTZ 'epoch'+$1::bigint*interval '1 millisecond'
+                     AND a.created<TIMESTAMPTZ 'epoch'+$2::bigint*interval '1 millisecond'
+                     AND ($3::text IS NULL OR o.release_id=$3)
+                     AND e.data->>'check' IS NOT NULL
+                     AND e.data->>'phase' IN ('userInput','modelInput','modelOutput','toolCall','toolResult','event')
+                     AND e.data->>'outcome' IN ('allow','blocked','redacted','matched','unavailable')
+                     AND (jsonb_typeof(s.data->'compliance') IS DISTINCT FROM 'object' OR
+                         a.created>=now()-COALESCE((s.data->'compliance'->>'retentionDays')::bigint,3650)*interval '1 day')
+                   UNION ALL
+                   SELECT NULL, NULL, split_part(target,':',2), NULL, 'userInput', split_part(target,':',3), created
+                   FROM api_security_audit
+                   WHERE $3::text IS NULL AND action='turn.submit' AND session_id IS NULL
+                     AND target ~ '^guardrail:[A-Za-z0-9._-]{1,128}:(allow|blocked|redacted|matched|unavailable)$'
+                     AND created>=TIMESTAMPTZ 'epoch'+$1::bigint*interval '1 millisecond'
+                     AND created<TIMESTAMPTZ 'epoch'+$2::bigint*interval '1 millisecond'
+                 )
+                 SELECT release_id,agent,policy,version,phase,count(*),
+                        count(*) FILTER (WHERE outcome='unavailable') AS unavailable,
+                        floor(extract(epoch FROM max(created))*1000)::bigint AS last_ms
+                 FROM checks GROUP BY 1,2,3,4,5
+                 ORDER BY unavailable DESC,last_ms DESC,release_id,agent,policy,version,phase LIMIT 101",
+                &[&window.from, &window.until, &q.release],
+            )?;
+            let observed = rows.iter().take(100).map(|row| safe(json!({
+                "release":row.get::<_, Option<String>>(0),
+                "agent":row.get::<_, Option<String>>(1),
+                "policy":row.get::<_, String>(2),
+                "policy_version":row.get::<_, Option<String>>(3),
+                "phase":row.get::<_, String>(4),
+                "checks":row.get::<_, i64>(5),
+                "unavailable":row.get::<_, i64>(6),
+                "last_ms":row.get::<_, i64>(7),
+            }))).collect::<Vec<_>>();
+            tx.commit()?;
+            Ok(json!({"observed":observed,"truncated":rows.len()>100}))
+        })
+    }
+
     pub fn compliance_decisions(&self, q: Search) -> Result<Value> {
         let window = q.window()?;
         self.call(move |db| {

@@ -290,6 +290,7 @@ try {
   console.log("Chrome passed model judge configuration, single-turn preview, resolved model and reported usage.");
 
   await page.goto(app.url + "/#evals/replays/" + process.env.OW_EVALS_REPLAY_ID);
+  await page.getByRole("status").filter({hasText:"1 regression"}).waitFor();
   await page.getByRole("table", { name: "Replay comparison" }).waitFor();
   await page.getByText("Regression · 2 fixture files", { exact: true }).waitFor();
   assert.equal(await page.getByRole("link", { name: "Open execution" }).count(), 2);

@@ -67,6 +67,22 @@ try{
  await page.getByRole("button",{name:"Previous page"}).click();
  await page.getByText("Page 1 · 25 shown",{exact:true}).waitFor();
 
+ await page.getByRole("link",{name:"Policy coverage"}).click();
+ await page.getByRole("table",{name:"Configured checks"}).getByText("input-secret").waitFor();
+ const unavailable=page.getByRole("row").filter({hasText:"response-scanner"});
+ await unavailable.getByRole("link",{name:"View decisions"}).waitFor();
+ await page.screenshot({path:out+"/policy-coverage.png",fullPage:true});
+ await unavailable.getByRole("link",{name:"View decisions"}).click();
+ await page.getByRole("button",{name:"response-scanner"}).waitFor();
+ await page.getByRole("link",{name:"Policy coverage"}).click();
+ await page.getByRole("combobox",{name:"Agent release"}).selectOption("coverage@v1");
+ await page.getByRole("button",{name:"Apply",exact:true}).click();
+ await page.getByText("Defaults for new sessions using coverage@v1.").waitFor();
+ await page.getByText("No checks recorded in this time range.").waitFor();
+ await page.setViewportSize({width:390,height:844});
+ await page.screenshot({path:out+"/policy-coverage-mobile.png",fullPage:true});
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),"Policy coverage mobile horizontal overflow");
+
  const scoped=await browser.newPage();
  scoped.on("pageerror",e=>errors.push(e.message));
  await scoped.goto(ui.url+"/");
@@ -77,7 +93,14 @@ try{
  assert.equal(await scoped.getByRole("link",{name:"Open source trace"}).count(),0);
  assert.equal(await scoped.getByRole("button",{name:/block-ssn/}).count(),0);
  assert.equal(await scoped.getByRole("link",{name:"Sessions",exact:true}).isVisible(),false);
+ assert.equal(await scoped.getByRole("link",{name:"Policy coverage"}).count(),0);
  assert.equal(await scoped.getByText("Evidence delivery",{exact:true}).count(),0);
+ const scopedDownload=scoped.waitForEvent("download");
+ await scoped.getByRole("button",{name:"Export evidence"}).click();
+ const scopedStream=await (await scopedDownload).createReadStream();
+ let scopedJsonl="";
+ for await (const bytes of scopedStream) scopedJsonl+=bytes;
+ assert.ok(scopedJsonl.trim().split("\n").map(JSON.parse).every(row=>row.app==="app_finance"));
  assert.deepEqual(errors,[]);
  console.log("Compliance UI qualified with live PostgreSQL evidence, scoped access, pagination, audit and a JSONL download");
 }finally{await browser.close();await ui.close();}

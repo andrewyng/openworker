@@ -5,7 +5,8 @@ use axum::{
     Extension, Json,
 };
 use openworker_store_postgres::{
-    compliance_catalog::{AuditSearch, Overview, Search},
+    compliance_catalog::{AuditSearch, CoverageSearch, Overview, Search},
+    service_catalog::Release,
     PostgresStore, SubmissionError,
 };
 use serde_json::Value;
@@ -38,6 +39,104 @@ pub(crate) async fn audit(
 ) -> Result<Json<Value>, ApiError> {
     let _permit = permit(&app)?;
     Ok(Json(app.store.compliance_admin_audit(q)?))
+}
+
+pub(crate) async fn coverage(
+    Extension(app): Extension<App>,
+    Query(q): Query<CoverageSearch>,
+) -> Result<Json<Value>, ApiError> {
+    let _permit = permit(&app)?;
+    let selection = q.release.clone();
+    let mut response = app.store.compliance_coverage(q)?;
+    let releases = app.store.catalog_visible("release")?;
+    response["releases"] = serde_json::json!(releases
+        .iter()
+        .filter(|entry| entry.activated)
+        .map(|entry| &entry.id)
+        .collect::<Vec<_>>());
+    let mut config = app.config.safety.clone();
+    let mut defaults_resolved = None;
+    if let Some(id) = selection {
+        let entry = releases
+            .iter()
+            .find(|entry| entry.id == id && entry.activated)
+            .ok_or_else(|| ApiError(SubmissionError::NotFound.into()))?;
+        let release: Release =
+            serde_json::from_value(entry.definition.clone()).map_err(anyhow::Error::from)?;
+        match release_checks(&app, &release).and_then(|checks| config.merge(&checks)) {
+            Ok(effective) => {
+                config = effective;
+                defaults_resolved = Some(true);
+            }
+            Err(_) => defaults_resolved = Some(false),
+        }
+    }
+    response["configured"] = serde_json::json!(check_descriptors(&config));
+    response["release_defaults_resolved"] = serde_json::json!(defaults_resolved);
+    Ok(Json(response))
+}
+
+fn release_checks(
+    app: &App,
+    release: &Release,
+) -> anyhow::Result<openworker_runtime::safety::Config> {
+    crate::model_registry::refresh(app)?;
+    let profile_model = release
+        .model_profile
+        .as_deref()
+        .map(|name| app.store.current_profile_model(name))
+        .transpose()?;
+    let model = profile_model
+        .as_ref()
+        .or(release.default_model.as_ref())
+        .map(|choice| app.runtime.connections.resolve(choice))
+        .transpose()?;
+    crate::management::admission_checks(app, release, model.as_ref(), None, &Default::default())
+}
+
+fn check_descriptors(config: &openworker_runtime::safety::Config) -> Vec<Value> {
+    use openworker_runtime::safety::{Action, HookPhase, Phase, Rule};
+    use serde_json::json;
+    let mut rows = Vec::new();
+    let redact = openworker_runtime::telemetry::redact;
+    let mut rule_row = |rule: &Rule, phase: Phase, tools: &[String]| {
+        let action = match rule.action {
+            Action::Block => "block",
+            Action::Redact { .. } => "redact",
+            Action::Callback { .. } => "callback",
+        };
+        rows.push(json!({"policy":redact(&rule.name),"policy_version":redact(&rule.version),
+            "phase":phase,"action":action,"tools":tools.iter().map(|t|redact(t)).collect::<Vec<_>>()}));
+    };
+    for rule in &config.guardrails.user_input {
+        rule_row(rule, Phase::UserInput, &[]);
+    }
+    for rule in &config.guardrails.model_output {
+        rule_row(rule, Phase::ModelOutput, &[]);
+    }
+    for (groups, phase) in [
+        (&config.guardrails.tool_calls, Phase::ToolCall),
+        (&config.guardrails.tool_results, Phase::ToolResult),
+    ] {
+        for group in groups {
+            for rule in &group.rules {
+                rule_row(rule, phase, &group.tools);
+            }
+        }
+    }
+    for hook in &config.hooks {
+        let phase = match hook.when {
+            HookPhase::BeforeInput => Phase::UserInput,
+            HookPhase::BeforeModel => Phase::ModelInput,
+            HookPhase::BeforeTool => Phase::ToolCall,
+            HookPhase::AfterTool => Phase::ToolResult,
+            HookPhase::BeforeOutput => Phase::ModelOutput,
+            HookPhase::OnEvent => Phase::Event,
+        };
+        rows.push(json!({"policy":redact(&hook.name),"policy_version":redact(&hook.version),
+            "phase":phase,"action":"hook","tools":hook.tools.iter().map(|t|redact(t)).collect::<Vec<_>>()}));
+    }
+    rows
 }
 
 pub(crate) async fn export(
