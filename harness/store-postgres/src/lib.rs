@@ -10,6 +10,7 @@ mod controls;
 mod db;
 mod environments;
 pub mod evals;
+pub mod guardrail_query;
 mod ingress;
 mod input_attachments;
 mod input_safety;

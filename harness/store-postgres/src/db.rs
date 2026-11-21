@@ -126,6 +126,7 @@ pub(crate) fn migrate(config: &Config) -> Result<()> {
     crate::auth::migrate(&mut tx)?;
     crate::app_agents::migrate(&mut tx)?;
     crate::evals::migrate(&mut tx)?;
+    crate::guardrail_query::migrate(&mut tx)?;
     tx.batch_execute("ALTER TABLE api_credentials ADD COLUMN IF NOT EXISTS replaces TEXT UNIQUE REFERENCES api_credentials(id), ADD COLUMN IF NOT EXISTS app_grants JSONB")?;
     crate::compliance::migrate(&mut tx)?;
     crate::pools::migrate(&mut tx)?;

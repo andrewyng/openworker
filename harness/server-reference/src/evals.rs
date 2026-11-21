@@ -101,17 +101,54 @@ pub(crate) async fn job(
     Ok(Json(app.store.eval_job(id, job)?))
 }
 
-pub async fn run(store: PostgresStore, stop: CancellationToken) {
+/// The eval role uses an independent database connection and reopens it after
+/// an outage. A restarted worker resumes from the last committed batch.
+pub async fn run_worker(
+    db: openworker_store_postgres::Config,
+    service: service::ServiceConfig,
+    readiness: crate::readiness::Readiness,
+    stop: CancellationToken,
+) {
+    let mut connection: Option<PostgresStore> = None;
+    let mut reported_unavailable = false;
     while !stop.is_cancelled() {
-        let store = store.clone();
-        match tokio::task::spawn_blocking(move || store.score_next_eval()).await {
-            Ok(Ok(true)) => continue,
-            Ok(Ok(false)) => (),
-            _ => eprintln!("Evaluation scoring unavailable; retrying queued work"),
+        let existing = connection.take();
+        let db = db.clone();
+        let service = service.clone();
+        let step = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let store = match existing {
+                Some(store) => store,
+                None => {
+                    let store = PostgresStore::open(db)?;
+                    store.verify_service(&service.id, &service.namespace)?;
+                    store
+                }
+            };
+            let progressed = store.score_next_eval()?;
+            Ok((store, progressed))
+        })
+        .await;
+        match step {
+            Ok(Ok((store, progressed))) => {
+                connection = Some(store);
+                reported_unavailable = false;
+                readiness.checked();
+                if progressed {
+                    continue;
+                }
+            }
+            _ => {
+                if !reported_unavailable {
+                    eprintln!("Evaluation store unavailable; retrying");
+                    reported_unavailable = true;
+                }
+                readiness.clear();
+            }
         }
         tokio::select! {
             _ = stop.cancelled() => break,
             _ = tokio::time::sleep(Duration::from_secs(1)) => (),
         }
     }
+    readiness.clear();
 }

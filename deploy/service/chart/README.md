@@ -165,6 +165,18 @@ Use verified HTTPS for production exports. See the
 configuration example and the explicitly local relay used during qualification.
 
 
+### Evaluation worker
+
+With `config.observability` set, the chart deploys one eval worker on the
+shared cluster nodes. Use `evalWorker.replicas` and `evalWorker.resources`
+to size it independently. It reads and writes the execution database and exposes
+a loopback readiness check. Set `evalWorker.enabled: false` to pause scoring.
+Submitted jobs stay queued until a worker is available.
+
+Before upgrading an existing release, run the normal execution store migration
+with the new image. This adds checkpoint storage for jobs already queued.
+Use the same image revision for the API and eval worker.
+
 ## Azure artifact storage (experimental)
 
 Configure `config.artifacts` with `kind: azure`, exact deployment/account/container,

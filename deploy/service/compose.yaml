@@ -104,6 +104,16 @@ services:
     depends_on: { bootstrap: { condition: service_completed_successfully } }
     stop_grace_period: 60s
     mem_limit: 1536m
+  eval-worker:
+    profiles: [evals]
+    image: ${SERVICE_IMAGE}
+    pull_policy: never
+    command: [eval-worker]
+    volumes: [service-config:/run/service:ro]
+    networks: [database]
+    depends_on: { bootstrap: { condition: service_completed_successfully } }
+    stop_grace_period: 30s
+    mem_limit: 256m
 volumes:
   postgres:
   postgres-tls:

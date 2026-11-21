@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 const MAX_CASES: i32 = 100;
+const SCORE_BATCH: i64 = 16;
 const MAX_EVIDENCE_BYTES: usize = 16_384;
 
 pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
@@ -29,6 +30,8 @@ pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
             version INTEGER NOT NULL, created_ms BIGINT NOT NULL,
             results JSONB
         );
+        ALTER TABLE eval_jobs ADD COLUMN IF NOT EXISTS processed INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE eval_jobs ADD COLUMN IF NOT EXISTS partial_results JSONB;
         CREATE INDEX IF NOT EXISTS eval_jobs_pending
           ON eval_jobs(created_ms,id) WHERE results IS NULL;
         CREATE INDEX IF NOT EXISTS eval_jobs_dataset
@@ -472,23 +475,26 @@ impl PostgresStore {
             let p = identity(&mut tx, db.auth.as_ref(), Action::Read, None)?;
             owned_dataset(&mut tx, &p, &dataset)?;
             let row = tx.query_opt(
-                "SELECT id,version,created_ms,results IS NOT NULL AS ready,results FROM eval_jobs WHERE dataset=$1 AND id=$2",
+                "SELECT id,version,created_ms,results IS NOT NULL AS ready,results,processed FROM eval_jobs WHERE dataset=$1 AND id=$2",
                 &[&dataset, &job],
             )?.ok_or(SubmissionError::NotFound)?;
             let mut result = summary(&row);
+            let total: i32 = row.get("version");
+            let processed = if row.get::<_, bool>("ready") { total } else { row.get("processed") };
+            result["progress"] = json!({"completed":processed,"total":total});
             result["results"] = row.get::<_, Option<Value>>("results").unwrap_or(Value::Null);
             Ok(result)
         })
     }
 
-    /// The queue and results share one transaction. If the API exits mid-job,
-    /// PostgreSQL releases the row and the next API process can score it.
+    /// Checkpoint a bounded group of deterministic cases. The job-row lock
+    /// prevents competing replicas from scoring the same group.
     pub fn score_next_eval(&self) -> Result<bool> {
         self.call(move |db| {
             ensure!(db.auth.is_none(), auth::Error::Forbidden);
             let mut tx = db.client.transaction()?;
             let Some(job) = tx.query_opt(
-                "SELECT id,dataset,version FROM eval_jobs WHERE results IS NULL
+                "SELECT id,dataset,version,processed,partial_results FROM eval_jobs WHERE results IS NULL
                  ORDER BY created_ms,id LIMIT 1 FOR UPDATE SKIP LOCKED",
                 &[],
             )? else {
@@ -497,13 +503,22 @@ impl PostgresStore {
             let id: String = job.get(0);
             let dataset: String = job.get(1);
             let version: i32 = job.get(2);
+            let mut processed: i32 = job.get(3);
+            let mut results = match job.get::<_, Option<Value>>(4) {
+                Some(value) => serde_json::from_value::<Vec<Value>>(value)?,
+                None => Vec::new(),
+            };
             let rows = tx.query(
-                "SELECT id,version,source,evidence->>'output',check_spec FROM eval_cases WHERE dataset=$1 AND version<=$2 ORDER BY version",
-                &[&dataset, &version],
+                "SELECT id,version,source,evidence->>'output',check_spec FROM eval_cases
+                 WHERE dataset=$1 AND version>$3 AND version<=$2 ORDER BY version LIMIT $4",
+                &[&dataset, &version, &processed, &SCORE_BATCH],
             )?;
-            let mut results = Vec::with_capacity(rows.len());
+            ensure!(!rows.is_empty(), "Evaluation case snapshot is incomplete");
             for row in rows {
                 let case = row.get::<_, String>(0);
+                let ordinal: i32 = row.get(1);
+                ensure!(ordinal == processed + 1, "Evaluation case snapshot is incomplete");
+                processed = ordinal;
                 let output = row.get::<_, Option<String>>(3);
                 let spec: Check = serde_json::from_value(row.get(4))?;
                 let score = output.as_deref().map(|text| Score::Boolean(match spec.comparison {
@@ -512,7 +527,7 @@ impl PostgresStore {
                 }));
                 let missing = score.is_none();
                 let result = Input {
-                    id: format!("{}-{}", id, row.get::<_, i32>(1)),
+                    id: format!("{id}-{ordinal}"),
                     name: "response-check".into(),
                     evaluator: Evaluator {
                         name: "response-text".into(),
@@ -532,8 +547,12 @@ impl PostgresStore {
                 results.push(json!({"turn":row.get::<_, Value>(2),"result":result}));
             }
             tx.execute(
-                "UPDATE eval_jobs SET results=$2 WHERE id=$1",
-                &[&id, &json!(results)],
+                "UPDATE eval_jobs SET
+                    processed=$3,
+                    results=CASE WHEN $3=version THEN $2::jsonb END,
+                    partial_results=CASE WHEN $3<version THEN $2::jsonb END
+                 WHERE id=$1",
+                &[&id, &json!(results), &processed],
             )?;
             tx.commit()?;
             Ok(true)

@@ -136,6 +136,36 @@ try {
     await capture("evals-run-catalog-mobile");
     console.log("Chrome passed paginated dataset and run catalogs, per-dataset history, filter navigation, and mobile sizing.");
   }
+  if (process.env.OW_GUARDRAIL_REDACTED_TURN) {
+    await page.setViewportSize({ width: 1440, height: 960 });
+    const redaction = JSON.parse(process.env.OW_GUARDRAIL_REDACTED_TURN);
+    await page.goto(`${app.url}/#observability/${redaction.session_id}/${redaction.turn_id}`);
+    const finding = page.locator(".tr-turns .guardrail-finding");
+    await finding.getByText("Credit card rule", { exact: true }).waitFor();
+    await page.locator(".tr-context").getByText("Guardrail hit", { exact: true }).waitFor();
+    await page.locator(`.tr-session[data-tr-session="${redaction.session_id}"]`)
+      .getByText("Guardrail hit", { exact: true }).waitFor();
+    assert.equal(await finding.getByText("Redacted", { exact: true }).isVisible(), true);
+    await finding.locator("summary").click();
+    await finding.getByText("guardrail:builtin.credit-card", { exact: true }).waitFor();
+    assert(!(await page.locator("#main").innerText()).includes("4111111111111111"));
+    await capture("guardrail-in-trace");
+
+    await page.getByRole("link", { name: "Guardrails", exact: true }).click();
+    await page.getByRole("heading", { name: "Guardrails", exact: true }).waitFor();
+    await page.getByText("Credit card rule", { exact: true }).waitFor();
+    await capture("guardrail-catalog");
+    await page.getByLabel("Rule ID", { exact: true }).fill("fixture-ssn");
+    await page.getByLabel("Guardrail outcome").selectOption("blocked");
+    await page.getByRole("button", { name: "Apply" }).click();
+    await page.getByText("Page 1 · 1 shown", { exact: true }).waitFor();
+    await page.locator(".guardrail-finding summary").click();
+    await page.getByRole("link", { name: "Open session", exact: true }).click();
+    await page.getByRole("heading", { name: "Session safety activity" }).waitFor();
+    assert.equal(new URL(page.url()).hash, `#observability/${process.env.OW_GUARDRAIL_BLOCKED_SESSION}`);
+    assert.equal(await page.locator(".tr-turn-heading").count(), 0);
+    console.log("Chrome passed guardrail chips, rule filtering and a block before any turn was created.");
+  }
   assert.deepEqual(errors, []);
   console.log("Chrome passed trace capture, on-demand execution, three scoring outcomes and source navigation.");
 } finally {

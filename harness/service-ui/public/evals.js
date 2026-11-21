@@ -199,7 +199,7 @@ function renderJob(root, dataset, job) {
       <div><h1>Evaluation run</h1><p>${esc(date(job.created_ms))} · Dataset version ${job.dataset_version}</p></div>
       ${runStatus(job.status)}
     </header>
-    ${job.status !== "completed" ? '<div class="ev-empty" role="status"><h3>Waiting for results</h3><p>This page updates as the cluster finishes the eval.</p></div>' : `
+    ${job.status !== "completed" ? `<div class="ev-empty" role="status"><h3>Waiting for results</h3><p>${job.progress?.total ? `${job.progress.completed} of ${job.progress.total} cases scored.` : "This page updates as the cluster finishes the eval."}</p></div>` : `
       <div class="ev-metrics">${[["passed", "Passed"], ["failed", "Failed"], ["error", "Evaluator errors"]].map(([kind, label]) => `
         <div><span>${label}</span><strong>${states.filter((state) => state === kind).length}</strong></div>`).join("")}</div>
       <section class="ev-section" aria-labelledby="ev-results">

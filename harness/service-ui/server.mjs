@@ -131,6 +131,7 @@ function allowedRecording(path) {
   const u = new URL(path, "http://local");
   if (u.pathname + u.search !== path) return false;
   const listing = /^\/v1\/observability\/(runs|summary)$/.test(u.pathname);
+  const guardrails = u.pathname === "/v1/observability/guardrails";
   const timeline = new RegExp(
     `^/v1/sessions/${id}/observability/${id}/timeline$`,
   ).test(u.pathname);
@@ -140,7 +141,7 @@ function allowedRecording(path) {
   const children = new RegExp(`^/v1/sessions/${id}/observability/${id}/children$`).test(u.pathname);
   if(children) return !u.search;
   const health = u.pathname === "/v1/observability/health";
-  if (!listing && !timeline && !summary && !health) return false;
+  if (!listing && !timeline && !summary && !health && !guardrails) return false;
   try {
     decodeURIComponent(u.search.replaceAll("+", " "));
   } catch {
@@ -150,6 +151,15 @@ function allowedRecording(path) {
   for (const [key, value] of u.searchParams) {
     if (seen.has(key)) return false;
     seen.add(key);
+    if (guardrails) {
+      if (["session_id", "turn_id"].includes(key) && new RegExp(`^${id}$`).test(value) && value.length <= 80) continue;
+      if (key === "rule" && value.length > 0 && Buffer.byteLength(value) <= 128 && !/\p{Cc}/u.test(value)) continue;
+      if (key === "outcome" && ["redacted", "blocked", "matched", "unavailable"].includes(value)) continue;
+      if (key === "after" && /^[A-Za-z0-9_-]{1,512}$/.test(value)) continue;
+      if (key === "limit" && /^[1-9]\d{0,2}$/.test(value) && Number(value) <= 100) continue;
+      if (key === "from_ms" && /^\d{1,15}$/.test(value) && Number(value) <= 253402300799000) continue;
+      return false;
+    }
     if (listing) {
       if (
         key === "q" &&
@@ -518,6 +528,7 @@ export async function start(config) {
         "/app.js": ["app.js", "text/javascript"],
         "/compliance.js": ["compliance.js", "text/javascript"],
         "/tracing.js": ["tracing.js", "text/javascript"],
+        "/guardrail-view.js": ["guardrail-view.js", "text/javascript"],
         "/tracing.css": ["tracing.css", "text/css"],
         "/evals.js": ["evals.js", "text/javascript"],
         "/eval-lists.js": ["eval-lists.js", "text/javascript"],

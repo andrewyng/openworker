@@ -1,4 +1,5 @@
 import { esc, duration, count } from "./observability-data.js";
+import { guardrailPath, guardrailRows } from "./guardrail-view.js";
 const id = (s) => encodeURIComponent(s);
 const path = (q) =>
   `/v1/sessions/${id(q.sessionId)}/observability/${id(q.turnId)}`;
@@ -46,6 +47,7 @@ export function serviceTracingAdapter(request) {
       ),
     summary: (q, signal) => get(path(q) + "/summary", signal),
     children: (q, signal) => get(path(q) + "/children", signal),
+    guardrails: (q, signal) => get(guardrailPath({ session_id: q.sessionId, turn_id: q.turnId, limit: 50 }), signal),
   };
 }
 const svg = (kind) => {
@@ -71,6 +73,7 @@ const name = (s) =>
     "agent.execute": "Execution segment",
     "model.requested": "Request started",
     "policy.review": "Policy check",
+    "safety.check": "Guardrail check",
     "approval.wait": "Approval wait",
     "question.wait": "Question wait",
     "environment.operation": "Prepare environment",
@@ -96,6 +99,7 @@ export function mountSessionTracing(
   { adapter, initialRun = null, onOverview, onCapture } = {},
 ) {
   if (!adapter) throw Error("A tracing adapter is required");
+  const safetyBySession = new Map();
   const lifetime = new AbortController(),
     signal = lifetime.signal;
   let disposed = false,
@@ -117,7 +121,7 @@ export function mountSessionTracing(
     tab = "preview",
     pending = false;
   root.classList.add("ow-session-tracing");
-  root.innerHTML = `<div class="tr-heading"><div><h1>Tracing</h1><p>Follow a session, one turn at a time.</p></div><div>${onOverview ? button("overview", "Usage overview ↗") : ""}${button("refresh", "Refresh")}</div></div><div class="tr-toolbar"><input type="search" aria-label="Search sessions" placeholder="Search session name or ID…" maxlength="200"><span class="tr-directory-state" role="status"></span></div><div class="tr-workbench"><aside class="tr-directory"><div class="tr-panehead">Sessions</div><div class="tr-results"></div><div class="tr-directory-footer"></div></aside><section class="tr-execution"><div class="tr-panehead"><span>Execution</span><div class="tr-segment" role="group" aria-label="Execution view">${button("tree", "Tree", 'aria-pressed="true"')}${button("waterfall", "Waterfall", 'aria-pressed="false"')}</div></div><div class="tr-context"></div><div class="tr-turns"></div></section><section class="tr-inspector"><div class="tr-panehead">Step details</div><div class="tr-details"></div></section></div>`;
+  root.innerHTML = `<div class="tr-heading"><div><h1>Tracing</h1><p>Follow a session, one turn at a time.</p></div><div>${adapter.guardrails ? '<a class="button tr-guardrails-link" href="#observability/guardrails">Guardrails</a>' : ""}${onOverview ? button("overview", "Usage overview ↗") : ""}${button("refresh", "Refresh")}</div></div><div class="tr-toolbar"><input type="search" aria-label="Search sessions" placeholder="Search session name or ID…" maxlength="200"><span class="tr-directory-state" role="status"></span></div><div class="tr-workbench"><aside class="tr-directory"><div class="tr-panehead">Sessions</div><div class="tr-results"></div><div class="tr-directory-footer"></div></aside><section class="tr-execution"><div class="tr-panehead"><span>Execution</span><div class="tr-segment" role="group" aria-label="Execution view">${button("tree", "Tree", 'aria-pressed="true"')}${button("waterfall", "Waterfall", 'aria-pressed="false"')}</div></div><div class="tr-context"></div><div class="tr-turns"></div></section><section class="tr-inspector"><div class="tr-panehead">Step details</div><div class="tr-details"></div></section></div>`;
   const $ = (s) => root.querySelector(s);
   const query = () => $(".tr-toolbar input").value;
   function sessions() {
@@ -132,7 +136,7 @@ export function mountSessionTracing(
       rs
         .map(
           (r) =>
-            `<button class="tr-session ${session?.session_id === r.session_id ? "selected" : ""}" data-tr="session" data-tr-session="${esc(r.session_id)}"><strong>${esc(r.name || r.agent || r.session_id)}</strong><span><i class="tr-status">${esc(r.status || "Unknown")}</i><small>${r.created_ms ? esc(new Date(r.created_ms).toLocaleDateString()) : ""}</small></span><code>${esc(r.session_id)}</code></button>`,
+            `<button class="tr-session ${session?.session_id === r.session_id ? "selected" : ""}" data-tr="session" data-tr-session="${esc(r.session_id)}"><strong>${esc(r.name || r.agent || r.session_id)}</strong><span><i class="tr-status">${esc(r.status || "Unknown")}</i><small>${r.created_ms ? esc(new Date(r.created_ms).toLocaleDateString()) : ""}</small></span><code>${esc(r.session_id)}</code>${r.guardrail_hit ? '<small class="tr-safety-tag">Guardrail hit</small>' : ""}</button>`,
         )
         .join("") ||
       '<p class="tr-note">No matching sessions on this page.</p>';
@@ -169,16 +173,21 @@ export function mountSessionTracing(
   }
   function context() {
     if (!session) return;
+    const findings = safetyBySession.get(session.session_id) || [];
+    const beforeTurn = findings.filter((finding) => finding.turn_id == null);
     $(".tr-context").innerHTML =
       crumb() +
-      `<h2>${esc(session.name || session.agent || session.session_id)}</h2><div class="tr-chips"><span>${esc(session.status || "Unknown")}</span><span>${turns.length} ${turns.length === 1 ? "turn" : "turns"} loaded${nextTurns ? " · more available" : ""}</span><code>${esc(session.session_id)}</code></div>`;
+      `<h2>${esc(session.name || session.agent || session.session_id)}</h2><div class="tr-chips"><span>${esc(session.status || "Unknown")}</span><span>${turns.length} ${turns.length === 1 ? "turn" : "turns"} loaded${nextTurns ? " · more available" : ""}</span><code>${esc(session.session_id)}</code>${findings.some((finding) => finding.hit) ? '<span class="tr-safety-tag">Guardrail hit</span>' : ""}</div>`
+      + (beforeTurn.length ? `<div class="tr-safety-group"><h3>Session safety activity</h3>${guardrailRows(beforeTurn)}</div>` : "");
   }
   const visibleSteps = (c) =>
     (c.steps || []).filter((s) => s.operation !== "model.requested");
   function body(t, c) {
-    if (c.error) return `<p class="tr-error" role="status">${esc(c.error)}</p>`;
+    const safety = c.findings?.length
+      ? `<div class="tr-safety-group"><h3>Guardrails</h3>${guardrailRows(c.findings)}</div>` : "";
+    if (c.error) return safety + `<p class="tr-error" role="status">${esc(c.error)}</p>`;
     if (c.loading)
-      return '<p class="tr-note" role="status">Loading recording…</p>';
+      return safety + '<p class="tr-note" role="status">Loading recording…</p>';
     const ss = visibleSteps(c),
       known = ss.filter(
         (s) => Number.isFinite(s.started_ms) && Number.isFinite(s.duration_us),
@@ -194,7 +203,7 @@ export function mountSessionTracing(
       total?.input?.total != null && total?.output?.total != null
         ? `${count(total.input.total + total.output.total)}${total.input.unknown || total.output.unknown ? " + unknown" : ""}`
         : "Not reported";
-    let html = `<div class="tr-turn-metrics"><span>${esc(duration(summary?.wall_elapsed_us))} elapsed</span><span>${tokens} tokens</span><span>${ss.length} steps loaded</span>${onCapture && t.status === "completed" ? button("capture", "Add to dataset", `class="tr-capture" data-turn="${esc(t.turn_id)}"`) : ""}</div>`;
+    let html = safety + `<div class="tr-turn-metrics"><span>${esc(duration(summary?.wall_elapsed_us))} elapsed</span><span>${tokens} tokens</span><span>${ss.length} steps loaded</span>${onCapture && t.status === "completed" ? button("capture", "Add to dataset", `class="tr-capture" data-turn="${esc(t.turn_id)}"`) : ""}</div>`;
     if (mode === "waterfall")
       html += `<div class="tr-axis">${[0, 1, 2, 3, 4].map((i) => `<span>${i ? esc(duration(((range * i) / 4) * 1000)) : "0 s"}</span>`).join("")}</div>`;
     // Indentation follows recorded parent IDs only. Missing parents are roots;
@@ -292,7 +301,7 @@ export function mountSessionTracing(
       turns = turns.slice(0, 1000);
       nextTurns = turns.length < 1000 ? p.next_cursor : null;
       pending = false;
-      if (target && !turns.some((t) => t.turn_id === target.turn_id))
+      if (target?.turn_id && !turns.some((t) => t.turn_id === target.turn_id))
         turns.unshift({ ...target, session_id: sid });
       render();
       if (!more && turns.length) {
@@ -320,6 +329,17 @@ export function mountSessionTracing(
     nextTurns = null;
     $(".tr-details").innerHTML =
       '<p class="tr-note">Select a model or tool call.</p>';
+    if (adapter.guardrails) {
+      const gen = sessionGen;
+      adapter.guardrails({ sessionId: r.session_id }, signal).then((page) => {
+        if (disposed || gen !== sessionGen) return;
+        safetyBySession.set(r.session_id, page.findings);
+        if (!session.name && page.findings[0]?.session_name) {
+          session = { ...session, name: page.findings[0].session_name };
+        }
+        render();
+      }).catch(() => {});
+    }
     await loadTurns(false, target || r);
   }
   async function loadTurn(t, more = false) {
@@ -329,6 +349,13 @@ export function mountSessionTracing(
     const c = { ...old, open: true, loading: true };
     cache.set(t.turn_id, c);
     render();
+    if (!more && adapter.guardrails) {
+      adapter.guardrails(q, signal).then((page) => {
+        if (disposed || gen !== sessionGen || cache.get(t.turn_id) !== c) return;
+        c.findings = page.findings;
+        render();
+      }).catch(() => {});
+    }
     try {
       const [page, s, child] = await Promise.all([
         adapter.timeline(

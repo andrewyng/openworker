@@ -18,6 +18,12 @@ worker:
   maxReplicas: 4
   slots: 2
   drainSeconds: 60
+evalWorker:
+  enabled: true # rendered when cluster observability is configured
+  replicas: 1
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
 terminationGracePeriodSeconds: 120
 bootstrapEnabled: true
 platformControllerEnabled: true

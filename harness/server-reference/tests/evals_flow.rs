@@ -1,5 +1,10 @@
 use axum::{extract::Json, routing::post, Router};
-use openworker_runtime::{execution::Backend, model::Model, runtime::Runtime};
+use openworker_runtime::{
+    execution::Backend,
+    model::Model,
+    runtime::Runtime,
+    safety::{Action, Config as SafetyConfig, Guardrails, Rule},
+};
 use openworker_server_reference::{http::App, Config};
 use openworker_store_postgres::{
     app_agents::Grants,
@@ -161,14 +166,29 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     let installed = bundle(&path, "page-editor");
     let runner = path.join("fixture-runner");
     std::fs::write(&runner, b"\x7fELF-inert-fixture").unwrap();
-    let config: Config = serde_json::from_value(json!({
+    let safety = SafetyConfig {
+        guardrails: Guardrails {
+            user_input: vec![
+                Rule::regex("fixture-ssn", r"999-99-0000", Action::Block),
+                Rule::credit_card(Action::redact()),
+            ],
+            model_output: vec![Rule::credit_card(Action::redact())],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let configuration = json!({
         "database_env": env, "schema": schema, "database_loopback_plaintext": true,
         "state_root":path, "bundle":installed, "runner":runner, "model":"unused",
         "api_token_file":"unused", "actor":"admin",
         "openshell":{"identity":"unused","endpoint":"https://127.0.0.1:1","certificates":"unused","workspace":"unused","image":"unused"},
         "service":{"id":"eval-qualification","namespace":"test","agent":"page-editor"},
+        "safety":safety,
         "observability":{"schema":recording_schema}
-    })).unwrap();
+    });
+    let config: Config = serde_json::from_value(configuration.clone()).unwrap();
+    let config_path = path.join("eval-service.json");
+    std::fs::write(&config_path, configuration.to_string()).unwrap();
     let db = config.database().unwrap();
     PostgresStore::migrate(&db).unwrap();
     let store = PostgresStore::open(db).unwrap();
@@ -196,6 +216,8 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
             .find(|item| item["role"] == "user").unwrap()["content"].to_string();
         let response = if request.contains("OVERSIZE_FIXTURE") {
             "a".repeat(16500)
+        } else if request.contains("REDACT_FIXTURE") {
+            "Synthetic card 4111111111111111 removed from this response.".into()
         } else if request.contains("FAIL_FIXTURE") {
             "<header>Field Notes</header>\n<a href=\"/plans\">Plans</a>".into()
         } else {
@@ -219,7 +241,7 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     .await
     .unwrap();
     let open = |name| {
-        let runtime = Runtime::open_instrumented_optional_runner(
+        let mut runtime = Runtime::open_instrumented_optional_runner(
             &path.join(format!("{name}-runtime")),
             &bundle(&path, name),
             None,
@@ -232,6 +254,7 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
             started.telemetry.clone(),
         )
         .unwrap();
+        Runtime::configure_safety(&mut runtime, safety.clone(), Default::default()).unwrap();
         runtime
             .connections
             .set(json!({
@@ -263,6 +286,26 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     )
     .await;
     let foreign = run(&other, &path, "Keep this second app's result separate.").await;
+    let redacted = run(
+        &editor,
+        &path,
+        "REDACT_FIXTURE: return the synthetic test card.",
+    )
+    .await;
+    let blocked_workspace = tempfile::tempdir_in(&path).unwrap();
+    let blocked = editor
+        .dispatch(
+            "session/create",
+            json!({
+                "name":"Pre-admission safety fixture",
+                "coworker":editor.coworker(),
+                "workspace":blocked_workspace.path(),
+                "model":{"connection":"fixture","model":"page-editor"},
+            }),
+        )
+        .await
+        .unwrap();
+    let blocked_sid = blocked["session"]["id"].as_str().unwrap();
 
     // The disposable embedded runtimes write through the real PostgreSQL
     // journal. Assign the same ownership rows that service admission creates.
@@ -273,6 +316,8 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
         (fail.clone(), "app_editor"),
         (error.clone(), "app_editor"),
         (foreign.clone(), "app_other"),
+        (redacted.clone(), "app_editor"),
+        (json!({"session_id":blocked_sid}), "app_editor"),
     ];
     tokio::task::spawn_blocking(move || {
         let mut pg = postgres::Client::connect(&owner_connection, postgres::NoTls).unwrap();
@@ -299,6 +344,75 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
             .header("x-openworker-namespace", "test")
             .header("Idempotency-Key", request_id)
     };
+    let scoped = |method, endpoint: &str, key: &str| {
+        client
+            .request(method, format!("{url}/v1/{endpoint}"))
+            .bearer_auth(key)
+            .header("x-openworker-namespace", "test")
+            .header("Idempotency-Key", "fixture-guardrails")
+    };
+    let denied = scoped(
+        reqwest::Method::POST,
+        &format!("sessions/{blocked_sid}/turns"),
+        EDITOR,
+    )
+    .json(&json!({"text":"Use this synthetic identifier 999-99-0000"}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(denied.status(), 422);
+    let blocked = scoped(
+        reqwest::Method::GET,
+        "observability/guardrails?rule=fixture-ssn&outcome=blocked",
+        EDITOR,
+    )
+    .send()
+    .await
+    .unwrap()
+    .json::<Value>()
+    .await
+    .unwrap();
+    assert_eq!(blocked["findings"].as_array().unwrap().len(), 1);
+    assert_eq!(blocked["findings"][0]["session_id"], blocked_sid);
+    assert_eq!(blocked["findings"][0]["turn_id"], Value::Null);
+    assert_eq!(blocked["findings"][0]["tag"], "guardrail:fixture-ssn");
+    assert!(!blocked.to_string().contains("999-99-0000"));
+    let redaction_path = format!(
+        "observability/guardrails?session_id={}&turn_id={}",
+        redacted["session_id"].as_str().unwrap(),
+        redacted["turn_id"].as_str().unwrap()
+    );
+    let finding = scoped(reqwest::Method::GET, &redaction_path, EDITOR)
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(finding["findings"].as_array().unwrap().len(), 1);
+    assert_eq!(finding["findings"][0]["outcome"], "redacted");
+    assert_eq!(
+        finding["findings"][0]["tag"],
+        "guardrail:builtin.credit-card"
+    );
+    assert!(finding["findings"][0]["match_count"].as_u64().unwrap() > 0);
+    assert!(!finding.to_string().contains("4111111111111111"));
+    assert_eq!(
+        scoped(reqwest::Method::GET, &redaction_path, OTHER)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    let foreign_findings = scoped(reqwest::Method::GET, "observability/guardrails", OTHER)
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(foreign_findings["findings"], json!([]));
     let evidence_path = |turn: &Value| {
         format!(
             "evidence/{}/{}",
@@ -417,6 +531,43 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     .unwrap();
     assert_eq!(pending["runs"][0]["id"], queued["id"]);
     assert_eq!(pending["runs"][0]["counts"], Value::Null);
+    // Stop between committed batches and check that another process resumes
+    // at the next ordinal. Put the checkpoint job first in the test queue.
+    let checkpoint_dataset = "evalset_checkpoint";
+    let checkpoint_id = "eval_checkpoint_job";
+    let (checkpoint_connection, checkpoint_schema, copy_from) =
+        (connection.clone(), schema.clone(), dataset.clone());
+    tokio::task::spawn_blocking(move || {
+        let mut pg = postgres::Client::connect(&checkpoint_connection,postgres::NoTls).unwrap();
+        pg.batch_execute(&format!("SET search_path TO {checkpoint_schema},pg_catalog")).unwrap();
+        pg.execute("INSERT INTO eval_datasets(id,owner,name,version) VALUES($1,'app_editor','Recovery checks',20)",
+            &[&checkpoint_dataset]).unwrap();
+        pg.execute("INSERT INTO eval_cases(id,dataset,version,source,evidence,check_spec)
+            SELECT $1||'_'||n,$1,n,c.source,c.evidence,c.check_spec
+            FROM generate_series(1,20) n JOIN eval_cases c ON c.dataset=$2 AND c.version=1",
+            &[&checkpoint_dataset,&copy_from]).unwrap();
+        pg.execute("INSERT INTO eval_jobs(id,dataset,version,created_ms) VALUES($1,$2,20,1)",
+            &[&checkpoint_id,&checkpoint_dataset]).unwrap();
+    }).await.unwrap();
+    let checkpoint_store = PostgresStore::open(config.database().unwrap()).unwrap();
+    assert!(checkpoint_store.score_next_eval().unwrap());
+    drop(checkpoint_store);
+    let checkpoint_path = format!("datasets/{checkpoint_dataset}/jobs/{checkpoint_id}");
+    let progress = send(
+        reqwest::Method::GET,
+        checkpoint_path.clone(),
+        EDITOR,
+        "".into(),
+    )
+    .send()
+    .await
+    .unwrap()
+    .json::<Value>()
+    .await
+    .unwrap();
+    assert_eq!(progress["progress"], json!({"completed":16,"total":20}));
+    assert!(progress["results"].is_null());
+
     let volume = std::env::var_os("OW_EVALS_VOLUME").is_some();
     if volume {
         let (connection, schema, dataset) = (connection.clone(), schema.clone(), dataset.clone());
@@ -426,11 +577,61 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
             .unwrap();
     }
 
-    // Delay starting the worker until the API has persisted the job.
-    let worker = tokio::spawn(openworker_server_reference::evals::run(
-        store.clone(),
-        stop.clone(),
-    ));
+    // Restart the API while the work is still queued.
+    api_task.abort();
+    let _ = api_task.await;
+    let listener = tokio::net::TcpListener::bind(url.trim_start_matches("http://"))
+        .await
+        .unwrap();
+    let app = App::new(&config, editor.clone(), store.clone(), stop.clone()).unwrap();
+    let api_task = tokio::spawn(async move {
+        axum::serve(listener, app.router()).await.unwrap();
+    });
+    let pending_after_restart = send(reqwest::Method::GET, jobs.clone(), EDITOR, "".into())
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(pending_after_restart["status"], "queued");
+
+    let mut workers = Vec::new();
+    let mut health_addresses = Vec::new();
+    for _ in 0..2 {
+        let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let health = probe.local_addr().unwrap();
+        drop(probe);
+        health_addresses.push(format!("http://{health}/readyz"));
+        workers.push(
+            tokio::process::Command::new(env!("CARGO_BIN_EXE_openworker-server-reference"))
+                .arg("--config")
+                .arg(&config_path)
+                .arg("eval-worker")
+                .arg("--health-listen")
+                .arg(health.to_string())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+        );
+    }
+    for health in health_addresses {
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                if client
+                    .get(&health)
+                    .send()
+                    .await
+                    .is_ok_and(|r| r.status() == 204)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
     let finished: Value = tokio::time::timeout(Duration::from_secs(8), async {
         loop {
             let res = send(reqwest::Method::GET, jobs.clone(), EDITOR, "".into())
@@ -447,10 +648,43 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     .await
     .unwrap();
     assert_eq!(finished["dataset_version"], 3);
+    assert_eq!(finished["progress"], json!({"completed":3,"total":3}));
     assert_eq!(finished["results"].as_array().unwrap().len(), 3);
     assert_eq!(finished["results"][0]["result"]["score"]["value"], true);
     assert_eq!(finished["results"][1]["result"]["score"]["value"], false);
     assert_eq!(finished["results"][2]["result"]["status"], "error");
+
+    let resumed: Value = tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let result = send(
+                reqwest::Method::GET,
+                checkpoint_path.clone(),
+                EDITOR,
+                "".into(),
+            )
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap();
+            if result["status"] == "completed" {
+                break result;
+            }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(resumed["progress"], json!({"completed":20,"total":20}));
+    let values = resumed["results"].as_array().unwrap();
+    assert_eq!(values.len(), 20);
+    for (index, item) in values.iter().enumerate() {
+        assert_eq!(
+            item["result"]["id"],
+            format!("{checkpoint_id}-{}", index + 1)
+        );
+    }
 
     if volume {
         // Let the worker fill the historical catalog before capturing it in Chrome.
@@ -525,6 +759,8 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
             .env("OW_EVALS_URL", &url)
             .env("OW_EVALS_TOKEN", EDITOR)
             .env("OW_EVALS_PASS_TURN", pass.to_string())
+            .env("OW_GUARDRAIL_REDACTED_TURN", redacted.to_string())
+            .env("OW_GUARDRAIL_BLOCKED_SESSION", blocked_sid)
             .env("OW_EVALS_DATASET", &dataset)
             .env("OW_EVALS_JOB", queued["id"].as_str().unwrap())
             .output()
@@ -540,7 +776,9 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     }
 
     stop.cancel();
-    worker.await.unwrap();
+    for mut worker in workers {
+        worker.kill().await.unwrap();
+    }
     editor.shutdown().await.unwrap();
     other.shutdown().await.unwrap();
     api_task.abort();

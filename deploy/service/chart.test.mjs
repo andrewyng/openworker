@@ -275,3 +275,22 @@ test("only the API and worker receive the optional model registry key", async ()
     assert(roles.some(doc => doc.includes("name: test-" + role) && doc.includes('name: "registry-test-key", key: registry-key')));
   }
 });
+
+test("eval worker is independently sized and only mounts the execution database", async () => {
+  assert.equal(deployment(await render({}), "eval-worker"), undefined);
+  const config = { ...base.config, observability: {} };
+  const rendered = await render({
+    config,
+    secrets: { model: "model-key", observability: "recording-db", telemetry: "otlp-auth" },
+    evalWorker: { replicas: 2, resources: { limits: { memory: "320Mi" } } },
+  });
+  const worker = deployment(rendered, "eval-worker");
+  assert.match(worker, /replicas: 2/);
+  assert.match(worker, /args: \[eval-worker, --health-listen, "127\.0\.0\.1:8082"\]/);
+  assert.match(worker, /memory: 320Mi/);
+  assert.match(worker, /automountServiceAccountToken: false/);
+  assert.match(worker, /key: database-url/);
+  assert.doesNotMatch(worker, /mountPath: \/openshell|mountPath: \/models|\/run\/observability|\/run\/telemetry|registry-key|ports:/);
+  const disabled = await render({ config, evalWorker: { enabled: false } });
+  assert.equal(deployment(disabled, "eval-worker"), undefined);
+});

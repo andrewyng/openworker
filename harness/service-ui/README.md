@@ -174,8 +174,8 @@ It opens on port 58640. The production UI lives in `public/`; the mock lives in
 
 ## Evals
 
-Enable cluster observability and deploy the API and Management UI from the
-same revision. Run the normal execution store migration before starting the API.
+Enable cluster observability and deploy the API, eval worker and Management UI
+from the same revision. Run the normal execution store migration first.
 
 Open a completed turn in **Observability** and choose **Add to dataset**.
 Review the final assistant response, enter an expectation, and choose which
@@ -195,6 +195,14 @@ Set `OW_EVALS_VOLUME=1` when running the `evals_flow` integration test with an
 isolated PostgreSQL database and the optional Playwright setup. The fixture
 adds 96 synthetic datasets and queues 1,426 jobs through the existing scorer
 for catalog and browser qualification.
+
+### Guardrail hits
+
+Open **Observability → Guardrails** to filter recorded findings by rule ID,
+outcome and time. Successful turns can have redactions. Open an affected turn
+to see its guardrail row and expand it for the rule version and match count.
+Blocks that occur before admission appear under **Session safety activity**.
+The labels are derived from committed decisions without copying the matched text.
 
 ## Complete-stack local Kubernetes qualification
 
