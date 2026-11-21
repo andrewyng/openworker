@@ -39,26 +39,36 @@ fn bundle(root: &Path, agent: &str) -> std::path::PathBuf {
 }
 
 async fn run(runtime: &std::sync::Arc<Runtime>, root: &Path, text: &str) -> Value {
-    let workspace = tempfile::tempdir_in(root).unwrap();
+    let workspace = tempfile::tempdir_in(root).unwrap().keep();
     let session = runtime
         .dispatch(
             "session/create",
             json!({
                 "name":runtime.coworker(),
                 "coworker":runtime.coworker(),
-                "workspace":workspace.path(),
+                "workspace":workspace,
                 "model":{"connection":"fixture","model":"page-editor"},
             }),
         )
         .await
         .unwrap();
     let sid = session["session"]["id"].as_str().unwrap();
+    run_turn(runtime, sid, "synthetic-task", text, "completed").await
+}
+
+async fn run_turn(
+    runtime: &std::sync::Arc<Runtime>,
+    sid: &str,
+    submission: &str,
+    text: &str,
+    expected: &str,
+) -> Value {
     runtime
         .dispatch(
             "turn/start",
             json!({
                 "session_id":sid,
-                "submission_id":"synthetic-task",
+                "submission_id":submission,
                 "text":text,
             }),
         )
@@ -71,7 +81,7 @@ async fn run(runtime: &std::sync::Arc<Runtime>, root: &Path, text: &str) -> Valu
                 .turn
                 .filter(|turn| openworker_runtime::store::terminal(&turn.status))
             {
-                assert_eq!(turn.status, "completed");
+                assert_eq!(turn.status, expected);
                 break json!({"session_id": sid, "turn_id": turn.id});
             }
             tokio::time::sleep(Duration::from_millis(30)).await;
@@ -79,6 +89,15 @@ async fn run(runtime: &std::sync::Arc<Runtime>, root: &Path, text: &str) -> Valu
     })
     .await
     .unwrap()
+}
+
+async fn eval_json(request: reqwest::RequestBuilder, expected_status: u16) -> Value {
+    let response = request.send().await.unwrap();
+    let status = response.status();
+    let path = response.url().path().to_owned();
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(status, expected_status, "{path}: {body}");
+    body
 }
 
 /// Populate a disposable catalog using captured evidence from the two agents.
@@ -214,6 +233,10 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     let (model_url, model_task) = listen(Router::new().route("/v1/chat/completions", post(|Json(body): Json<Value>| async move {
         let request = body["messages"].as_array().unwrap().iter().rev()
             .find(|item| item["role"] == "user").unwrap()["content"].to_string();
+        if request.contains("MODEL_ERROR_FIXTURE") {
+            return (axum::http::StatusCode::BAD_REQUEST, [("content-type","application/json")],
+                r#"{"error":{"message":"Synthetic provider failure"}}"#.to_owned());
+        }
         let response = if request.contains("OVERSIZE_FIXTURE") {
             "a".repeat(16500)
         } else if request.contains("REDACT_FIXTURE") {
@@ -224,7 +247,7 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
             "<header>Field Notes</header>\n<a href=\"/pricing\">Plans</a>".into()
         };
         let chunk = json!({"choices":[{"index":0,"delta":{"content":response},"finish_reason":"stop"}]});
-        ([("content-type","text/event-stream")], format!("data: {chunk}\n\ndata: [DONE]\n\n"))
+        (axum::http::StatusCode::OK, [("content-type","text/event-stream")], format!("data: {chunk}\n\ndata: [DONE]\n\n"))
     }))).await;
 
     let recording_config = config.clone();
@@ -273,6 +296,23 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
         "Update the Plans link to /pricing. Keep the header intact. sk-synthetic-test-secret",
     )
     .await;
+    let retry_sid = pass["session_id"].as_str().unwrap();
+    let failed_turn = run_turn(
+        &editor,
+        retry_sid,
+        "provider-error",
+        "MODEL_ERROR_FIXTURE",
+        "failed",
+    )
+    .await;
+    let retried_turn = run_turn(
+        &editor,
+        retry_sid,
+        "provider-retry",
+        "Update the Plans link to /pricing.",
+        "completed",
+    )
+    .await;
     let fail = run(
         &editor,
         &path,
@@ -311,6 +351,7 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     // journal. Assign the same ownership rows that service admission creates.
     let owner_connection = connection.clone();
     let owner_schema = schema.clone();
+    let old_session_id = pass["session_id"].as_str().unwrap().to_owned();
     let owners = [
         (pass.clone(), "app_editor"),
         (fail.clone(), "app_editor"),
@@ -321,6 +362,7 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     ];
     tokio::task::spawn_blocking(move || {
         let mut pg = postgres::Client::connect(&owner_connection, postgres::NoTls).unwrap();
+        pg.batch_execute("SET ow.runtime_schema='7'").unwrap();
         for (turn, owner) in owners {
             let sid = turn["session_id"].as_str().unwrap();
             pg.execute(
@@ -329,6 +371,8 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
             )
             .unwrap();
         }
+        pg.execute(&format!("UPDATE {owner_schema}.submissions SET created=created-INTERVAL '10 days' WHERE session_id=$1"),
+            &[&old_session_id]).unwrap();
     })
     .await
     .unwrap();
@@ -568,6 +612,124 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     assert_eq!(progress["progress"], json!({"completed":16,"total":20}));
     assert!(progress["results"].is_null());
 
+    let tag_path = |target: &Value| {
+        let sid = target["session_id"].as_str().unwrap();
+        match target["turn_id"].as_str() {
+            Some(tid) => format!("tags/{sid}/{tid}"),
+            None => format!("tags/{sid}"),
+        }
+    };
+    let tag_request = |target: &Value, token: &str, tag: &str, enabled| {
+        send(
+            reqwest::Method::POST,
+            tag_path(target),
+            token,
+            "tag-fixture".into(),
+        )
+        .json(&json!({"tag":tag,"enabled":enabled}))
+    };
+    let get =
+        |endpoint: &str, token: &str| send(reqwest::Method::GET, endpoint.into(), token, "".into());
+    let since = openworker_runtime::store::now_ms() as i64 - 86_400_000;
+    let session_target = json!({"session_id":retry_sid});
+    eval_json(
+        tag_request(&session_target, EDITOR, "late-session", true),
+        200,
+    )
+    .await;
+    let late = eval_json(
+        get(
+            &format!("candidates?tag=late-session&from_ms={since}"),
+            EDITOR,
+        ),
+        200,
+    )
+    .await;
+    assert_eq!(late["turns"].as_array().unwrap().len(), 3);
+    for turn in late["turns"].as_array().unwrap() {
+        assert!(turn["created_ms"].as_i64().unwrap() < since);
+        assert!(turn["tagged_ms"].as_i64().unwrap() > since);
+    }
+    let tag = "release-check";
+    eval_json(tag_request(&failed_turn, EDITOR, tag, true), 200).await;
+    eval_json(tag_request(&pass, EDITOR, tag, true), 200).await;
+    eval_json(tag_request(&foreign, OTHER, tag, true), 200).await;
+    eval_json(tag_request(&failed_turn, OTHER, tag, false), 403).await;
+    let results = eval_json(get("candidates?tag=release-check", EDITOR), 200).await;
+    let candidates = results["turns"].as_array().unwrap();
+    assert_eq!(candidates.len(), 2);
+    assert!(candidates
+        .iter()
+        .any(|row| row["turn_id"] == failed_turn["turn_id"] && row["status"] == "failed"));
+    assert!(candidates.iter().all(
+        |row| row["turn_id"] != retried_turn["turn_id"] && row["turn_id"] != foreign["turn_id"]
+    ));
+    let foreign_candidates = eval_json(get("candidates?tag=release-check", OTHER), 200).await;
+    assert_eq!(foreign_candidates["turns"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        foreign_candidates["turns"][0]["session_id"],
+        foreign["session_id"]
+    );
+    let guarded = eval_json(
+        get("candidates?tag=guardrail%3Abuiltin.credit-card", EDITOR),
+        200,
+    )
+    .await;
+    assert_eq!(guarded["turns"].as_array().unwrap().len(), 1);
+    assert_eq!(guarded["turns"][0]["turn_id"], redacted["turn_id"]);
+    assert_eq!(
+        eval_json(get("candidates?tag=guardrail%3Afixture-ssn", EDITOR), 200).await["turns"],
+        json!([])
+    );
+
+    let evaluator = |token: &str, key: &str, expected: &str| {
+        send(
+            reqwest::Method::POST,
+            "evaluators".into(),
+            token,
+            key.into(),
+        )
+        .json(&json!({"name":"Plans link","check":{"comparison":"contains","expected":expected}}))
+    };
+    let first = eval_json(evaluator(EDITOR, "first-evaluator", "/pricing"), 200).await;
+    assert_eq!(first["version"], 1);
+    assert_eq!(
+        eval_json(evaluator(EDITOR, "first-evaluator", "/pricing"), 200).await,
+        first
+    );
+    eval_json(evaluator(EDITOR, "first-evaluator", "/wrong"), 409).await;
+    assert_eq!(
+        eval_json(get("evaluators", OTHER), 200).await["evaluators"],
+        json!([])
+    );
+    let request = json!({"evaluator_id":first["id"],"filter":{"tag":tag,"from_ms":since},"turns":[failed_turn,pass]});
+    let enqueue_batch = |key: &str, body: &Value| {
+        send(reqwest::Method::POST, "batches".into(), EDITOR, key.into()).json(body)
+    };
+    let mut unauthorized_target = request.clone();
+    unauthorized_target["turns"] = json!([foreign]);
+    eval_json(enqueue_batch("foreign-target", &unauthorized_target), 409).await;
+    let batch = eval_json(enqueue_batch("release-gate", &request), 202).await;
+    let batch_id = batch["id"].as_str().unwrap();
+    let batch_path = format!("batches/{batch_id}");
+    eval_json(get(&batch_path, OTHER), 404).await;
+    eval_json(tag_request(&failed_turn, EDITOR, tag, false), 200).await;
+    let second = eval_json(evaluator(EDITOR, "second-evaluator", "/wrong"), 200).await;
+    assert_eq!(second["version"], 2);
+    assert_eq!(
+        eval_json(get("evaluators?q=Plans+link", EDITOR), 200).await["evaluators"],
+        json!([second])
+    );
+    assert_eq!(
+        eval_json(enqueue_batch("release-gate", &request), 202).await,
+        batch
+    );
+    eval_json(enqueue_batch("removed-target", &request), 409).await;
+    let pinned = eval_json(get(&batch_path, EDITOR), 200).await;
+    assert_eq!(pinned["evaluator"], first);
+    assert_eq!(pinned["targets"][0]["turn_id"], failed_turn["turn_id"]);
+    assert_eq!(pinned["targets"][1]["turn_id"], pass["turn_id"]);
+
     let volume = std::env::var_os("OW_EVALS_VOLUME").is_some();
     if volume {
         let (connection, schema, dataset) = (connection.clone(), schema.clone(), dataset.clone());
@@ -686,6 +848,38 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
         );
     }
 
+    let scored = tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let job = eval_json(get(&batch_path, EDITOR), 200).await;
+            if job["status"] == "completed" {
+                break job;
+            }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(scored["progress"], json!({"completed":2,"total":2}));
+    assert_eq!(scored["evaluator"], first);
+    assert_eq!(scored["results"][0]["turn"]["status"], "failed");
+    assert_eq!(scored["results"][0]["result"]["status"], "error");
+    assert_eq!(scored["results"][1]["result"]["score"]["value"], true);
+    assert_eq!(scored["results"][1]["result"]["evaluator"]["version"], "1");
+    let on_source = eval_json(get(&tag_path(&failed_turn), EDITOR), 200).await;
+    assert_eq!(on_source["evaluations"][0]["job_id"], batch_id);
+    assert_eq!(
+        eval_json(get(&tag_path(&retried_turn), EDITOR), 200).await["evaluations"],
+        json!([])
+    );
+    eval_json(get(&tag_path(&failed_turn), OTHER), 403).await;
+    let listed = eval_json(get("runs?q=release-check", EDITOR), 200).await;
+    assert_eq!(listed["runs"][0]["id"], batch_id);
+    assert_eq!(listed["runs"][0]["dataset_id"], Value::Null);
+    assert_eq!(
+        eval_json(get("runs?q=release-check", OTHER), 200).await["runs"],
+        json!([])
+    );
+
     if volume {
         // Let the worker fill the historical catalog before capturing it in Chrome.
         tokio::time::timeout(Duration::from_secs(45), async {
@@ -759,6 +953,7 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
             .env("OW_EVALS_URL", &url)
             .env("OW_EVALS_TOKEN", EDITOR)
             .env("OW_EVALS_PASS_TURN", pass.to_string())
+            .env("OW_EVALS_FAILED_TURN", failed_turn.to_string())
             .env("OW_GUARDRAIL_REDACTED_TURN", redacted.to_string())
             .env("OW_GUARDRAIL_BLOCKED_SESSION", blocked_sid)
             .env("OW_EVALS_DATASET", &dataset)

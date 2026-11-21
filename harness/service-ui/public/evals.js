@@ -1,6 +1,7 @@
 import { esc } from "./observability-data.js";
 
 import { datasetHref, evalEndpoint as endpoint, evalTabs, jobHref, mountEvalList, runStatus } from "./eval-lists.js";
+import { evalOutcome as outcome, evalSelectionLink, mountEvalSelection } from "./eval-selection.js";
 const id = encodeURIComponent;
 const traceLink = ({ session_id, turn_id }) =>
   `#observability/${id(session_id)}/${id(turn_id)}`;
@@ -141,19 +142,13 @@ export async function captureEvalCase(root, api, turn, signal) {
   }
 }
 
-function outcome(result) {
-  if (result.status === "error") return ["error", "Error"];
-  if (result.status === "skipped") return ["skipped", "Skipped"];
-  return result.score?.value === true ? ["passed", "Passed"] : ["failed", "Failed"];
-}
-
 const pill = (kind, name) => `<span class="ev-pill ev-${kind}"><i></i>${esc(name)}</span>`;
 const caseName = (entry) => esc(entry.turn.name || "Agent response");
-function renderIndex(root, view) {
+function renderIndex(root, view, canRun) {
   root.innerHTML = `
     <header class="ev-heading">
       <div><h1>Evals</h1><p>Evaluate captured agent responses.</p></div>
-      <a class="button" href="#observability">Open tracing</a>
+      <a class="button" href="${canRun ? evalSelectionLink() : "#observability"}">${canRun ? "Evaluate tagged turns" : "Open tracing"}</a>
     </header>
     ${evalTabs(view)}
     <section class="ev-section" data-eval-list></section>`;
@@ -190,16 +185,28 @@ function renderCase(target, item) {
 }
 
 function renderJob(root, dataset, job) {
-  const cases = new Map(dataset.cases.map((entry) => [entry.id, entry]));
+  const cases = new Map((dataset?.cases || []).map((entry) => [entry.id, entry]));
   const results = job.results || [];
   const states = results.map(({ result }) => outcome(result)[0]);
   root.innerHTML = `
-    <nav class="ev-breadcrumb" aria-label="Evaluation breadcrumb"><a href="#evals">Evals</a><span aria-hidden="true">/</span><a href="#evals/${id(dataset.id)}">${esc(dataset.name)}</a><span aria-hidden="true">/</span><span>Run</span></nav>
+    <nav class="ev-breadcrumb" aria-label="Evaluation breadcrumb"><a href="#evals?view=runs">Evals</a><span aria-hidden="true">/</span>
+      ${dataset ? `<a href="#evals/${id(dataset.id)}">${esc(dataset.name)}</a>`
+        : `<a href="${evalSelectionLink(job.selection.tag)}">Tagged turns</a>`}
+      <span aria-hidden="true">/</span><span>Run</span></nav>
     <header class="ev-heading">
-      <div><h1>Evaluation run</h1><p>${esc(date(job.created_ms))} · Dataset version ${job.dataset_version}</p></div>
+      <div><h1>Evaluation run</h1><p>${esc(date(job.created_ms))} · ${dataset ? "Dataset version " + job.dataset_version
+        : esc(job.evaluator.name) + " · v" + job.evaluator.version}</p></div>
       ${runStatus(job.status)}
     </header>
-    ${job.status !== "completed" ? `<div class="ev-empty" role="status"><h3>Waiting for results</h3><p>${job.progress?.total ? `${job.progress.completed} of ${job.progress.total} cases scored.` : "This page updates as the cluster finishes the eval."}</p></div>` : `
+    ${dataset ? "" : `<section class="ev-section ev-run-selection">
+      <details class="ev-disclosure"><summary>${job.targets.length} ${job.targets.length === 1 ? "turn" : "turns"} · ${esc(job.selection.tag)}</summary>
+        <p>Check: ${checkLabel(job.evaluator.check)}</p>${textBlock(job.evaluator.check.expected)}
+        ${job.selection.from_ms == null ? "" : `<p>Tag applied since ${esc(date(job.selection.from_ms))}</p>`}
+        ${job.status === "completed" ? "" : `<ul>${job.targets.map((turn) =>
+          `<li><a href="${traceLink(turn)}">${esc(turn.name || "Agent turn")}</a> · ${esc(turn.status)}</li>`).join("")}</ul>`}
+      </details>
+    </section>`}
+    ${job.status !== "completed" ? `<div class="ev-section ev-empty" role="status"><h3>Waiting for results</h3><p>${job.progress?.total ? `${job.progress.completed} of ${job.progress.total} ${dataset ? "cases" : "turns"} scored.` : "This page updates as the cluster finishes the eval."}</p></div>` : `
       <div class="ev-metrics">${[["passed", "Passed"], ["failed", "Failed"], ["error", "Evaluator errors"]].map(([kind, label]) => `
         <div><span>${label}</span><strong>${states.filter((state) => state === kind).length}</strong></div>`).join("")}</div>
       <section class="ev-section" aria-labelledby="ev-results">
@@ -207,9 +214,10 @@ function renderJob(root, dataset, job) {
         <div class="ev-list">${results.map(({ turn, result }) => {
           const entry = cases.get(result.dataset_case);
           return `<details class="ev-case" ${entry ? `data-case="${esc(entry.id)}"` : ""}>
-            <summary><span>${entry ? caseName(entry) : "Saved case"}</span>${pill(...outcome(result))}</summary>
+            <summary><span>${entry ? caseName(entry) : esc(turn.name || "Agent turn")}</span>${pill(...outcome(result))}</summary>
             <div class="ev-case-detail">
               ${result.explanation ? `<p class="ev-result-note">${esc(result.explanation)}</p>` : ""}
+              ${turn.status ? `<p class="ev-muted">Turn status · ${esc(turn.status)}</p>` : ""}
               <div data-ev-evidence>${entry ? '<p class="ev-muted" role="status">Loading captured evidence…</p>' : `<a href="${traceLink(turn)}">Open source turn ↗</a>`}</div>
             </div>
           </details>`;
@@ -249,17 +257,22 @@ export function mountEvals(root, { api, datasetId, jobId, canRun, query }) {
   }
   async function load() {
     try {
+      if (datasetId === "selection" && !jobId) {
+        mountEvalSelection(root, { api, query, signal, canRun });
+        return;
+      }
       if (!datasetId) {
-        renderIndex(root, view);
+        renderIndex(root, view, canRun);
         loadList();
         return;
       }
-      const dataset = await get(pathFor(datasetId));
+      const batch = datasetId === "batch" && jobId;
+      const dataset = batch ? null : await get(pathFor(datasetId));
       if (signal.aborted) return;
       if (jobId) {
         const poll = async () => {
           try {
-            const job = await get(`${pathFor(datasetId)}/jobs/${id(jobId)}`);
+            const job = await get(batch ? `${endpoint}/batches/${id(jobId)}` : `${pathFor(datasetId)}/jobs/${id(jobId)}`);
             if (signal.aborted) return;
             renderJob(root, dataset, job);
             if (job.status === "completed") loadCaseEvidence();

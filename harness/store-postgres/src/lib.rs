@@ -9,6 +9,7 @@ mod compliance;
 mod controls;
 mod db;
 mod environments;
+pub mod eval_selection;
 pub mod evals;
 pub mod guardrail_query;
 mod ingress;

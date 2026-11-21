@@ -273,4 +273,17 @@ test("eval catalog proxy bounds searches, cursors and filters to their list rout
     assert.equal(allowed("GET", path), false, path);
   }
   assert.equal(allowed("POST", "/v1/evals/runs"), false);
+  assert.equal(allowed("GET", "/v1/evals/candidates?tag=guardrail%3Abuiltin.credit-card&from_ms=1770000000000"), true);
+  assert.equal(allowed("GET", "/v1/evals/evaluators?q=Release+check&after=abc"), true);
+  assert.equal(allowed("GET", "/v1/evals/batches/job_abc"), true);
+  assert.equal(allowed("POST", "/v1/evals/tags/session_abc/turn_abc"), true);
+  assert.equal(allowed("POST", "/v1/evals/batches"), true);
+  for (const path of [
+    "/v1/evals/candidates",
+    "/v1/evals/candidates?tag=foo&tag=bar",
+    "/v1/evals/candidates?tag=guardrail%3A",
+    "/v1/evals/evaluators?owner=app_other",
+    "/v1/evals/batches/job_abc?raw=true",
+    "/v1/evals/tags/session_abc/..",
+  ]) assert.equal(allowed("GET", path), false, path);
 });

@@ -10,7 +10,7 @@ use postgres::Transaction;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-const MAX_CASES: i32 = 100;
+pub(crate) const MAX_CASES: i32 = 100;
 const SCORE_BATCH: i64 = 16;
 const MAX_EVIDENCE_BYTES: usize = 16_384;
 
@@ -32,6 +32,10 @@ pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
         );
         ALTER TABLE eval_jobs ADD COLUMN IF NOT EXISTS processed INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE eval_jobs ADD COLUMN IF NOT EXISTS partial_results JSONB;
+        ALTER TABLE eval_jobs ALTER COLUMN dataset DROP NOT NULL;
+        ALTER TABLE eval_jobs ADD COLUMN IF NOT EXISTS owner TEXT;
+        ALTER TABLE eval_jobs ADD COLUMN IF NOT EXISTS selection JSONB;
+        ALTER TABLE eval_jobs ADD COLUMN IF NOT EXISTS evaluator JSONB;
         CREATE INDEX IF NOT EXISTS eval_jobs_pending
           ON eval_jobs(created_ms,id) WHERE results IS NULL;
         CREATE INDEX IF NOT EXISTS eval_jobs_dataset
@@ -41,6 +45,7 @@ pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
         CREATE INDEX IF NOT EXISTS eval_datasets_name ON eval_datasets(lower(name),id);
         CREATE INDEX IF NOT EXISTS eval_datasets_owner_name ON eval_datasets(owner,lower(name),id);",
     )?;
+    crate::eval_selection::migrate(tx)?;
     Ok(())
 }
 
@@ -120,7 +125,7 @@ fn list_page(q: Option<String>, after: Option<&str>, limit: Option<u16>) -> Resu
     Ok((q, limit))
 }
 
-fn identity(
+pub(crate) fn identity(
     tx: &mut Transaction<'_>,
     auth_context: Option<&auth::Context>,
     action: Action,
@@ -134,7 +139,11 @@ fn identity(
     Ok(p)
 }
 
-fn capture(tx: &mut Transaction<'_>, turn: Turn) -> Result<Evidence> {
+pub(crate) fn capture(
+    tx: &mut Transaction<'_>,
+    turn: Turn,
+    completed_only: bool,
+) -> Result<Evidence> {
     // Only the submitted plain text and final committed assistant message are
     // eligible. Intermediate attempts, tool results and attachment parts are excluded.
     let row = tx
@@ -156,11 +165,12 @@ fn capture(tx: &mut Transaction<'_>, turn: Turn) -> Result<Evidence> {
             ],
         )?
         .ok_or(SubmissionError::NotFound)?;
+    let completed = row.get::<_, String>(0) == "completed";
     ensure!(
-        row.get::<_, String>(0) == "completed",
+        !completed_only || completed,
         SubmissionError::InvalidRequest
     );
-    let messages: Option<Value> = row.get(3);
+    let messages: Option<Value> = if completed { row.get(3) } else { None };
     let mut output = String::new();
     let mut omitted = false;
     for part in messages
@@ -204,13 +214,23 @@ fn owned_dataset(tx: &mut Transaction<'_>, p: &Identity, id: &str) -> Result<(St
     .ok_or_else(|| SubmissionError::NotFound.into())
 }
 
-fn summary(row: &postgres::Row) -> Value {
+pub(crate) fn summary(row: &postgres::Row) -> Value {
     json!({
         "id":row.get::<_, String>("id"),
         "dataset_version":row.get::<_, i32>("version"),
         "created_ms":row.get::<_, i64>("created_ms"),
         "status":if row.get::<_, bool>("ready") { "completed" } else { "queued" },
     })
+}
+
+pub(crate) fn validate_check(check: &Check) -> Result<()> {
+    ensure!(
+        !check.expected.trim().is_empty()
+            && check.expected.len() <= 4000
+            && check.expected == openworker_runtime::telemetry::redact(&check.expected),
+        SubmissionError::InvalidRequest
+    );
+    Ok(())
 }
 
 impl PostgresStore {
@@ -225,7 +245,7 @@ impl PostgresStore {
                 Action::Read,
                 Some(&turn.session_id),
             )?;
-            let evidence = capture(&mut tx, turn)?;
+            let evidence = capture(&mut tx, turn, true)?;
             tx.commit()?;
             Ok(evidence)
         })
@@ -248,21 +268,15 @@ impl PostgresStore {
         ensure!(
             !request.dataset.is_empty()
                 && request.dataset.len() <= 100
-                && !request.dataset.chars().any(char::is_control)
-                && !request.check.expected.trim().is_empty()
-                && request.check.expected.len() <= 4000,
+                && !request.dataset.chars().any(char::is_control),
             SubmissionError::InvalidRequest
         );
-        ensure!(
-            request.check.expected
-                == openworker_runtime::telemetry::redact(&request.check.expected),
-            SubmissionError::InvalidRequest
-        );
+        validate_check(&request.check)?;
         self.call(move |db| {
             let mut tx = db.client.transaction()?;
             identity(&mut tx, db.auth.as_ref(), Action::Submit, Some(&request.turn.session_id))?;
             tx.query_one("SELECT pg_advisory_xact_lock(hashtext('eval.case'),hashtext($1))", &[&id])?;
-            let mut evidence = capture(&mut tx, request.turn)?;
+            let mut evidence = capture(&mut tx, request.turn, true)?;
             if !request.include_input {
                 evidence.input = None;
             }
@@ -359,16 +373,19 @@ impl PostgresStore {
             }
             let rows = tx.query(
                 "WITH anchor AS (
-                    SELECT j.created_ms,j.id FROM eval_jobs j JOIN eval_datasets d ON d.id=j.dataset
-                    WHERE j.id=$4 AND ($1 OR d.owner=$2)
+                    SELECT j.created_ms,j.id FROM eval_jobs j LEFT JOIN eval_datasets d ON d.id=j.dataset
+                    WHERE j.id=$4 AND ($1 OR COALESCE(d.owner,j.owner)=$2)
                  ), page AS MATERIALIZED (
                     SELECT j.id,j.dataset,j.version,j.created_ms,j.results IS NOT NULL AS ready,
-                        d.name AS dataset_name,d.owner
-                    FROM eval_jobs j JOIN eval_datasets d ON d.id=j.dataset
+                        COALESCE(d.name,j.evaluator->>'name') AS display_name,COALESCE(d.owner,j.owner) AS owner,
+                        j.selection->>'tag' AS tag
+                    FROM eval_jobs j LEFT JOIN eval_datasets d ON d.id=j.dataset
                     LEFT JOIN anchor ON TRUE
-                    WHERE ($1 OR d.owner=$2) AND ($3::text IS NULL OR j.dataset=$3)
+                    WHERE ($1 OR COALESCE(d.owner,j.owner)=$2) AND ($3::text IS NULL OR j.dataset=$3)
                       AND ($4::text IS NULL OR (j.created_ms,j.id)<(anchor.created_ms,anchor.id))
-                      AND ($5='' OR strpos(lower(d.name),lower($5))>0 OR strpos(lower(d.owner),lower($5))>0 OR strpos(j.id,lower($5))>0)
+                      AND ($5='' OR strpos(lower(COALESCE(d.name,j.evaluator->>'name')),lower($5))>0
+                           OR strpos(lower(COALESCE(d.owner,j.owner)),lower($5))>0
+                           OR strpos(j.selection->>'tag',lower($5))>0 OR strpos(j.id,lower($5))>0)
                       AND ($6::bool IS NULL OR (j.results IS NOT NULL)=$6)
                       AND ($7::bigint IS NULL OR j.created_ms >= $7)
                     ORDER BY j.created_ms DESC,j.id DESC LIMIT $8
@@ -390,8 +407,11 @@ impl PostgresStore {
                 .then(|| page.last().unwrap().get::<_, String>("id"));
             let runs = page.iter().map(|row| {
                 let mut run = summary(row);
-                run["dataset_id"] = json!(row.get::<_, String>("dataset"));
-                run["dataset_name"] = json!(row.get::<_, String>("dataset_name"));
+                let dataset: Option<String> = row.get("dataset");
+                run["dataset_name"] = json!(dataset.as_ref().map(|_| row.get::<_, String>("display_name")));
+                run["dataset_id"] = json!(dataset);
+                run["name"] = json!(row.get::<_, String>("display_name"));
+                run["tag"] = json!(row.get::<_, Option<String>>("tag"));
                 run["owner"] = json!(row.get::<_, String>("owner"));
                 run["counts"] = json!(row.get::<_, Option<Value>>("counts"));
                 run
@@ -494,33 +514,41 @@ impl PostgresStore {
             ensure!(db.auth.is_none(), auth::Error::Forbidden);
             let mut tx = db.client.transaction()?;
             let Some(job) = tx.query_opt(
-                "SELECT id,dataset,version,processed,partial_results FROM eval_jobs WHERE results IS NULL
+                "SELECT id,dataset,version,processed,partial_results,evaluator FROM eval_jobs WHERE results IS NULL
                  ORDER BY created_ms,id LIMIT 1 FOR UPDATE SKIP LOCKED",
                 &[],
             )? else {
                 return Ok(false);
             };
             let id: String = job.get(0);
-            let dataset: String = job.get(1);
+            let dataset: Option<String> = job.get(1);
             let version: i32 = job.get(2);
             let mut processed: i32 = job.get(3);
             let mut results = match job.get::<_, Option<Value>>(4) {
                 Some(value) => serde_json::from_value::<Vec<Value>>(value)?,
                 None => Vec::new(),
             };
-            let rows = tx.query(
-                "SELECT id,version,source,evidence->>'output',check_spec FROM eval_cases
+            let evaluator: Option<crate::eval_selection::SavedEvaluator> = job.get::<_, Option<Value>>(5)
+                .map(serde_json::from_value).transpose()?;
+            let rows = if let Some(dataset) = dataset {
+                tx.query("SELECT id,version,source,evidence->>'output',check_spec FROM eval_cases
                  WHERE dataset=$1 AND version>$3 AND version<=$2 ORDER BY version LIMIT $4",
-                &[&dataset, &version, &processed, &SCORE_BATCH],
-            )?;
+                 &[&dataset, &version, &processed, &SCORE_BATCH])?
+            } else {
+                tx.query("SELECT NULL::text,ordinal,source,output,NULL::jsonb FROM eval_job_targets
+                 WHERE job=$1 AND ordinal>$2 ORDER BY ordinal LIMIT $3", &[&id, &processed, &SCORE_BATCH])?
+            };
             ensure!(!rows.is_empty(), "Evaluation case snapshot is incomplete");
             for row in rows {
-                let case = row.get::<_, String>(0);
+                let case = row.get::<_, Option<String>>(0);
                 let ordinal: i32 = row.get(1);
                 ensure!(ordinal == processed + 1, "Evaluation case snapshot is incomplete");
                 processed = ordinal;
                 let output = row.get::<_, Option<String>>(3);
-                let spec: Check = serde_json::from_value(row.get(4))?;
+                let spec: Check = match &evaluator {
+                    Some(evaluator) => evaluator.check.clone(),
+                    None => serde_json::from_value(row.get(4))?,
+                };
                 let score = output.as_deref().map(|text| Score::Boolean(match spec.comparison {
                     Match::Contains => text.contains(&spec.expected),
                     Match::Equals => text == spec.expected,
@@ -530,8 +558,8 @@ impl PostgresStore {
                     id: format!("{id}-{ordinal}"),
                     name: "response-check".into(),
                     evaluator: Evaluator {
-                        name: "response-text".into(),
-                        version: "1".into(),
+                        name: evaluator.as_ref().map_or_else(|| "response-text".into(), |e| e.name.clone()),
+                        version: evaluator.as_ref().map_or_else(|| "1".into(), |e| e.version.to_string()),
                         source: Source::Code,
                         model: None,
                         usage: None,
@@ -540,7 +568,7 @@ impl PostgresStore {
                     score,
                     created_ms: openworker_runtime::store::now_ms(),
                     explanation: missing.then(|| "Final response was unavailable for scoring.".into()),
-                    dataset_case: Some(case),
+                    dataset_case: case,
                     experiment: Some(id.clone()),
                     supersedes: None,
                 };

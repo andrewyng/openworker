@@ -186,10 +186,27 @@ Open the dataset under **Evals** and choose **Run eval**. The cluster scores
 the saved responses against their expected text and records the results for
 the selected dataset version. **Cases** expands to show the captured evidence.
 **Runs** in the dataset shows its history. **Evals → Runs** shows recent jobs
-across the datasets you have access to. Search by dataset, app or run ID,
+across the datasets and tagged-turn batches you have access to. Search by dataset,
+evaluator, tag, app or run ID,
 then narrow by status and date. The catalogs load one page at a time.
 Open a run to see its case results and links to the source turns. An unavailable
 final response shows up as an evaluator error.
+
+### Evaluate tagged turns
+
+Use **Session tags** or **Turn tags** in Tracing. A session tag selects its finished
+turns. A turn tag selects that specific turn, including a failed attempt that was
+later retried. **Evaluate tagged turns** filters by when the tag was applied.
+Preview the matches, select up to 100 turns, and choose a saved text evaluator.
+Saving an evaluator under the same name creates a new version.
+
+The queued job saves the chosen turn IDs, their available final responses, and the
+evaluator version. Request text, attachments and tool evidence are excluded. Later
+tag and evaluator changes leave the job reproducible. The job and its source turn
+link to each other. Evaluation results and evaluator settings are scoped to their
+app. To run an evaluation from a guardrail hit, expand the finding and choose
+**Evaluate matching turns**. A pre-admission finding with no turn remains visible
+in Guardrails.
 
 Set `OW_EVALS_VOLUME=1` when running the `evals_flow` integration test with an
 isolated PostgreSQL database and the optional Playwright setup. The fixture

@@ -7,7 +7,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Extension, Json,
 };
-use openworker_store_postgres::{evals, PostgresStore, SubmissionError};
+use openworker_store_postgres::{eval_selection, evals, PostgresStore, SubmissionError};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -99,6 +99,89 @@ pub(crate) async fn job(
 ) -> Result<Json<Value>, ApiError> {
     enabled(&app)?;
     Ok(Json(app.store.eval_job(id, job)?))
+}
+
+pub(crate) async fn session_tags(
+    Extension(app): Extension<App>,
+    Path(sid): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    enabled(&app)?;
+    Ok(Json(app.store.eval_tags(sid, None)?))
+}
+
+pub(crate) async fn turn_tags(
+    Extension(app): Extension<App>,
+    Path((sid, tid)): Path<(String, String)>,
+) -> Result<Json<Value>, ApiError> {
+    enabled(&app)?;
+    Ok(Json(app.store.eval_tags(sid, Some(tid))?))
+}
+
+pub(crate) async fn update_session_tag(
+    Extension(app): Extension<App>,
+    Path(sid): Path<String>,
+    Json(request): Json<eval_selection::UpdateTag>,
+) -> Result<Json<Value>, ApiError> {
+    enabled(&app)?;
+    app.store.update_eval_tag(sid, None, request)?;
+    Ok(Json(json!({})))
+}
+
+pub(crate) async fn update_turn_tag(
+    Extension(app): Extension<App>,
+    Path((sid, tid)): Path<(String, String)>,
+    Json(request): Json<eval_selection::UpdateTag>,
+) -> Result<Json<Value>, ApiError> {
+    enabled(&app)?;
+    app.store.update_eval_tag(sid, Some(tid), request)?;
+    Ok(Json(json!({})))
+}
+
+pub(crate) async fn evaluators(
+    Extension(app): Extension<App>,
+    Query(filter): Query<eval_selection::EvaluatorList>,
+) -> Result<Json<Value>, ApiError> {
+    enabled(&app)?;
+    Ok(Json(app.store.eval_evaluators(filter)?))
+}
+
+pub(crate) async fn save_evaluator(
+    Extension(app): Extension<App>,
+    headers: HeaderMap,
+    Json(request): Json<eval_selection::SaveEvaluator>,
+) -> Result<Json<Value>, ApiError> {
+    enabled(&app)?;
+    let key = service::key(&app, &headers, "eval.evaluator")?;
+    Ok(Json(app.store.save_eval_evaluator(key, request)?))
+}
+
+pub(crate) async fn candidates(
+    Extension(app): Extension<App>,
+    Query(filter): Query<eval_selection::TagFilter>,
+) -> Result<Json<Value>, ApiError> {
+    enabled(&app)?;
+    Ok(Json(app.store.eval_candidates(filter)?))
+}
+
+pub(crate) async fn enqueue_tagged(
+    Extension(app): Extension<App>,
+    headers: HeaderMap,
+    Json(request): Json<eval_selection::Enqueue>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    enabled(&app)?;
+    let key = service::key(&app, &headers, "eval.batch")?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(app.store.enqueue_tag_eval(key, request)?),
+    ))
+}
+
+pub(crate) async fn tagged_job(
+    Extension(app): Extension<App>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    enabled(&app)?;
+    Ok(Json(app.store.tagged_eval_job(id)?))
 }
 
 /// The eval role uses an independent database connection and reopens it after

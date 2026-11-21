@@ -3,7 +3,7 @@ import { esc } from "./observability-data.js";
 export const evalEndpoint = "/v1/evals";
 const id = encodeURIComponent;
 export const datasetHref = (dataset) => `#evals/${id(dataset)}`;
-export const jobHref = (dataset, job) => `${datasetHref(dataset)}/${id(job)}`;
+export const jobHref = (dataset, job) => `${dataset ? datasetHref(dataset) : "#evals/batch"}/${id(job)}`;
 
 const shortDate = new Intl.DateTimeFormat(undefined, {
   month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
@@ -44,14 +44,14 @@ function scoreCounts(counts) {
 function renderTable(items, runs, withinDataset) {
   const headings = runs
     ? '<th scope="col">Started</th>' +
-      (withinDataset ? "" : '<th scope="col">Dataset</th>') +
+      (withinDataset ? "" : '<th scope="col">Source</th>') +
       '<th scope="col">Status</th><th scope="col" class="ev-optional">Results</th>'
     : '<th scope="col">Dataset</th><th scope="col" class="ev-optional">App</th><th scope="col" class="ev-numeric">Cases</th><th scope="col" class="ev-optional">Last run</th>';
   const body = runs
     ? items.map((run) => `<tr>
         <th scope="row"><a class="ev-table-link" href="${jobHref(run.dataset_id, run.id)}">${time(run.created_ms)}</a>
-          <small class="ev-table-subtitle">Version ${run.dataset_version}</small></th>
-        ${withinDataset ? "" : `<td><a class="ev-secondary-link" href="${datasetHref(run.dataset_id)}">${esc(run.dataset_name)}</a>
+          <small class="ev-table-subtitle">${run.tag ? esc(run.tag) : `Version ${run.dataset_version}`}</small></th>
+        ${withinDataset ? "" : `<td>${run.dataset_id ? `<a class="ev-secondary-link" href="${datasetHref(run.dataset_id)}">${esc(run.dataset_name)}</a>` : esc(run.name)}
           <small class="ev-table-subtitle">${esc(run.owner)}</small></td>`}
         <td>${runStatus(run.status)}<small class="ev-table-subtitle ev-compact">${scoreCounts(run.counts)}</small></td>
         <td class="ev-optional">${scoreCounts(run.counts)}</td>
@@ -72,7 +72,7 @@ export function mountEvalList(root, { api, view, datasetId, query, signal, error
   root.innerHTML = `
     <div class="ev-list-toolbar">
       <label class="ev-list-search"><span class="ev-visually-hidden">Search ${noun}</span>
-        <input type="search" maxlength="100" placeholder="${runs ? "Search dataset, app, or run ID…" : "Search datasets or apps…"}">
+        <input type="search" maxlength="100" placeholder="${runs ? "Search dataset, evaluator, tag or run ID…" : "Search datasets or apps…"}">
       </label>
       ${runs ? `<label><span class="ev-visually-hidden">Run status</span><select data-filter="status">${optionList(statusOptions)}</select></label>
         <label><span class="ev-visually-hidden">Run date</span><select data-filter="period">${optionList(periodOptions)}</select></label>` : ""}
@@ -139,7 +139,7 @@ export function mountEvalList(root, { api, view, datasetId, query, signal, error
         const filtered = input.value.trim() || status?.value || period?.value;
         const heading = filtered ? `No matching ${noun}` : `No ${noun} yet`;
         const hint = filtered ? "Try a different search or filter."
-          : runs ? "Run an eval from a dataset to see it here."
+          : runs ? "Run an eval from a dataset or a set of tagged turns."
           : "Open a completed turn in Tracing and choose Add to dataset.";
         content.innerHTML = `<div class="ev-empty"><h3>${heading}</h3><p>${hint}</p></div>`;
       }

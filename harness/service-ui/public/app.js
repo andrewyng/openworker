@@ -2,6 +2,7 @@ import {renderCompliance} from "./compliance.js";
 import {mountSessionTracing, serviceTracingAdapter} from "./tracing.js";
 import { mountObservability } from "./observability.js";
 import { captureEvalCase, mountEvals } from "./evals.js";
+import { editEvalTags } from "./eval-selection.js";
 import { mountGuardrailCatalog } from "./guardrail-view.js";
 let disposeObservability = null;
 let safetyActivity = null;
@@ -577,7 +578,7 @@ async function render() {
       const request = (path, signal) =>
         api(path, "GET", undefined, undefined, signal);
       if (id === "guardrails" && !detailId) {
-        disposeObservability = mountGuardrailCatalog(main, request);
+        disposeObservability = mountGuardrailCatalog(main, request, can.run());
         return;
       }
       const tracing = () => {
@@ -587,6 +588,7 @@ async function render() {
           onOverview: overview,
           initialRun: id ? { session_id: id, turn_id: detailId } : null,
           onCapture: can.run() ? (turn, signal) => captureEvalCase(main, api, turn, signal) : undefined,
+          onTags: can.run() ? (target, signal, onChange) => editEvalTags(main, { api, target, signal, onChange }) : undefined,
         });
         disposeObservability = () => view.dispose();
       };

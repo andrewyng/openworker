@@ -165,7 +165,67 @@ try {
     assert.equal(new URL(page.url()).hash, `#observability/${process.env.OW_GUARDRAIL_BLOCKED_SESSION}`);
     assert.equal(await page.locator(".tr-turn-heading").count(), 0);
     console.log("Chrome passed guardrail chips, rule filtering and a block before any turn was created.");
+
+    await page.goto(`${app.url}/#observability/${redaction.session_id}/${redaction.turn_id}`);
+    await page.locator(".tr-turns .guardrail-finding summary").click();
+    await page.getByRole("link", { name: "Evaluate matching turns", exact: true }).click();
+    await page.getByLabel("Tag", { exact: true }).waitFor();
+    assert.equal(await page.getByLabel("Tag", { exact: true }).inputValue(), "guardrail:builtin.credit-card");
+    await page.getByRole("button", { name: "Preview turns", exact: true }).click();
+    await page.getByRole("table", { name: "Matching turns" }).waitFor();
+    assert.equal(await page.locator(".ev-target-table tbody tr").count(), 1);
   }
+  await page.setViewportSize({ width: 1360, height: 900 });
+  await page.goto(`${app.url}/#observability/${session_id}/${turn_id}`);
+  await page.getByRole("button", { name: "Turn tags", exact: true }).click();
+  const tags = page.getByRole("dialog", { name: "Turn tags" });
+  await tags.getByLabel("Tag", { exact: true }).fill("browser-smoke");
+  await tags.getByRole("button", { name: "Add tag", exact: true }).click();
+  await tags.getByRole("link", { name: "browser-smoke", exact: true }).waitFor();
+  await tags.getByRole("button", { name: "Remove tag browser-smoke", exact: true }).click();
+  await tags.getByRole("link", { name: "browser-smoke", exact: true }).waitFor({ state: "hidden" });
+  await tags.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "Session tags", exact: true }).click();
+  const sessionTags = page.getByRole("dialog", { name: "Session tags" });
+  await sessionTags.getByLabel("Tag", { exact: true }).fill("browser-smoke");
+  await sessionTags.getByRole("button", { name: "Add tag", exact: true }).click();
+  await sessionTags.getByRole("link", { name: "browser-smoke", exact: true }).waitFor();
+  await sessionTags.getByRole("button", { name: "Close", exact: true }).click();
+  await page.locator(".tr-context").getByRole("link", { name: "browser-smoke", exact: true }).click();
+  await page.getByRole("button", { name: "Preview turns", exact: true }).click();
+  await page.getByRole("table", { name: "Matching turns" }).waitFor();
+  await page.getByText("Save an evaluator", { exact: true }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Browser pricing check");
+  await page.getByLabel("Expected text", { exact: true }).fill("/pricing");
+  await page.getByRole("button", { name: "Save evaluator", exact: true }).click();
+  await page.getByText("Saved Browser pricing check · v1.", { exact: true }).waitFor();
+  const failedTurn = JSON.parse(process.env.OW_EVALS_FAILED_TURN);
+  for (const selected of [turn_id, failedTurn.turn_id]) {
+    await page.locator(".ev-target-table tbody tr")
+      .filter({ has: page.locator(`a[href="#observability/${session_id}/${selected}"]`) })
+      .getByRole("checkbox").check();
+  }
+  await page.getByText("2 of 3 selected", { exact: true }).waitFor();
+  await capture("eval-tagged-selection");
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await page.getByRole("button", { name: "Queue evaluation", exact: true }).click();
+  await page.getByRole("heading", { name: "Results", exact: true }).waitFor();
+  assert.match(new URL(page.url()).hash, /^#evals\/batch\//);
+  assert.deepEqual(await page.locator(".ev-metrics strong").allInnerTexts(), ["1", "0", "1"]);
+  await page.setViewportSize({ width: 1360, height: 900 });
+  await page.locator(".ev-case summary").filter({ hasText: "Passed" }).click();
+  await capture("eval-tagged-result");
+  await page.getByRole("link", { name: "Open source turn" }).click();
+  await page.getByRole("heading", { name: "Evaluation results", exact: true }).waitFor();
+  await page.locator(".tr-eval-results").getByRole("link", { name: "Browser pricing check · v1 Passed" }).click();
+  await page.getByRole("heading", { name: "Results", exact: true }).waitFor();
+  await page.getByRole("link", { name: "Evals", exact: true }).last().click();
+  await page.getByRole("searchbox", { name: "Search runs" }).fill("browser-smoke");
+  await page.getByText("Page 1 · 1 shown", { exact: true }).waitFor();
+  await page.getByRole("table", { name: "Evaluation runs" }).getByRole("link").click();
+  await page.getByRole("heading", { name: "Results", exact: true }).waitFor();
+  console.log("Chrome passed turn tags, guardrail selection, saving a versioned evaluator, submitting a batch and opening results from Tracing and Evals.");
   assert.deepEqual(errors, []);
   console.log("Chrome passed trace capture, on-demand execution, three scoring outcomes and source navigation.");
 } finally {

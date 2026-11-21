@@ -49,11 +49,15 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
     }
     let p = path.split('/').collect::<Vec<_>>();
     match (method, p.as_slice()) {
-        ("GET", ["", "v1", "evals", "datasets" | "runs"])
+        ("GET", ["", "v1", "evals", "datasets" | "runs" | "evaluators" | "candidates"])
+        | ("GET", ["", "v1", "evals", "tags" | "batches", _])
+        | ("GET", ["", "v1", "evals", "tags", _, _])
         | ("GET", ["", "v1", "evals", "datasets", _])
         | ("GET", ["", "v1", "evals", "datasets", _, "cases" | "jobs", _])
         | ("GET", ["", "v1", "evals", "evidence", _, _]) => Some(Action::Read),
-        ("POST", ["", "v1", "evals", "cases"])
+        ("POST", ["", "v1", "evals", "cases" | "evaluators" | "batches"])
+        | ("POST", ["", "v1", "evals", "tags", _])
+        | ("POST", ["", "v1", "evals", "tags", _, _])
         | ("POST", ["", "v1", "evals", "datasets", _, "jobs"]) => Some(Action::Submit),
         ("GET" | "POST", ["", "v1", "model-providers"])
         | ("POST", ["", "v1", "model-providers", _, "rotate" | "disable"])
@@ -138,6 +142,21 @@ pub(crate) fn router() -> Router<App> {
         .route("/v1/evals/datasets/:id/jobs", post(crate::evals::enqueue))
         .route("/v1/evals/evidence/:sid/:turn", get(crate::evals::capture))
         .route("/v1/evals/cases", post(crate::evals::save))
+        .route(
+            "/v1/evals/tags/:sid",
+            get(crate::evals::session_tags).post(crate::evals::update_session_tag),
+        )
+        .route(
+            "/v1/evals/tags/:sid/:turn",
+            get(crate::evals::turn_tags).post(crate::evals::update_turn_tag),
+        )
+        .route(
+            "/v1/evals/evaluators",
+            get(crate::evals::evaluators).post(crate::evals::save_evaluator),
+        )
+        .route("/v1/evals/candidates", get(crate::evals::candidates))
+        .route("/v1/evals/batches", post(crate::evals::enqueue_tagged))
+        .route("/v1/evals/batches/:id", get(crate::evals::tagged_job))
         .route(
             "/v1/model-providers",
             get(crate::model_registry::catalog).post(crate::model_registry::register),

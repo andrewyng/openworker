@@ -1,4 +1,5 @@
 import { esc } from "./observability-data.js";
+import { evalSelectionLink } from "./eval-selection.js";
 
 const endpoint = "/v1/observability/guardrails";
 const labels = { redacted: "Redacted", blocked: "Blocked", matched: "Matched", unavailable: "Check unavailable" };
@@ -30,7 +31,7 @@ function facts(finding) {
   </dl>`;
 }
 
-export function guardrailRows(findings, linkToTrace = false) {
+export function guardrailRows(findings, linkToTrace = false, canEvaluate = false) {
   return `<div class="ev-list guardrail-list">${findings.map((finding) => {
     const link = `#observability/${encodeURIComponent(finding.session_id)}${finding.turn_id ? `/${encodeURIComponent(finding.turn_id)}` : ""}`;
     return `<details class="ev-case guardrail-finding">
@@ -42,12 +43,13 @@ export function guardrailRows(findings, linkToTrace = false) {
       </summary>
       <div class="ev-case-detail">${facts(finding)}
         ${linkToTrace ? `<a href="${link}">${finding.turn_id ? "Open source turn" : "Open session"}</a>` : ""}
+        ${canEvaluate && finding.turn_id && finding.tag ? `<a href="${evalSelectionLink(finding.tag)}">Evaluate matching turns</a>` : ""}
       </div>
     </details>`;
   }).join("")}</div>`;
 }
 
-export function mountGuardrailCatalog(root, request) {
+export function mountGuardrailCatalog(root, request, canEvaluate) {
   const lifetime = new AbortController();
   const { signal } = lifetime;
   root.innerHTML = `
@@ -88,7 +90,7 @@ export function mountGuardrailCatalog(root, request) {
     try {
       const page = await request(guardrailPath({ ...filters, after: cursors.at(-1) }), signal);
       if (signal.aborted || current !== generation) return;
-      result.innerHTML = page.findings.length ? guardrailRows(page.findings, true)
+      result.innerHTML = page.findings.length ? guardrailRows(page.findings, true, canEvaluate)
         : '<div class="ev-empty"><h3>No matching guardrail activity</h3><p>Try another rule, outcome or time range.</p></div>';
       info.textContent = `Page ${cursors.length} · ${page.findings.length} shown`;
       nextCursor = page.next_cursor;

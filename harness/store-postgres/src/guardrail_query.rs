@@ -9,11 +9,11 @@ use postgres::Transaction;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-const NORMALIZED_OUTCOME: &str = "CASE WHEN e.data->>'outcome'='allow'
+pub(crate) const NORMALIZED_OUTCOME: &str = "CASE WHEN e.data->>'outcome'='allow'
     AND jsonb_typeof(e.data->'matchCount')='number'
     AND e.data->'matchCount'>'0'::jsonb
     THEN 'matched' ELSE e.data->>'outcome' END";
-const HIT_OUTCOMES: &str = "('blocked','redacted','matched')";
+pub(crate) const HIT_OUTCOMES: &str = "('blocked','redacted','matched')";
 
 pub(crate) fn hit_sessions(
     tx: &mut Transaction<'_>,

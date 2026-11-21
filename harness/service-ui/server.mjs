@@ -35,6 +35,7 @@ export function allowed(method, path) {
   // deliberately not a generic proxy or an arbitrary query passthrough.
   if (method === "GET" && (allowedRecording(path)||allowedCompliance(path))) return true;
   if (method === "GET" && /^\/v1\/evals\/(datasets|runs)(?:\?|$)/.test(path)) return allowedEvalList(path);
+  if (method === "GET" && /^\/v1\/evals\/(candidates|evaluators)(?:\?|$)/.test(path)) return allowedEvalSelection(path);
   if (!/^\/v1\/[A-Za-z0-9_@./?=&-]+$/.test(path) || path.includes(".."))
     return false;
   const u = new URL(path, "http://local");
@@ -42,11 +43,11 @@ export function allowed(method, path) {
   const p = u.pathname;
   if (p.startsWith("/v1/evals/")) {
     if (u.search) return false;
+    const tags = new RegExp(`^/v1/evals/tags/${id}(?:/${id})?$`).test(p);
     if (method === "GET") {
-      return p === "/v1/evals/datasets" ||
-        new RegExp(`^/v1/evals/(datasets/${id}(?:/(?:cases|jobs)/${id})?|evidence/${id}/${id})$`).test(p);
+      return tags || new RegExp(`^/v1/evals/(datasets/${id}(?:/(?:cases|jobs)/${id})?|evidence/${id}/${id}|batches/${id})$`).test(p);
     }
-    return method === "POST" && (p === "/v1/evals/cases" ||
+    return method === "POST" && (tags || ["/v1/evals/cases", "/v1/evals/evaluators", "/v1/evals/batches"].includes(p) ||
       new RegExp(`^/v1/evals/datasets/${id}/jobs$`).test(p));
   }
   if (method === "GET") {
@@ -96,6 +97,26 @@ export function allowed(method, path) {
       new RegExp(`^/v1/environments/${id}/delete$`).test(p) ||
       new RegExp(`^/v1/sessions/${id}/(turns|controls|close)$`).test(p))
   );
+}
+function allowedEvalSelection(path) {
+  if (path.length > 1024 || path.includes("#")) return false;
+  const url = new URL(path, "http://local");
+  if (url.pathname + url.search !== path) return false;
+  const candidates = url.pathname.endsWith("/candidates");
+  const seen = new Set();
+  for (const [key, value] of url.searchParams) {
+    if (seen.has(key)) return false;
+    seen.add(key);
+    if (candidates) {
+      if (key === "tag" && /^(?:[a-z0-9._-]{1,64}|guardrail:[A-Za-z0-9._-]{1,128})$/.test(value)) continue;
+      if (key === "from_ms" && /^\d{1,15}$/.test(value) && Number(value) <= 253402300799000) continue;
+    } else {
+      if (key === "q" && Buffer.byteLength(value) <= 100 && !/\p{Cc}/u.test(value)) continue;
+      if (key === "after" && new RegExp(`^${id}$`).test(value)) continue;
+    }
+    return false;
+  }
+  return !candidates || seen.has("tag");
 }
 function allowedEvalList(path) {
   if (path.length > 1600 || path.includes("#")) return false;
@@ -531,6 +552,7 @@ export async function start(config) {
         "/guardrail-view.js": ["guardrail-view.js", "text/javascript"],
         "/tracing.css": ["tracing.css", "text/css"],
         "/evals.js": ["evals.js", "text/javascript"],
+        "/eval-selection.js": ["eval-selection.js", "text/javascript"],
         "/eval-lists.js": ["eval-lists.js", "text/javascript"],
         "/evals.css": ["evals.css", "text/css"],
         "/observability.js": ["observability.js", "text/javascript"],
