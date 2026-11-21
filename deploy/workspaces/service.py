@@ -234,9 +234,16 @@ class Controller:
         while not self.backend.remove(kind, name, uid):
             # Single-shot callers (reconcile) leave the retry to the next cycle
             # instead of sleeping here while the controller lock is held (#928).
-            if once or time.monotonic() >= deadline:
+            if once:
+                # The delete was issued and the object is still terminating: the
+                # normal path of a healthy cleanup, not a failure. The caller
+                # keeps the intent flag and the next cycle finishes the job —
+                # so this must not look like an error to the reconcile log.
+                return False
+            if time.monotonic() >= deadline:
                 raise Failure("workspace_in_use", 409)
             time.sleep(.2)
+        return True
 
     def stop(self, workspace, *, once=False):
         row = self.row("SELECT * FROM compute WHERE id=?", workspace)
@@ -246,7 +253,9 @@ class Controller:
             raise Failure("workspace_in_use", 409)
         with self.db:
             self.db.execute("UPDATE compute SET stopping=1 WHERE id=?", (workspace,))
-        self.drain("compute", workspace, row["uid"], once=once)
+        if not self.drain("compute", workspace, row["uid"], once=once):
+            # Still terminating: keep the intent flag, the next cycle finishes it.
+            return
         with self.db:
             self.db.execute("DELETE FROM compute WHERE id=?", (workspace,))
 
@@ -258,7 +267,9 @@ class Controller:
             raise Failure("workspace_in_use", 409)
         with self.db:
             self.db.execute("UPDATE data SET deleting=1 WHERE id=?", (data,))
-        self.drain("data", data, row["uid"], once=once)
+        if not self.drain("data", data, row["uid"], once=once):
+            # Still terminating: keep the intent flag, the next cycle finishes it.
+            return
         with self.db:
             self.db.execute("DELETE FROM data WHERE id=?", (data,))
 
