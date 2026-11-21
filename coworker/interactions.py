@@ -36,7 +36,9 @@ def decode(value: str) -> Optional[tuple[str, str]]:
         d = json.loads(value)
         if isinstance(d, dict) and d.get("id"):
             return str(d["id"]), str(d.get("r", ""))
-    except Exception:
+    except (json.JSONDecodeError, TypeError):
+        # a foreign button value is a "not ours", not a failure. Anything else
+        # is a bug and should surface, not be swallowed (#31).
         pass
     return None
 

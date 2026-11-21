@@ -1595,7 +1595,13 @@ def create_app(manager: SessionManager) -> FastAPI:
             try:
                 await manager.refresh_gateway()
             except Exception:
-                pass  # a listener that fails to come up must not fail the save
+                # a listener that fails to come up must not fail the save — but the
+                # silence must be visible, or the pasted token looks like it took
+                logger.warning(
+                    "could not hot-reload the %s listeners after saving credentials",
+                    name,
+                    exc_info=True,
+                )
 
     @app.post("/v1/connectors/{name}/connect")
     async def connector_connect(name: str, body: dict) -> dict[str, Any]:
@@ -2081,7 +2087,11 @@ def create_app(manager: SessionManager) -> FastAPI:
                 if out.get("restored"):
                     await manager.refresh_gateway()
             except Exception:
-                pass  # sign-in stands; the user can still connect by hand
+                # sign-in stands; the user can still connect by hand
+                logger.warning(
+                    "could not restore managed connections after sign-in",
+                    exc_info=True,
+                )
 
         asyncio.get_running_loop().create_task(_restore_connections())
         return HTMLResponse(
@@ -3781,7 +3791,11 @@ def create_app(manager: SessionManager) -> FastAPI:
             try:
                 await manager.promote_pending_prompts(session_id)
             except Exception:
-                pass
+                logger.warning(
+                    "could not move %s's pending prompts to the Inbox on disconnect",
+                    session_id,
+                    exc_info=True,
+                )
 
     @app.websocket("/ws/events")
     async def ws_events(ws: WebSocket) -> None:
@@ -3863,9 +3877,11 @@ def _parse_json(s: str) -> dict[str, Any]:
     """Parse a structured Inbox resolution (directory/plan carry their reply as a JSON string)."""
     try:
         v = json.loads(s) if s else {}
-        return v if isinstance(v, dict) else {}
-    except Exception:
+    except (json.JSONDecodeError, TypeError):
+        # a resolution may legitimately be plain text ("allow") — a miss, not a
+        # failure. Anything else is a bug and should surface, not be swallowed.
         return {}
+    return v if isinstance(v, dict) else {}
 
 
 def _openai_response(model: str, turn: AssistantTurn) -> dict[str, Any]:
