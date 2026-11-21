@@ -10,12 +10,15 @@ digests by role membership.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -51,25 +54,124 @@ class TeamRegistry:
         self.path = Path(path) if path else None
         self._lock = threading.Lock()
         self._teams: dict[str, Team] = {}
-        if self.path and self.path.is_file():
-            for raw in json.loads(self.path.read_text(encoding="utf-8")).get(
-                "teams", []
-            ):
-                workers = [TeamWorker(**w) for w in raw.pop("workers", [])]
-                team = Team(**{**raw, "workers": []})
-                team.workers = workers
-                self._teams[team.team_id] = team
+        self._load()
+
+    def _quarantine(self) -> Optional[Path]:
+        """Move an unreadable file aside so the next save cannot overwrite the only
+        copy of it. Returns the path it moved to, or None if the move failed."""
+        if not self.path:
+            return None
+        spare = self.path.with_suffix(self.path.suffix + ".corrupt")
+        try:
+            self.path.replace(spare)
+        except OSError:
+            return None
+        return spare
+
+    def _refuse_file(self, reason: str, teams: dict[str, Team]) -> dict[str, Team]:
+        """Keep the teams that could be read, move the file aside, and say so out loud.
+
+        A team is the roster the wake plumbing walks — losing one must not lose the
+        others — but dropping a row is NOT neutral either, so the bytes are moved
+        aside (never deleted, never overwritten by a later save) and the reason is
+        logged, the way the risk-override, connection and parked stores do it.
+        """
+        message = f"{self.path}: {reason}; kept {len(teams)} team(s)"
+        spare = self._quarantine()
+        if spare is not None:
+            message += f" (original kept at {spare})"
+        logger.warning(message)
+        return teams
+
+    def _load(self) -> None:
+        if not (self.path and self.path.is_file()):
+            return
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as e:
+            # A torn file must never block startup: SessionManager builds this store.
+            self._teams = self._refuse_file(f"unreadable ({type(e).__name__})", {})
+            return
+        if not isinstance(data, dict):
+            # Valid JSON of the wrong shape (`[]`, `null`, a string): `data.get` would
+            # raise AttributeError out of the constructor the same way.
+            self._teams = self._refuse_file("not a JSON object", {})
+            return
+        raw_teams = data.get("teams")
+        if raw_teams is None:
+            raw_teams = []
+        if not isinstance(raw_teams, list):
+            self._teams = self._refuse_file("'teams' is not a JSON array", {})
+            return
+
+        # A row this build cannot construct — an unknown field (a later build writing
+        # `strategy`/`reasons`/`integrations`), a missing required one, a row that is
+        # not an object — used to abort the loop and take the whole roster with it.
+        # Skip just that row: `for_worker_session`/`for_lead_session` return None for
+        # what is missing, so a partial roster degrades instead of crashing.
+        teams: dict[str, Team] = {}
+        dropped: list[str] = []
+        for index, raw in enumerate(raw_teams):
+            if not isinstance(raw, dict):
+                dropped.append(f"team {index}: not a JSON object")
+                continue
+            # Copy before popping: the original mutated the parsed document.
+            raw = dict(raw)
+            raw_workers = raw.pop("workers", [])
+            if raw_workers is None:
+                raw_workers = []
+            if not isinstance(raw_workers, list):
+                dropped.append(f"team {index}: 'workers' is not a JSON array")
+                continue
+            workers: list[TeamWorker] = []
+            for windex, w in enumerate(raw_workers):
+                if not isinstance(w, dict):
+                    dropped.append(f"team {index} worker {windex}: not a JSON object")
+                    continue
+                try:
+                    workers.append(TeamWorker(**w))
+                except (TypeError, ValueError) as e:
+                    dropped.append(f"team {index} worker {windex}: {type(e).__name__}")
+            try:
+                team = Team(**raw)
+            except (TypeError, ValueError, KeyError) as e:
+                dropped.append(f"team {index}: {type(e).__name__}")
+                continue
+            team.workers = workers
+            teams[team.team_id] = team
+        if dropped:
+            detail = "; ".join(dropped[:3])
+            if len(dropped) > 3:
+                detail += f"; … and {len(dropped) - 3} more"
+            self._teams = self._refuse_file(
+                f"dropped {len(dropped)} record(s) ({detail})", teams
+            )
+            return
+        self._teams = teams
 
     def _save(self) -> None:
         if not self.path:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(
-                {"teams": [asdict(t) for t in self._teams.values()]}, indent=2
-            ),
-            encoding="utf-8",
-        )
+        # Write a sibling .tmp and rename it over the real file, so a crash mid-write
+        # leaves the previous complete file instead of a truncated one — the same
+        # shape mentions.py uses.
+        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(
+                json.dumps(
+                    {"teams": [asdict(t) for t in self._teams.values()]}, indent=2
+                ),
+                encoding="utf-8",
+            )
+            temporary.replace(self.path)
+        except OSError as exc:
+            # Persistence is best-effort; memory stays authoritative for this process.
+            logger.warning("could not save %s: %s", self.path, exc)
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
 
     def create(
         self,
