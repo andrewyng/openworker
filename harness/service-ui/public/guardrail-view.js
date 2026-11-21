@@ -2,7 +2,7 @@ import { esc } from "./observability-data.js";
 import { evalSelectionLink } from "./eval-selection.js";
 
 const endpoint = "/v1/observability/guardrails";
-const labels = { redacted: "Redacted", blocked: "Blocked", matched: "Matched", unavailable: "Check unavailable" };
+const labels = { redacted: "Redacted", blocked: "Blocked", matched: "Matched", unavailable: "Check unavailable", would_block: "Would have blocked", alerted: "Alerted", shadow_unavailable: "Shadow check unavailable" };
 const phaseLabel = (phase) => ({
   userInput: "User input", beforeInput: "Before user input",
   modelOutput: "Model output", beforeOutput: "Before output",
@@ -17,7 +17,7 @@ export function guardrailPath(filter = {}) {
 }
 
 function status(finding) {
-  const type = finding.outcome === "blocked" ? "failed" : "error";
+  const type = finding.outcome === "blocked" ? "failed" : finding.outcome === "would_block" ? "benchmark" : "error";
   return `<span class="ev-pill ev-${type}"><i></i>${esc(labels[finding.outcome] || finding.outcome)}</span>`;
 }
 function facts(finding) {
@@ -54,7 +54,7 @@ export function mountGuardrailCatalog(root, request, canEvaluate) {
   const { signal } = lifetime;
   root.innerHTML = `
     <header class="ev-heading">
-      <div><h1>Guardrails</h1><p>Find sessions where a guardrail matched, redacted, or blocked content.</p></div>
+      <div><h1>Guardrails</h1><p>Review policy findings and scanner availability across agent sessions.</p></div>
       <a class="button" href="#observability">Open tracing</a>
     </header>
     <section class="ev-section" aria-label="Guardrail activity">
@@ -64,6 +64,8 @@ export function mountGuardrailCatalog(root, request, canEvaluate) {
         </label>
         <label><span class="ev-visually-hidden">Guardrail outcome</span><select name="outcome">
           <option value="">Guardrail hits</option><option value="redacted">Redacted</option>
+          <option value="would_block">Would have blocked</option><option value="alerted">Alerted</option>
+          <option value="shadow_unavailable">Shadow check unavailable</option>
           <option value="blocked">Blocked</option><option value="matched">Matched</option><option value="unavailable">Check unavailable</option>
         </select></label>
         <label><span class="ev-visually-hidden">Recorded time</span><select name="period">

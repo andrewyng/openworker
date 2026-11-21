@@ -377,6 +377,7 @@ impl Host {
             Ok(crate::integrations::PolicyRevision {
                 revision: 0,
                 policies: policies.clone(),
+                ..Default::default()
             })
         });
         let integration_registry = &config.desktop.integration_registry;

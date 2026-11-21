@@ -545,6 +545,21 @@ fn sanitize(e: anyhow::Error) -> anyhow::Error {
 }
 
 impl StateStore for PostgresStore {
+    fn session_app(&self, sid: &str) -> Result<Option<String>> {
+        anyhow::ensure!(self.auth.is_none(), auth::Error::Forbidden);
+        let sid = sid.to_owned();
+        self.call(move |db| {
+            Ok(db
+                .client
+                .query_opt(
+                    "SELECT principal FROM api_session_owners WHERE session_id=$1",
+                    &[&sid],
+                )?
+                .map(|row| row.get::<_, String>(0))
+                .filter(|app| auth::is_app_principal(app)))
+        })
+    }
+
     fn supports_input_attachments(&self) -> bool {
         cfg!(feature = "attachments")
     }

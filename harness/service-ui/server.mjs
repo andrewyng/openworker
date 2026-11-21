@@ -172,7 +172,7 @@ function allowedCompliance(path){
      if (["agent","policy"].includes(key) && /^[\w.@:-]{1,128}$/.test(value)) continue;
      if (key === "before_us" && /^\d{1,18}$/.test(value)) continue;
      if (key === "before_id" && /^[\w.@-]{1,128}:[1-9]\d{0,17}$/.test(value)) continue;
-     if (key === "outcome" && ["blocked","redacted","matched","unavailable","approved","denied"].includes(value)) continue;
+     if (key === "outcome" && ["blocked","redacted","matched","unavailable","approved","denied","alerted","would_block","shadow_unavailable"].includes(value)) continue;
      return false;
    }
    return keys.has("before_id") === keys.has("before_us");
@@ -210,7 +210,7 @@ function allowedRecording(path) {
     if (guardrails) {
       if (["session_id", "turn_id"].includes(key) && new RegExp(`^${id}$`).test(value) && value.length <= 80) continue;
       if (key === "rule" && value.length > 0 && Buffer.byteLength(value) <= 128 && !/\p{Cc}/u.test(value)) continue;
-      if (key === "outcome" && ["redacted", "blocked", "matched", "unavailable"].includes(value)) continue;
+      if (key === "outcome" && ["redacted", "blocked", "matched", "unavailable", "alerted", "would_block", "shadow_unavailable"].includes(value)) continue;
       if (key === "after" && /^[A-Za-z0-9_-]{1,512}$/.test(value)) continue;
       if (key === "limit" && /^[1-9]\d{0,2}$/.test(value) && Number(value) <= 100) continue;
       if (key === "from_ms" && /^\d{1,15}$/.test(value) && Number(value) <= 253402300799000) continue;
@@ -587,6 +587,7 @@ export async function start(config) {
         "/policy-coverage.js": ["policy-coverage.js", "text/javascript"],
         "/compliance.css": ["compliance.css", "text/css"],
         "/tracing.js": ["tracing.js", "text/javascript"],
+        "/policy-rollouts.js": ["policy-rollouts.js", "text/javascript"],
         "/guardrail-view.js": ["guardrail-view.js", "text/javascript"],
         "/tracing.css": ["tracing.css", "text/css"],
         "/evals.js": ["evals.js", "text/javascript"],

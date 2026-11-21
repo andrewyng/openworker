@@ -68,6 +68,9 @@ pub enum Outcome {
     Blocked,
     Matched,
     Unavailable,
+    Alerted,
+    WouldBlock,
+    ShadowUnavailable,
 }
 
 impl Outcome {
@@ -77,6 +80,9 @@ impl Outcome {
             Self::Blocked => "blocked",
             Self::Matched => "matched",
             Self::Unavailable => "unavailable",
+            Self::Alerted => "alerted",
+            Self::WouldBlock => "would_block",
+            Self::ShadowUnavailable => "shadow_unavailable",
         }
     }
 }
@@ -167,8 +173,8 @@ impl PostgresStore {
                    AND ($4::text IS NULL OR a.session_id=$4)
                    AND ($5::text IS NULL OR COALESCE(e.turn_id,q.turn_id)=$5)
                    AND ($6::text IS NULL OR e.data->>'check'=$6)
-                   AND (($7::text IS NULL AND (f.outcome IN {HIT_OUTCOMES}
-                        OR ($4::text IS NOT NULL AND f.outcome='unavailable')))
+                   AND (($7::text IS NULL AND (f.outcome IN {HIT_OUTCOMES} OR f.outcome IN ('would_block','alerted')
+                        OR ($4::text IS NOT NULL AND f.outcome IN ('unavailable','shadow_unavailable'))))
                         OR f.outcome=$7)
                    AND ($8::bigint IS NULL OR a.created>=TIMESTAMPTZ 'epoch'+$8*INTERVAL '1 millisecond')
                    AND ($9::bigint IS NULL OR

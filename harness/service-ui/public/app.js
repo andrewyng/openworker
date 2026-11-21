@@ -603,6 +603,10 @@ async function render() {
         api, icon, view: id, params: new URLSearchParams(search),
         canExport: role() !== "compliance_reader", canTrace: !auditOnly(), canForward: role() === "administrator",
         canCoverage: role() === "administrator" && auth.identity.scope?.kind === "all",
+        rolloutChecks: role() === "administrator" && auth.identity.scope?.kind === "all"
+          ? (auth.capabilities.configuredIntegrations || []).filter(id =>
+            auth.capabilities.integrations?.[id]?.capability === "blocking_checks")
+          : [],
       });
       return;
     }

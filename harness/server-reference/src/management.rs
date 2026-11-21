@@ -301,6 +301,7 @@ pub(crate) fn admission_checks(
     model: Option<&openworker_runtime::connections::Selection>,
     requested: Option<&openworker_runtime::connections::Choice>,
     preferences: &openworker_runtime::integrations::Preferences,
+    principal: Option<String>,
 ) -> Result<openworker_runtime::safety::Config> {
     let configured = &app.runtime.integrations;
     let mut agent_prefs = release.integrations.clone();
@@ -313,7 +314,7 @@ pub(crate) fn admission_checks(
     )?;
     configured.model_preference(&mut session_prefs, requested)?;
     let admission = configured.admit_for_model(&agent_prefs, &session_prefs, model)?;
-    app.runtime.integration_checks(&admission)
+    configured.checks_for_app(&admission, || Ok(principal))
 }
 pub(crate) async fn admit_kind(
     app: App,
@@ -404,6 +405,11 @@ pub(crate) async fn admit_with_fixture(
             model.as_ref(),
             input.model.as_ref(),
             &input.integrations,
+            Some(
+                app.store
+                    .authorize(openworker_store_postgres::auth::Action::Submit, None, None)?
+                    .principal,
+            ),
         )?;
         input.initial_message = Some(
             crate::service_safety::inspect_with(&app, None, &request, text, Some(&checks)).await?,

@@ -235,6 +235,11 @@ pub struct Event {
 /// the runtime safe for shared workers. `recover` may only touch sessions owned
 /// exclusively by this store instance. No automatic replay of tool effects.
 pub trait StateStore: Send {
+    /// Stable, store-assigned app owner for cluster policies.
+    fn session_app(&self, _sid: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+
     fn supports_input_attachments(&self) -> bool {
         false
     }

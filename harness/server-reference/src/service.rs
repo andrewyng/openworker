@@ -599,7 +599,12 @@ async fn environment_list(Extension(app): Extension<App>) -> Result<Json<Value>,
 }
 
 async fn configuration(Extension(app): Extension<App>) -> Result<Json<Value>, ApiError> {
-    Ok(Json(json!(app.store.service_configuration()?)))
+    let principal = app.store.authorize(Action::Read, None, None)?;
+    let mut revision = app.store.service_configuration()?;
+    if !principal.role.permits(Action::Admin) {
+        revision.configuration.app_check_modes.clear();
+    }
+    Ok(Json(json!(revision)))
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -613,6 +618,31 @@ async fn configure(
     Json(body): Json<Configure>,
 ) -> Result<Json<Value>, ApiError> {
     let key = key(&app, &headers, "configuration")?;
+    let configured = app
+        .runtime
+        .integrations
+        .configured_ids()
+        .collect::<std::collections::BTreeSet<_>>();
+    for id in body
+        .configuration
+        .app_check_modes
+        .values()
+        .flat_map(|checks| checks.keys())
+    {
+        if !configured.contains(id)
+            || !app
+                .runtime
+                .integrations
+                .catalog
+                .catalog()
+                .get(id)
+                .is_some_and(|entry| {
+                    entry.capability == openworker_runtime::integrations::Capability::BlockingChecks
+                })
+        {
+            return Err(ApiError(SubmissionError::InvalidRequest.into()));
+        }
+    }
     Ok(Json(json!(app.store.service_configure(
         &key,
         body.expected_revision,

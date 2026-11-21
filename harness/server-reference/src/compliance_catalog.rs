@@ -91,7 +91,14 @@ fn release_checks(
         .or(release.default_model.as_ref())
         .map(|choice| app.runtime.connections.resolve(choice))
         .transpose()?;
-    crate::management::admission_checks(app, release, model.as_ref(), None, &Default::default())
+    crate::management::admission_checks(
+        app,
+        release,
+        model.as_ref(),
+        None,
+        &Default::default(),
+        None,
+    )
 }
 
 fn check_descriptors(config: &openworker_runtime::safety::Config) -> Vec<Value> {

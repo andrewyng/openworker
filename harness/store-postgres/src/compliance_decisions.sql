@@ -45,13 +45,13 @@ WITH event_decisions AS (
     SELECT 'ingress:' || a.id AS id, a.created, NULL::text AS session_id, NULL::bigint AS cursor,
         NULL::text AS turn_id, false AS submission_admitted, a.principal AS app, NULL::text AS release, NULL::text AS agent,
         'safety_evaluation' AS kind, 'user_input' AS phase, split_part(a.target,':',2) AS policy,
-        NULL::text AS policy_version,NULL::text AS policy_digest,NULL::text AS call_id,NULL::text AS tool,NULL::text AS interaction,
+        NULLIF(split_part(a.target,':',4),'') AS policy_version,NULL::text AS policy_digest,NULL::text AS call_id,NULL::text AS tool,NULL::text AS interaction,
         'guardrail' AS source,split_part(a.target,':',3) AS outcome
     FROM api_security_audit a
     WHERE a.created >= TIMESTAMPTZ 'epoch' + $4::bigint * INTERVAL '1 millisecond'
       AND a.created < TIMESTAMPTZ 'epoch' + $5::bigint * INTERVAL '1 millisecond'
       AND a.action='turn.submit' AND a.session_id IS NULL
-      AND a.target ~ '^guardrail:[A-Za-z0-9._-]{1,128}:(blocked|redacted|unavailable)$'
+      AND a.target ~ '^guardrail:[A-Za-z0-9._-]{1,128}:(blocked|redacted|unavailable|alerted|would_block|shadow_unavailable)(:[A-Za-z0-9._-]{1,128})?$'
       AND ($1 OR a.principal=ANY($2))
       AND ($6 IS NULL OR a.principal=$6)
 ), activity AS (
@@ -60,7 +60,7 @@ WITH event_decisions AS (
     SELECT * FROM ingress_decisions
 ), filtered AS (
     SELECT * FROM activity
-    WHERE outcome IN ('approved','denied','blocked','redacted','unavailable','matched')
+    WHERE outcome IN ('approved','denied','blocked','redacted','unavailable','matched','alerted','would_block','shadow_unavailable')
       AND ($7::text IS NULL OR COALESCE(release,agent)=$7)
       AND ($8::text IS NULL OR outcome=$8)
       AND ($9::text IS NULL OR policy=$9)

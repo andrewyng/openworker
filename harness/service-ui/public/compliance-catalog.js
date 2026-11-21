@@ -1,11 +1,13 @@
 import { esc } from "./observability-data.js";
+import { mountPolicyRollouts } from "./policy-rollouts.js";
 import { mountPolicyCoverage } from "./policy-coverage.js";
 
 const endpoint = "/v1/compliance";
 const day = 86_400_000;
 const viewNames = { decisions: "Decisions", agents: "Agent overview", audit: "Admin audit" };
-const outcomes = { blocked: "Blocked", denied: "Denied", redacted: "Redacted", unavailable: "Unavailable", matched: "Matched", approved: "Approved" };
+const outcomes = { blocked: "Blocked", denied: "Denied", redacted: "Redacted", unavailable: "Check unavailable", would_block: "Would have blocked", alerted: "Alerted", shadow_unavailable: "Shadow check unavailable", matched: "Matched", approved: "Approved" };
 const effects = {
+  observation_only: "Observation only",
   tool_blocked: "Tool did not run",
   tool_started: "Tool dispatch recorded · result unconfirmed",
   tool_result_recorded: "Tool result recorded",
@@ -55,7 +57,7 @@ function rows(view, data, selected, icon) {
     const name = row.release || row.agent || "Before session creation";
     const href = hash("decisions", { app:row.app, agent:row.release || row.agent, days:row.days });
     return `<tr><td><a class="cp-row-action" href="${esc(href)}">${icon("agents")}<span><strong>${esc(name)}</strong><small>${esc(appLabel(row.app))}</small></span></a></td>
-      <td>${row.turns}</td><td>${row.decisions || "No decisions recorded"}</td><td>${row.blocked}</td><td>${row.redacted}</td><td>${row.unavailable}</td></tr>`;
+      <td>${row.turns}</td><td>${row.decisions || "No decisions recorded"}</td><td>${row.blocked}</td><td>${row.would_block || 0}</td><td>${row.redacted}</td><td>${row.unavailable}</td></tr>`;
   }).join("");
   if (view === "audit") return data.map(row => `<tr>
     <td><strong>${esc(auditActions[row.action] || row.action)}</strong></td>
@@ -88,14 +90,23 @@ function inspector(row, icon, canTrace) {
       ${row.turn_id ? `<a class="cp-session-link" href="${session}">Open session</a>` : ""}</div>` : ""}`;
 }
 
-export function mountComplianceCatalog(root, { api, icon, view, params, canExport, canTrace, canForward, canCoverage }) {
+export function mountComplianceCatalog(root, { api, icon, view, params, canExport, canTrace, canForward, canCoverage, rolloutChecks = [] }) {
   const lifetime = new AbortController();
   const { signal } = lifetime;
-  const views = canCoverage ? { ...viewNames, coverage: "Policy coverage" } : viewNames;
+  const views = {
+    ...viewNames,
+    ...(canCoverage ? { coverage: "Policy coverage" } : {}),
+    ...(rolloutChecks.length ? { rollouts: "Policy rollouts" } : {}),
+  };
   const tab = Object.hasOwn(views, view) ? view : "decisions";
   const heading = `<header class="cp-heading"><div><h1>Compliance</h1><p>Policy decisions and agent activity</p></div></header>
     <nav class="cp-nav" aria-label="Compliance views">${Object.entries(views).map(([name,label]) =>
-      `<a href="${hash(name)}" ${tab === name ? 'aria-current="page"' : ""}>${icon(name === "decisions" || name === "coverage" ? "shield" : name === "agents" ? "layers" : "file")}${label}</a>`).join("")}</nav>`;
+      `<a href="${hash(name)}" ${tab === name ? 'aria-current="page"' : ""}>${icon(["decisions", "coverage", "rollouts"].includes(name) ? "shield" : name === "agents" ? "layers" : "file")}${label}</a>`).join("")}</nav>`;
+  if (tab === "rollouts") {
+    root.innerHTML = `<section class="cp-page">${heading}<div class="cp-panel" data-rollouts></div></section>`;
+    mountPolicyRollouts(root.querySelector("[data-rollouts]"), { api, icon, checks: rolloutChecks, signal });
+    return () => lifetime.abort();
+  }
   if (tab === "coverage") {
     root.innerHTML = `<section class="cp-page">${heading}<div class="cp-panel" data-coverage></div></section>`;
     mountPolicyCoverage(root.querySelector("[data-coverage]"), { api, params, signal });
@@ -106,7 +117,7 @@ export function mountComplianceCatalog(root, { api, icon, view, params, canExpor
   const initialDay = ["1","7","30"].includes(params.get("days")) ? params.get("days") : "7";
   const defaultApp = params.get("app") || "";
   const headers = isDecisions ? ["Event","App","Decision","Time UTC"] : isAgents
-    ? ["Agent release","Turns","Decisions","Blocked / denied","Redacted","Unavailable"]
+    ? ["Agent release","Turns","Decisions","Blocked / denied","Would have blocked","Redacted","Unavailable"]
     : ["Action","Actor","App","Target","Outcome","Time UTC"];
   root.innerHTML = `<section class="cp-page">${heading}
     <section class="cp-panel" aria-label="${viewNames[tab]}">

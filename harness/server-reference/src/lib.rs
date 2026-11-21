@@ -338,6 +338,7 @@ impl Config {
             Ok(openworker_runtime::integrations::PolicyRevision {
                 revision: current.revision,
                 policies: current.configuration.integration_policies,
+                app_check_modes: current.configuration.app_check_modes,
             })
         });
         let integration_registry = &self.integration_registry;

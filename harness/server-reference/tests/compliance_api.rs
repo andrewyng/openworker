@@ -716,3 +716,419 @@ async fn verify_delivery(
     assert_eq!(deliveries[0], deliveries[1]);
     assert_eq!(deliveries[0]["records"], expected["records"]);
 }
+
+#[cfg(all(feature = "security-adapters", not(windows)))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn shadow_rollout_is_scoped_audited_and_applies_to_existing_sessions() {
+    use openworker_store_postgres::auth::Action;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    let root = tempfile::tempdir().unwrap();
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let db_env = format!("OW_SHADOW_DB_{}", suffix.to_uppercase());
+    let key_env = format!("OW_SHADOW_KEY_{}", suffix.to_uppercase());
+    std::env::set_var(&db_env, std::env::var("OW_PG_TEST_URL").unwrap());
+    std::env::set_var(&key_env, "fixture-key");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let scanner = axum::Router::new().route("/scan", axum::routing::post({
+        let calls = calls.clone();
+        move |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<Value>| {
+            let calls = calls.clone();
+            async move {
+                assert_eq!(headers["authorization"], "Bearer fixture-key");
+                assert_eq!(body["phase"], "userInput");
+                calls.fetch_add(1, Ordering::Relaxed);
+                let text = body["text"].as_str().unwrap();
+                if text == "TIMEOUT_FIXTURE" {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+                let (status, verdict) = match text {
+                    "SHADOW_PAYLOAD_FIXTURE" => (200, json!({"action":"block","category":"malicious"})),
+                    "ALERT_FIXTURE" => (200, json!({"action":"allow","category":"malicious","report":{"snippet":text}})),
+                    "ERROR_FIXTURE" => (500, json!({"error":"PRIVATE_SCANNER_PAYLOAD"})),
+                    _ => (200, json!({"action":"allow","category":"benign"})),
+                };
+                (axum::http::StatusCode::from_u16(status).unwrap(), axum::Json(verdict))
+            }
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/scan", listener.local_addr().unwrap());
+    let scanner_task = tokio::spawn(async move { axum::serve(listener, scanner).await.unwrap() });
+    let bundle = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/assistant");
+    let runner = root.path().join("runner");
+    std::fs::write(&runner, b"\x7fELF-fixture-not-executed").unwrap();
+    let mut config: Config = serde_json::from_value(json!({
+        "database_env":db_env,"schema":format!("ow_shadow_{}",&suffix[..20]),"database_loopback_plaintext":true,
+        "state_root":root.path().join("state"),"bundle":bundle,"runner":runner,"model":"fixture","scripted":true,
+        "api_token_file":"unused","actor":"admin","openshell":{"identity":"fixture","endpoint":"https://127.0.0.1:1",
+        "certificates":"unused","workspace":"unused","image":format!("registry.invalid/fixture@sha256:{}", "a".repeat(64))},
+        "safety":{"guardrails":{"userInput":[openworker_runtime::safety::Rule::regex(
+            "local-enforced","LOCAL_BLOCK_FIXTURE",openworker_runtime::safety::Action::Block)]}},
+        "integrations":{"content-scanner":{"enabled":false,"endpoint":endpoint,"credentialEnv":key_env}},
+        "service":{"id":"compliance-test","namespace":"test","agent":"test","legacy_compatibility":true}
+    })).unwrap();
+    register_test_scanner(&mut config);
+    let db = config.database().unwrap();
+    PostgresStore::migrate(&db).unwrap();
+    let mut store = PostgresStore::open(db.clone()).unwrap();
+    store.auth_bootstrap(ADMIN, "admin").unwrap();
+    let admin = store.authorized(ADMIN).unwrap();
+    for (principal, token) in [
+        ("app_finance", FINANCE_TOKEN),
+        ("app_support", SUPPORT_TOKEN),
+    ] {
+        admin
+            .issue_app_token(
+                principal,
+                Spec {
+                    principal: principal.into(),
+                    role: Role::App,
+                    scope: Scope::Owned,
+                    environments: vec![],
+                    expires_at: Some(openworker_runtime::store::now_ms() as i64 / 1000 + 3600),
+                },
+                token,
+                Default::default(),
+            )
+            .unwrap();
+        store
+            .authorized(token)
+            .unwrap()
+            .authorize(Action::Submit, None, None)
+            .unwrap();
+    }
+    let runtime = config.api_runtime("shadow-api", store.clone()).unwrap();
+    let admission = runtime
+        .integrations
+        .admit(&Default::default(), &Default::default())
+        .unwrap();
+    for sid in ["s_shadow_finance", "s_shadow_support"] {
+        let mut session: Session = serde_json::from_value(
+            json!({"id":sid,"name":"Rollout qualification","workspace":"/work",
+            "coworker":"scanner-fixture","bundle_digest":"b","interactions":[],"closed":false,
+            "resource_policy":openworker_runtime::resource_policy::Resolved::default()}),
+        )
+        .unwrap();
+        session.integrations = admission.clone();
+        store.save(&session, "session_created", json!({})).unwrap();
+    }
+    tokio::task::block_in_place(|| {
+        let mut sql = postgres::Client::connect(&db.connection, postgres::NoTls).unwrap();
+        sql.batch_execute(&format!(
+            "SET search_path={},pg_catalog; INSERT INTO api_session_owners VALUES
+             ('s_shadow_finance','app_finance'),('s_shadow_support','app_support')",
+            db.schema
+        ))
+        .unwrap();
+    });
+    let stop = CancellationToken::new();
+    let app = App::new(&config, runtime.clone(), store, stop.clone()).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let api_task = tokio::spawn(async move { axum::serve(listener, app.router()).await.unwrap() });
+    let http = reqwest::Client::new();
+    let request = |method: reqwest::Method, path: &str, token: &str| {
+        http.request(method, format!("{url}/v1/{path}"))
+            .header("x-openworker-namespace", "test")
+            .bearer_auth(token)
+    };
+    let update = |revision: i64, mode: &str, app: &str, required: bool, token: &str| {
+        request(reqwest::Method::PUT, "configuration", token)
+            .header("idempotency-key", format!("rollout-{revision}-{app}-{mode}"))
+            .json(&json!({"expectedRevision":revision,"configuration":{
+                "appCheckModes":{(app):{"content-scanner":mode}},
+                "integrationPolicies":if required {json!({"content-scanner":"required"})} else {json!({})}
+            }}))
+    };
+    assert_eq!(
+        update(1, "shadow", "app_missing", false, ADMIN)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+    assert_eq!(
+        update(1, "shadow", "app_finance", false, FINANCE_TOKEN)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    let send = |sid: &str, token: &str, key: &str, text: &str| {
+        request(
+            reqwest::Method::POST,
+            &format!("sessions/{sid}/turns"),
+            token,
+        )
+        .header("idempotency-key", key)
+        .json(&json!({"text":text}))
+    };
+    assert_eq!(
+        update(1, "shadow", "app_finance", false, ADMIN)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    let app_config: Value = request(reqwest::Method::GET, "configuration", SUPPORT_TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(app_config["configuration"]["appCheckModes"].is_null());
+    assert_eq!(
+        send(
+            "s_shadow_support",
+            SUPPORT_TOKEN,
+            "still-off",
+            "SHADOW_PAYLOAD_FIXTURE"
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        202
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+    // The API fixture has no execution worker. Settle each admitted submission
+    // so the next scan can run in the same already-open session.
+    let finish =
+        |receipt: Value| {
+            tokio::task::block_in_place(|| {
+                let mut sql = postgres::Client::connect(&db.connection, postgres::NoTls).unwrap();
+                sql.batch_execute(&format!(
+                    "SET search_path={},pg_catalog; SET ow.runtime_schema='7'",
+                    db.schema
+                ))
+                .unwrap();
+                assert_eq!(sql.execute(
+            "UPDATE submissions SET status='completed' WHERE session_id=$1 AND turn_id=$2",
+            &[&receipt["sessionId"].as_str().unwrap(), &receipt["runId"].as_str().unwrap()],
+        ).unwrap(), 1);
+            })
+        };
+    for (id, text, expected) in [
+        ("trial-block", "SHADOW_PAYLOAD_FIXTURE", 202),
+        ("trial-alert", "ALERT_FIXTURE", 202),
+        ("trial-error", "ERROR_FIXTURE", 202),
+        ("trial-timeout", "TIMEOUT_FIXTURE", 202),
+        ("trial-local", "LOCAL_BLOCK_FIXTURE", 422),
+        ("trial-allow", "NORMAL_FIXTURE", 202),
+    ] {
+        let response = send("s_shadow_finance", FINANCE_TOKEN, id, text)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let receipt: Value = response.json().await.unwrap();
+        assert_eq!(status.as_u16(), expected, "{id}: {receipt}");
+        if expected == 202 {
+            finish(receipt);
+        }
+    }
+    assert_eq!(calls.load(Ordering::Relaxed), 5);
+    assert_eq!(
+        update(2, "enforce", "app_finance", false, ADMIN)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    let blocked = send(
+        "s_shadow_finance",
+        FINANCE_TOKEN,
+        "enforce-block",
+        "SHADOW_PAYLOAD_FIXTURE",
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(blocked.status(), 422);
+    assert_eq!(
+        blocked.json::<Value>().await.unwrap()["error"],
+        "policy_blocked"
+    );
+    let outage = send(
+        "s_shadow_finance",
+        FINANCE_TOKEN,
+        "enforce-error",
+        "ERROR_FIXTURE",
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(outage.status(), 503);
+    assert_eq!(
+        outage.json::<Value>().await.unwrap()["error"],
+        "guardrail_unavailable"
+    );
+    assert_eq!(
+        update(3, "shadow", "app_finance", true, ADMIN)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    assert_eq!(
+        send(
+            "s_shadow_support",
+            SUPPORT_TOKEN,
+            "required-other",
+            "SHADOW_PAYLOAD_FIXTURE"
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        422
+    );
+    assert_eq!(
+        send(
+            "s_shadow_finance",
+            FINANCE_TOKEN,
+            "required-shadow",
+            "SHADOW_PAYLOAD_FIXTURE"
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        202
+    );
+
+    let mut policy_version = None;
+    for (outcome, count) in [
+        ("would_block", 2),
+        ("alerted", 1),
+        ("shadow_unavailable", 2),
+        ("blocked", 1),
+        ("unavailable", 1),
+    ] {
+        let body: Value = request(reqwest::Method::GET, "compliance/decisions", ADMIN)
+            .query(&[
+                ("app", "app_finance"),
+                ("outcome", outcome),
+                ("q", "content-scanner"),
+            ])
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let records = body["records"].as_array().expect("decision records");
+        assert_eq!(records.len(), count, "{body}");
+        for row in records {
+            assert_eq!(row["session_id"], "s_shadow_finance");
+            assert_eq!(
+                row["policy_version"],
+                policy_version
+                    .get_or_insert_with(|| row["policy_version"].clone())
+                    .clone()
+            );
+            if matches!(outcome, "would_block" | "alerted" | "shadow_unavailable") {
+                assert_eq!(row["effect"], "observation_only");
+            }
+        }
+        assert!(!body.to_string().contains("FIXTURE"));
+        assert!(!body.to_string().contains("PRIVATE_SCANNER_PAYLOAD"));
+    }
+    let trace: Value = request(
+        reqwest::Method::GET,
+        "observability/guardrails?session_id=s_shadow_finance&outcome=would_block",
+        ADMIN,
+    )
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(trace["findings"].as_array().unwrap().len(), 2);
+    if std::env::var_os("OW_PLAYWRIGHT_MODULE").is_some() {
+        let status = tokio::process::Command::new("node")
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../service-ui/test/policy-rollouts-live.mjs"
+            ))
+            .env("OW_UI_TEST_URL", &url)
+            .env("OW_UI_TEST_TOKEN", ADMIN)
+            .status()
+            .await
+            .unwrap();
+        assert!(status.success());
+    }
+    stop.cancel();
+    api_task.abort();
+    scanner_task.abort();
+    runtime.shutdown().await.unwrap();
+    tokio::task::block_in_place(|| {
+        let mut sql = postgres::Client::connect(&db.connection, postgres::NoTls).unwrap();
+        sql.batch_execute(&format!("DROP SCHEMA {} CASCADE", db.schema))
+            .unwrap();
+    });
+    std::env::remove_var(db_env);
+    std::env::remove_var(key_env);
+}
+
+#[cfg(all(feature = "security-adapters", not(windows)))]
+fn register_test_scanner(config: &mut Config) {
+    use openworker_runtime::{
+        integrations::{Capability, Instance, Registration},
+        safety::{Config as Checks, HandlerRef, Hook, HookPhase},
+    };
+    use openworker_security_adapters::{Config as ScannerConfig, Protocol, Scanner};
+    config
+        .integration_registry
+        .register(
+            "content-scanner",
+            Registration {
+                version: "1",
+                capability: Capability::BlockingChecks,
+                configure: |settings, registry| {
+                    let scanner = Scanner::from_environment(serde_json::from_value::<
+                        ScannerConfig,
+                    >(json!({
+                        "endpoint":settings["endpoint"],
+                        "credentialEnv":settings["credentialEnv"],
+                        "allowLoopbackHttp":true,
+                        "timeoutMs":500,
+                        "protocol":Protocol::SelectedContext,
+                    }))?)?;
+                    let handler = HandlerRef {
+                        name: "content-scanner".into(),
+                        version: "1".into(),
+                    };
+                    registry.register(handler.clone(), std::sync::Arc::new(scanner))?;
+                    Ok(Instance::Checks(Checks {
+                        hooks: vec![Hook {
+                            name: "content-scanner-input".into(),
+                            version: "1".into(),
+                            when: HookPhase::BeforeInput,
+                            tools: vec![],
+                            handler,
+                            timeout_ms: 500,
+                        }],
+                        ..Default::default()
+                    }))
+                },
+            },
+        )
+        .unwrap();
+}

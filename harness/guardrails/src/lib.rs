@@ -304,6 +304,9 @@ pub struct Config {
     /// Runtime-issued hook names. Wire callers cannot select the private handler registry.
     #[serde(skip)]
     pub native_hook_names: std::collections::BTreeSet<String>,
+    /// Set only by trusted host policy when resolving an app's native checks.
+    #[serde(skip)]
+    pub shadow_hook_names: std::collections::BTreeSet<String>,
     #[serde(default)]
     pub guardrails: Guardrails,
     #[serde(default)]
@@ -360,12 +363,31 @@ impl Config {
         }
     }
     pub fn protects(&self, phase: Phase, tool: Option<&str>) -> bool {
+        !self.rules(phase, tool).is_empty() || self.matching_hooks(phase, tool).next().is_some()
+    }
+
+    pub fn enforces(&self, phase: Phase, tool: Option<&str>) -> bool {
         !self.rules(phase, tool).is_empty()
-            || self.hooks.iter().any(|h| {
-                h.when != HookPhase::OnEvent
-                    && h.when.applies(phase)
-                    && (h.tools.is_empty() || tool.is_some_and(|t| h.tools.iter().any(|v| v == t)))
-            })
+            || self
+                .matching_hooks(phase, tool)
+                .any(|hook| !self.is_shadow_hook(hook))
+    }
+
+    pub fn matching_hooks<'a>(
+        &'a self,
+        phase: Phase,
+        tool: Option<&'a str>,
+    ) -> impl Iterator<Item = &'a Hook> {
+        self.hooks.iter().filter(move |hook| {
+            hook.when != HookPhase::OnEvent
+                && hook.when.applies(phase)
+                && (hook.tools.is_empty()
+                    || tool.is_some_and(|name| hook.tools.iter().any(|v| v == name)))
+        })
+    }
+
+    pub fn is_shadow_hook(&self, hook: &Hook) -> bool {
+        self.native_hook_names.contains(&hook.name) && self.shadow_hook_names.contains(&hook.name)
     }
     pub fn merge(&self, additional: &Self) -> Result<Self> {
         self.validate()?;
@@ -373,6 +395,8 @@ impl Config {
         let mut out = self.clone();
         out.native_hook_names
             .extend(additional.native_hook_names.iter().cloned());
+        out.shadow_hook_names
+            .extend(additional.shadow_hook_names.iter().cloned());
         extend(
             &mut out.guardrails.user_input,
             &additional.guardrails.user_input,
@@ -402,6 +426,9 @@ impl Config {
         for h in &additional.hooks {
             if let Some(old) = out.hooks.iter().find(|v| v.name == h.name) {
                 ensure!(old == h, "Cannot replace an inherited hook");
+                if !self.is_shadow_hook(old) || !additional.is_shadow_hook(h) {
+                    out.shadow_hook_names.remove(&h.name);
+                }
             } else {
                 out.hooks.push(h.clone());
             }
@@ -467,6 +494,7 @@ pub struct Context {
 )]
 pub enum Decision {
     Allow,
+    Alert,
     Block {
         code: String,
         #[serde(default)]
@@ -482,7 +510,7 @@ impl Decision {
     }
     pub fn validate(&self) -> Result<()> {
         match self {
-            Self::Allow => {}
+            Self::Allow | Self::Alert => {}
             Self::Block {
                 code,
                 feedback_to_model,

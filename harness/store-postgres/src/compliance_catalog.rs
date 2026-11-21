@@ -118,7 +118,15 @@ impl Search {
                 .is_none_or(|s| s.len() <= 160 && !s.chars().any(char::is_control))
                 && self.outcome.as_deref().is_none_or(|s| matches!(
                     s,
-                    "approved" | "denied" | "blocked" | "redacted" | "unavailable" | "matched"
+                    "approved"
+                        | "denied"
+                        | "blocked"
+                        | "redacted"
+                        | "unavailable"
+                        | "matched"
+                        | "alerted"
+                        | "would_block"
+                        | "shadow_unavailable"
                 )),
             SubmissionError::InvalidRequest
         );
@@ -184,6 +192,7 @@ SELECT (extract(epoch FROM p.created)*1000000)::bigint, jsonb_build_object(
     'policy_version',left(p.policy_version,80),'policy_digest',p.policy_digest,'tool',left(p.tool,128),
     'source',p.source,'outcome',p.outcome,'occurred_ms',floor(extract(epoch FROM p.created)*1000)::bigint,
     'effect',CASE
+      WHEN p.outcome IN ('would_block','alerted','shadow_unavailable') THEN 'observation_only'
       WHEN p.phase IN ('model_output','tool_result') AND p.outcome IN ('blocked','unavailable')
         THEN CASE WHEN p.phase='tool_result' THEN 'result_withheld' ELSE 'response_withheld' END
       WHEN p.phase='user_input' AND p.outcome='blocked' THEN 'request_blocked'
@@ -231,12 +240,13 @@ const AGENT_OVERVIEW: &str = "
         count(*) AS decisions,
         count(*) FILTER (WHERE outcome IN ('blocked','denied')) AS blocked,
         count(*) FILTER (WHERE outcome='redacted') AS redacted,
-        count(*) FILTER (WHERE outcome='unavailable') AS unavailable,
+        count(*) FILTER (WHERE outcome='would_block') AS would_block,
+        count(*) FILTER (WHERE outcome IN ('unavailable','shadow_unavailable')) AS unavailable,
         0::bigint AS turns
     FROM filtered GROUP BY app,COALESCE(release,agent)
     UNION ALL
     SELECT owner.principal,COALESCE(op.release_id,s.data->>'coworker'),max(s.data->>'coworker'),max(op.release_id),
-        0,0,0,0,count(*)
+        0,0,0,0,0,count(*)
     FROM audit a
     JOIN sessions s ON s.id=a.session_id
     LEFT JOIN api_session_owners owner ON owner.session_id=s.id
@@ -250,11 +260,11 @@ const AGENT_OVERVIEW: &str = "
     SELECT COALESCE(app,'') || ':' || COALESCE(name,'') AS key, app,
         max(agent) AS agent,max(release) AS release,sum(decisions)::bigint AS decisions,
         sum(blocked)::bigint AS blocked,sum(redacted)::bigint AS redacted,
-        sum(unavailable)::bigint AS unavailable,sum(turns)::bigint AS turns
+        sum(unavailable)::bigint AS unavailable,sum(would_block)::bigint AS would_block,sum(turns)::bigint AS turns
     FROM counts GROUP BY app,name
 )
 SELECT key, jsonb_build_object('app',app,'agent',agent,'release',release,'decisions',decisions,
-    'blocked',blocked,'redacted',redacted,'unavailable',unavailable,'turns',turns)
+    'blocked',blocked,'redacted',redacted,'unavailable',unavailable,'would_block',would_block,'turns',turns)
 FROM grouped WHERE $11::text IS NULL OR key>$11 ORDER BY key LIMIT 51";
 
 const ADMIN_AUDIT: &str = "
@@ -415,22 +425,23 @@ impl PostgresStore {
                      AND ($3::text IS NULL OR o.release_id=$3)
                      AND e.data->>'check' IS NOT NULL
                      AND e.data->>'phase' IN ('userInput','modelInput','modelOutput','toolCall','toolResult','event')
-                     AND e.data->>'outcome' IN ('allow','blocked','redacted','matched','unavailable')
+                     AND e.data->>'outcome' IN ('allow','blocked','redacted','matched','unavailable','alerted','would_block','shadow_unavailable')
                      AND (jsonb_typeof(s.data->'compliance') IS DISTINCT FROM 'object' OR
                          a.created>=now()-COALESCE((s.data->'compliance'->>'retentionDays')::bigint,3650)*interval '1 day')
                    UNION ALL
-                   SELECT NULL, NULL, split_part(target,':',2), NULL, 'userInput', split_part(target,':',3), created
+                   SELECT NULL, NULL, split_part(target,':',2), NULLIF(split_part(target,':',4),''), 'userInput', split_part(target,':',3), created
                    FROM api_security_audit
                    WHERE $3::text IS NULL AND action='turn.submit' AND session_id IS NULL
-                     AND target ~ '^guardrail:[A-Za-z0-9._-]{1,128}:(allow|blocked|redacted|matched|unavailable)$'
+                     AND target ~ '^guardrail:[A-Za-z0-9._-]{1,128}:(allow|blocked|redacted|matched|unavailable|alerted|would_block|shadow_unavailable)(:[A-Za-z0-9._-]{1,128})?$'
                      AND created>=TIMESTAMPTZ 'epoch'+$1::bigint*interval '1 millisecond'
                      AND created<TIMESTAMPTZ 'epoch'+$2::bigint*interval '1 millisecond'
                  )
                  SELECT release_id,agent,policy,version,phase,count(*),
                         count(*) FILTER (WHERE outcome='unavailable') AS unavailable,
+                        count(*) FILTER (WHERE outcome='shadow_unavailable') AS shadow_unavailable,
                         floor(extract(epoch FROM max(created))*1000)::bigint AS last_ms
                  FROM checks GROUP BY 1,2,3,4,5
-                 ORDER BY unavailable DESC,last_ms DESC,release_id,agent,policy,version,phase LIMIT 101",
+                 ORDER BY unavailable DESC,shadow_unavailable DESC,last_ms DESC,release_id,agent,policy,version,phase LIMIT 101",
                 &[&window.from, &window.until, &q.release],
             )?;
             let observed = rows.iter().take(100).map(|row| safe(json!({
@@ -441,7 +452,8 @@ impl PostgresStore {
                 "phase":row.get::<_, String>(4),
                 "checks":row.get::<_, i64>(5),
                 "unavailable":row.get::<_, i64>(6),
-                "last_ms":row.get::<_, i64>(7),
+                "shadow_unavailable":row.get::<_, i64>(7),
+                "last_ms":row.get::<_, i64>(8),
             }))).collect::<Vec<_>>();
             tx.commit()?;
             Ok(json!({"observed":observed,"truncated":rows.len()>100}))

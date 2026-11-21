@@ -96,10 +96,20 @@ pub enum Mode {
     Forbidden,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckMode {
+    Shadow,
+    Enforce,
+}
+
+pub type AppCheckModes = BTreeMap<String, BTreeMap<String, CheckMode>>;
+
 #[derive(Default)]
 pub struct PolicyRevision {
     pub revision: i64,
     pub policies: Policies,
+    pub app_check_modes: AppCheckModes,
 }
 pub type ReadPolicy = Arc<dyn Fn() -> Result<PolicyRevision> + Send + Sync>;
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -405,20 +415,67 @@ impl Configured {
         Ok(scope)
     }
     pub fn checks_for(&self, admission: &Admission) -> Result<safety::Config> {
+        self.checks_for_app(admission, || Ok(None))
+    }
+    pub fn checks_for_app(
+        &self,
+        admission: &Admission,
+        app: impl FnOnce() -> Result<Option<String>>,
+    ) -> Result<safety::Config> {
+        let policy = (self.policy)()?;
+        let modes = if policy.app_check_modes.is_empty() {
+            None
+        } else {
+            app()?.and_then(|id| policy.app_check_modes.get(&id))
+        };
+        self.checks_for_revision(admission, &policy, modes)
+    }
+    fn checks_for_revision(
+        &self,
+        admission: &Admission,
+        policy: &PolicyRevision,
+        modes: Option<&BTreeMap<String, CheckMode>>,
+    ) -> Result<safety::Config> {
         if let Some(scoped) = admission
             .model_connection
             .as_ref()
             .and_then(|c| self.provider_configs.read().unwrap().get(c).cloned())
         {
-            return scoped.checks_for(admission);
+            return scoped.checks_for_revision(admission, policy, modes);
         }
         if !admission.overrides.is_empty() {
             let scoped = self.scope(&admission.overrides, admission.model_connection.as_deref())?;
             let mut inner = admission.clone();
             inner.overrides.clear();
-            return scoped.checks(&scoped.resolve(&inner)?);
+            return scoped.checks_for_revision(&inner, policy, modes);
         }
-        self.checks(&self.resolve(admission)?)
+        let mut decisions = self.resolve_with(admission, policy)?;
+        let mut shadow = std::collections::BTreeSet::new();
+        for (id, mode) in modes.into_iter().flatten() {
+            if policy.policies.get(id) == Some(&Mode::Forbidden) {
+                continue;
+            }
+            ensure!(
+                matches!(self.instances.get(id), Some(Instance::Checks(_)))
+                    && self
+                        .bindings
+                        .get(id)
+                        .is_some_and(|pin| admission.bindings.get(id) == Some(pin)),
+                "App check {id} has no matching installed configuration"
+            );
+            decisions.insert(
+                id.clone(),
+                Decision {
+                    enabled: true,
+                    source: Source::Required,
+                    revision: policy.revision,
+                },
+            );
+            if *mode == CheckMode::Shadow {
+                shadow.insert(id.as_str());
+            }
+        }
+        self.checks_with_shadow(&decisions, &shadow)
     }
     pub fn configured_ids(&self) -> impl Iterator<Item = String> {
         let mut ids: std::collections::BTreeSet<_> = self.instances.keys().cloned().collect();
@@ -822,14 +879,28 @@ impl Configured {
         }
     }
     pub fn checks(&self, decisions: &BTreeMap<String, Decision>) -> Result<safety::Config> {
+        self.checks_with_shadow(decisions, &Default::default())
+    }
+
+    fn checks_with_shadow(
+        &self,
+        decisions: &BTreeMap<String, Decision>,
+        shadow: &std::collections::BTreeSet<&str>,
+    ) -> Result<safety::Config> {
         let mut checks = safety::Config::default();
         for (id, d) in decisions {
             if d.enabled {
                 if let Some(Instance::Checks(config)) = self.instances.get(id) {
-                    checks = checks.merge(config)?;
-                    checks
+                    let mut config = config.clone();
+                    config
                         .native_hook_names
                         .extend(config.hooks.iter().map(|h| h.name.clone()));
+                    if shadow.contains(id.as_str()) {
+                        config
+                            .shadow_hook_names
+                            .extend(config.native_hook_names.iter().cloned());
+                    }
+                    checks = checks.merge(&config)?;
                 }
             }
         }
@@ -871,6 +942,7 @@ mod tests {
                     Ok(PolicyRevision {
                         revision: value.revision,
                         policies: value.policies.clone(),
+                        app_check_modes: value.app_check_modes.clone(),
                     })
                 }),
             )
@@ -928,6 +1000,7 @@ mod tests {
             *state.write().unwrap() = PolicyRevision {
                 revision: i as i64 + 1,
                 policies: BTreeMap::from([("first".into(), mode)]),
+                ..Default::default()
             };
             let resumed = serde_json::from_slice(&checkpoint).unwrap();
             for admission in [&old, &resumed] {

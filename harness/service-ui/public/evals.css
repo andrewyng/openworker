@@ -238,6 +238,7 @@
 .ev-pill i { width: 6px; height: 6px; background: currentColor; border-radius: 50%; }
 .ev-pill.ev-passed { color: #26714c; background: #ebf6ef; }
 .ev-pill.ev-failed { color: #a2373f; background: #fbeef0; }
+.ev-pill.ev-benchmark { color: #5540a0; background: #efebfc; }
 .ev-pill.ev-error { color: #945818; background: #fbf1e3; }
 .ev-error:not(.ev-pill) { color: #a2373f; }
 .ev-error:empty { display: none; }

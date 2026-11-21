@@ -903,6 +903,7 @@ async fn explicit_harness_default_and_live_policy_survive_a_runtime_restart() {
                     Ok(PolicyRevision {
                         revision,
                         policies: BTreeMap::from([("deny-input".into(), mode)]),
+                        ..Default::default()
                     })
                 }),
             )

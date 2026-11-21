@@ -16,10 +16,16 @@ function table(title, headers, rows, empty) {
     '</tr></thead><tbody>' + rows.join("") + '</tbody></table></div>' : '<p class="cp-empty">' + empty + '</p>';
 }
 
-function evidenceLink(row, days) {
-  const params = new URLSearchParams({ policy: row.policy, days, outcome: "unavailable" });
+function evidenceLink(row, days, outcome) {
+  const params = new URLSearchParams({ policy: row.policy, days, outcome });
   if (row.release || row.agent) params.set("agent", row.release || row.agent);
   return '<a class="cp-session-link" href="#compliance?' + esc(params.toString()) + '">View decisions</a>';
+}
+
+function unavailable(row, days, outcome) {
+  const count = row[outcome];
+  return count ? '<span class="cp-pill" data-tone="' + outcome + '"><i></i>' +
+    number.format(count) + '</span> ' + evidenceLink(row, days, outcome) : "0";
 }
 
 export function mountPolicyCoverage(root, { api, params, signal }) {
@@ -57,8 +63,8 @@ export function mountPolicyCoverage(root, { api, params, signal }) {
         '</strong><small class="cell-subtitle">' + esc(row.policy_version || "Version unavailable") +
         '</small></td><td>' + esc(row.release || row.agent || "Before session creation") +
         '</td><td>' + esc(stages[row.phase]) + '</td><td>' + number.format(row.checks) +
-        '</td><td>' + (row.unavailable ? '<span class="cp-pill" data-tone="unavailable"><i></i>' +
-          number.format(row.unavailable) + '</span> ' + evidenceLink(row, range) : "0") +
+        '</td><td>' + unavailable(row, range, "unavailable") +
+        '</td><td>' + unavailable(row, range, "shadow_unavailable") +
         '</td><td><time datetime="' + new Date(row.last_ms).toISOString() + '">' +
         esc(time.format(row.last_ms)) + '</time></td></tr>');
       result.innerHTML = '<section><h2>Configured checks</h2><p>' +
@@ -69,7 +75,7 @@ export function mountPolicyCoverage(root, { api, params, signal }) {
         '</section><section><h2>Recorded checks</h2><p>' +
         (coverage.truncated ? "Showing 100 groups. Narrow the time range or choose a release for more detail." :
           "Journaled checks in the selected time range.") +
-        '</p>' + table("Recorded checks", ["Policy", "Agent release", "Stage", "Checks", "Unavailable", "Last seen (UTC)"],
+        '</p>' + table("Recorded checks", ["Policy", "Agent release", "Stage", "Checks", "Unavailable", "Shadow unavailable", "Last seen (UTC)"],
           observed, "No checks recorded in this time range.") + '</section>';
     } catch (error) {
       if (!signal.aborted && request === generation) {
