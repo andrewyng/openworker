@@ -244,6 +244,26 @@ def test_run_shell_accepts_description_and_clamped_timeout(executor):
     assert out["exit_code"] == 0 and "ok" in out["output"]
 
 
+def test_run_shell_reads_a_quoted_flag_by_value(executor):
+    # The schema says boolean, but a model may quote it — and Python truthiness reads
+    # the non-empty string "false" as True, which detaches the command and hides its
+    # output. Policy: only True, 1 and the strings "true"/"1"/"yes" (case-insensitive)
+    # count as true; every other value is false.
+    reg = ToolRegistry()
+    reg.register_all(shell_tools(executor))
+    out = reg.execute("run_shell", {"command": "echo hi", "run_in_background": "false"})
+    assert "task_id" not in out, out
+    assert out["exit_code"] == 0 and "hi" in out["output"]
+    for quoted in ("0", "no"):
+        out = reg.execute("run_shell", {"command": "echo hi", "run_in_background": quoted})
+        assert "task_id" not in out, quoted
+        assert out["exit_code"] == 0, quoted
+    for quoted in ("true", "1", "yes"):
+        out = reg.execute("run_shell", {"command": "echo hi", "run_in_background": quoted})
+        assert "task_id" in out, quoted
+        reg.execute("shell_task_kill", {"task_id": out["task_id"]})
+
+
 # -- background tasks ------------------------------------------------------------
 
 ECHO_THEN_SLEEP = (
