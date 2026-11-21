@@ -211,6 +211,21 @@ def option_label(opt) -> str:
     return str(opt.get("label", "")) if isinstance(opt, dict) else str(opt)
 
 
+def option_list(raw) -> list:
+    """The `options` argument as a list of options.
+
+    A non-list is ONE option, not a sequence: nothing validates the argument against
+    the schema before the call, so `options="yes,no"` reached the tool as a string and
+    was iterated character by character — the card showed six single-letter buttons
+    (y, e, s, ,, n, o) instead of one choice. Lists are passed through unchanged.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple)):
+        return list(raw)
+    return [raw]
+
+
 def normalize_questions(raw) -> list[dict]:
     """The grouped `questions` arg in canonical form (capped, blanks dropped). Each entry:
     {question, header, options: [canonical option], allow_text, multi}."""
@@ -225,7 +240,7 @@ def normalize_questions(raw) -> list[dict]:
             {
                 "question": q,
                 "header": str(entry.get("header", "")),
-                "options": [normalize_option(o) for o in entry.get("options") or []],
+                "options": [normalize_option(o) for o in option_list(entry.get("options"))],
                 "allow_text": bool(entry.get("allow_text", True)),
                 "multi": bool(entry.get("multi", False)),
             }
@@ -257,7 +272,7 @@ def question_item_fields(args: dict) -> dict | None:
         # rich objects are canonicalized so downstream never meets a half-filled dict.
         "options": [
             o if isinstance(o, str) else normalize_option(o)
-            for o in args.get("options") or []
+            for o in option_list(args.get("options"))
         ],
         "allow_text": bool(args.get("allow_text", True)),
         "multi": bool(args.get("multi", False)),
