@@ -58,8 +58,19 @@ def todo_tools(todo: TodoList) -> list:
         """Replace the task list. Each todo is an object with `content` and a `status`
         of pending, in_progress, or done."""
         # `items` stays accepted (models that free-style the old name; queued replays).
+        raw = todos if todos is not None else items
+        if not raw:
+            entries: list = []
+        elif isinstance(raw, (list, tuple)):
+            entries = list(raw)
+        else:
+            # Not a list, so it is ONE todo, not a sequence of them. A string would
+            # otherwise be iterated character by character — `todos="write tests"`
+            # replaced the plan with 11 one-letter todos — and a single todo object
+            # would be split into its keys ("content" and "status" as todo texts).
+            entries = [raw]
         normalized = []
-        for entry in (todos if todos is not None else items) or []:
+        for entry in entries:
             if isinstance(entry, dict):
                 status = entry.get("status", "pending")
                 if status == "completed":  # common model alias for our "done"
