@@ -40,6 +40,20 @@ def test_recursive_listing_shows_folders_and_files(tmp_path):
     ]
 
 
+def test_list_files_reads_a_quoted_recursive_flag_by_value(tmp_path):
+    # Same quoted-flag trap as run_shell: Python truthiness reads the non-empty string
+    # "false" as True, so a model quoting the flag got a recursive listing when it
+    # asked for one level. Policy: only True, 1 and "true"/"1"/"yes" count as true.
+    _site(tmp_path)
+    assert _list_files(tmp_path)(path=".", recursive="false") == ["personal-site/"]
+    assert _list_files(tmp_path)(path=".", recursive="true") == [
+        "personal-site/",
+        "personal-site/_includes/",
+        "personal-site/_includes/about.md",
+        "personal-site/index.html",
+    ]
+
+
 def test_pattern_and_subpath_apply(tmp_path):
     _site(tmp_path)
     tool = _list_files(tmp_path)

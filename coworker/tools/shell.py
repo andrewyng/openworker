@@ -157,6 +157,22 @@ _TASK_KILL_SCHEMA = {
 }
 
 
+def _flag(value: object) -> bool:
+    """A boolean argument read by value, not by Python truthiness.
+
+    Every non-empty string is truthy, so `run_in_background="false"` used to start a
+    background task and hand back a task_id instead of the command's output. Policy:
+    only `True`, the number `1`, and the strings `"true"`, `"1"` and `"yes"`
+    (case-insensitive, whitespace-trimmed) count as true — everything else, `"false"`
+    and `"0"` included, is false.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes")
+    return value == 1
+
+
 def shell_tools(executor: Executor) -> list:
     """Return the shell tools (`run_shell` + background-task helpers) bound to a
     persistent executor."""
@@ -169,7 +185,7 @@ def shell_tools(executor: Executor) -> list:
     ) -> dict:
         # `description` is not used here on purpose: it rides along in the call arguments
         # so approval prompts and the audit log can show intent, not just the raw command.
-        if run_in_background:
+        if _flag(run_in_background):
             return executor.run_background(command)
         timeout = None
         if isinstance(timeout_seconds, (int, float)) and timeout_seconds > 0:
