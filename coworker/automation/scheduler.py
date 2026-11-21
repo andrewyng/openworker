@@ -2,14 +2,20 @@
 
 Policy (agreed): **run-once-catch-up** for runs missed while down (due tasks fire once on
 startup, then resume), and **skip-on-overlap** (don't stack a run if the previous is still
-going). The actual execution is injected as `runner(task, trigger) -> TaskRun` so this stays
+going). The actual execution is injected as `runner(task, trigger, run) -> TaskRun` so this stays
 independent of the engine/manager.
+
+Features (Issue #621):
+- Run timeout (per-task or default e.g. 15 min), releasing overlap guard on expiry
+- Error retry with exponential backoff for runs ending in error
+- Force stop action to cancel stuck in-flight runs from UI
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Awaitable, Callable, Optional
 
 from .models import ScheduledTask, TaskRun
@@ -17,7 +23,7 @@ from .store import TaskStore
 
 logger = logging.getLogger("coworker.automation")
 
-Runner = Callable[[ScheduledTask, str], Awaitable[TaskRun]]
+Runner = Callable[[ScheduledTask, str, TaskRun], Awaitable[TaskRun]]
 
 
 class Scheduler:
@@ -28,15 +34,20 @@ class Scheduler:
         *,
         tick_seconds: float = 30.0,
         extra_tick: Optional[Callable[[], Awaitable[None]]] = None,
+        default_timeout: float = 900.0,
+        on_timeout: Optional[Callable[[ScheduledTask, TaskRun], Awaitable[None]]] = None,
     ) -> None:
         self.store = store
         self.runner = runner
         self.tick_seconds = tick_seconds
         # An extra per-tick coroutine (self-wake resumption: resume sessions whose wakes are due).
         self.extra_tick = extra_tick
+        self.default_timeout = default_timeout
+        self.on_timeout = on_timeout
         self._task: Optional[asyncio.Task] = None
         self._running_ids: set[str] = set()  # overlap guard
         self._spawned: set[asyncio.Task] = set()  # keep spawned runs referenced
+        self._active_runs: dict[str, asyncio.Task] = {}  # task_id -> running asyncio.Task
 
     def start(self) -> None:
         if self._task is None:
@@ -59,6 +70,7 @@ class Scheduler:
             except asyncio.CancelledError:
                 pass
         self._spawned.clear()
+        self._active_runs.clear()
 
     async def _loop(self) -> None:
         # First pass = run-once-catch-up for anything missed while the server was down.
@@ -84,8 +96,10 @@ class Scheduler:
             # already clear — the task runs twice.
             if not self._claim(task.id):
                 continue
-            spawned = asyncio.create_task(self._run_claimed(task, trigger=trigger))
+            run_trigger = "retry" if task.retry_count > 0 else trigger
+            spawned = asyncio.create_task(self._run_claimed(task, trigger=run_trigger))
             self._spawned.add(spawned)
+            self._active_runs[task.id] = spawned
             spawned.add_done_callback(self._spawned.discard)
         if self.extra_tick is not None:
             try:
@@ -100,29 +114,87 @@ class Scheduler:
         self._running_ids.add(task_id)
         return True
 
+    def force_stop(self, task_id: str) -> bool:
+        """Request cancellation; retain ownership until runner cleanup completes."""
+        active = self._active_runs.get(task_id)
+        if active is not None and not active.done():
+            active.cancel()
+            return True
+        return False
+
     async def run_task(self, task: ScheduledTask, *, trigger: str) -> Optional[TaskRun]:
         if not self._claim(task.id):
             return None
-        return await self._run_claimed(task, trigger=trigger)
+        current = asyncio.current_task()
+        if current is not None:
+            self._active_runs[task.id] = current
+        try:
+            return await self._run_claimed(task, trigger=trigger)
+        finally:
+            self._active_runs.pop(task.id, None)
 
     async def _run_claimed(
         self, task: ScheduledTask, *, trigger: str
     ) -> Optional[TaskRun]:
+        timeout = (
+            task.timeout_seconds
+            if task.timeout_seconds is not None
+            else self.default_timeout
+        )
+        run = TaskRun(task_id=task.id, trigger=trigger)
+        self.store.add_run(run)
         try:
-            run = await self.runner(task, trigger)
+            if timeout and timeout > 0:
+                await asyncio.wait_for(self.runner(task, trigger, run), timeout=timeout)
+            else:
+                await self.runner(task, trigger, run)
+        except asyncio.TimeoutError:
+            run.status = "timed_out"
+            run.error = f"Task run timed out after {timeout}s"
+            if self.on_timeout is not None:
+                try:
+                    await self.on_timeout(task, run)
+                except Exception:
+                    logger.exception("scheduler on_timeout callback failed for %s", task.id)
+        except asyncio.CancelledError:
+            run.status = "cancelled"
+            run.error = "Force stopped by user"
         except Exception as exc:
             logger.exception("task %s run failed", task.id)
-            run = TaskRun(
-                task_id=task.id, status="error", error=str(exc), trigger=trigger
-            )
-            self.store.add_run(run)
+            run.status, run.error = "error", str(exc)
         finally:
+            run.finished_at = time.time()
+            self.store.add_run(run)
             self._running_ids.discard(task.id)
-        # advance the task (run_count/last_run) → save recomputes next_run.
+            self._active_runs.pop(task.id, None)
+
+        # advance the task (run_count/last_run/status/retry).
         fresh = self.store.get(task.id)
         if fresh is not None:
             fresh.run_count += 1
             fresh.last_run = run.started_at if run else None
             fresh.last_status = run.status if run else "error"
-            self.store.save(fresh)
+
+            # Retry on error with exponential backoff (not cancelled or timed-out)
+            if (
+                run
+                and run.status == "error"
+                and fresh.max_retries > 0
+                and fresh.retry_count < fresh.max_retries
+            ):
+                backoff = fresh.retry_backoff_seconds * (2**fresh.retry_count)
+                fresh.retry_count += 1
+                fresh.next_run = time.time() + backoff
+                logger.info(
+                    "task %s failed (%s); scheduled retry %d/%d in %.1fs",
+                    fresh.id,
+                    run.error,
+                    fresh.retry_count,
+                    fresh.max_retries,
+                    backoff,
+                )
+                self.store.save(fresh, recompute_next_run=False)
+            else:
+                fresh.retry_count = 0
+                self.store.save(fresh, recompute_next_run=True)
         return run
