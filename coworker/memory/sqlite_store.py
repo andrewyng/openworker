@@ -5,10 +5,28 @@ from __future__ import annotations
 import re
 import sqlite3
 import threading
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
 from .base import MemoryItem, MemoryStore, Scope
+
+_AR_DIACRITICS_RE = re.compile(r"[\u0640\u064B-\u065F\u0670\u06D6-\u06ED]")
+_AR_NORM_TABLE = str.maketrans({
+    "أ": "ا", "إ": "ا", "آ": "ا", "ٱ": "ا",
+    "ى": "ي", "ة": "ه",
+    "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4",
+    "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9",
+})
+
+
+def _normalize_search_text(text: Optional[str]) -> str:
+    """Normalize Arabic Tashkeel, Tatweel, Alef/Teh-Marbuta variants & Eastern digits for FTS5."""
+    if not text:
+        return ""
+    s = unicodedata.normalize("NFC", text)
+    s = _AR_DIACRITICS_RE.sub("", s)
+    return s.translate(_AR_NORM_TABLE)
 
 
 class SQLiteMemoryStore(MemoryStore):
@@ -28,22 +46,36 @@ class SQLiteMemoryStore(MemoryStore):
                 key TEXT,
                 content TEXT NOT NULL,
                 summary TEXT,
+                norm_content TEXT,
+                norm_summary TEXT,
                 workspace TEXT,
                 session_id TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """)
-        # Databases created before the summary column existed: rows without one fall
-        # back to a truncated first line of content at render time (no data migration).
+        # Databases created before the summary/norm columns existed: migrate cleanly.
         cols = {
             row["name"]
             for row in self._conn.execute("PRAGMA table_info(memories)").fetchall()
         }
         if "summary" not in cols:
             self._conn.execute("ALTER TABLE memories ADD COLUMN summary TEXT")
+        if "norm_content" not in cols:
+            self._conn.execute("ALTER TABLE memories ADD COLUMN norm_content TEXT")
+        if "norm_summary" not in cols:
+            self._conn.execute("ALTER TABLE memories ADD COLUMN norm_summary TEXT")
+        # Backfill normalized columns for any existing rows
+        rows_missing = self._conn.execute(
+            "SELECT id, content, summary FROM memories WHERE norm_content IS NULL"
+        ).fetchall()
+        for r in rows_missing:
+            self._conn.execute(
+                "UPDATE memories SET norm_content = ?, norm_summary = ? WHERE id = ?",
+                (_normalize_search_text(r["content"]), _normalize_search_text(r["summary"]), r["id"]),
+            )
         self._conn.commit()
 
-        # FTS5 full-text search index (companion virtual table + triggers)
+        # FTS5 full-text search index (companion virtual table + triggers over normalized Arabic-safe text)
         self._fts_enabled = False
         try:
             fts_exists = self._conn.execute(
@@ -51,30 +83,30 @@ class SQLiteMemoryStore(MemoryStore):
             ).fetchone()
             self._conn.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-                    content,
-                    summary,
+                    norm_content,
+                    norm_summary,
                     content=memories,
                     content_rowid=id
                 )
             """)
             self._conn.execute("""
                 CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-                    INSERT INTO memories_fts(rowid, content, summary)
-                    VALUES (new.id, new.content, new.summary);
+                    INSERT INTO memories_fts(rowid, norm_content, norm_summary)
+                    VALUES (new.id, new.norm_content, new.norm_summary);
                 END;
             """)
             self._conn.execute("""
                 CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-                    INSERT INTO memories_fts(memories_fts, rowid, content, summary)
-                    VALUES('delete', old.id, old.content, old.summary);
+                    INSERT INTO memories_fts(memories_fts, rowid, norm_content, norm_summary)
+                    VALUES('delete', old.id, old.norm_content, old.norm_summary);
                 END;
             """)
             self._conn.execute("""
                 CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-                    INSERT INTO memories_fts(memories_fts, rowid, content, summary)
-                    VALUES('delete', old.id, old.content, old.summary);
-                    INSERT INTO memories_fts(rowid, content, summary)
-                    VALUES (new.id, new.content, new.summary);
+                    INSERT INTO memories_fts(memories_fts, rowid, norm_content, norm_summary)
+                    VALUES('delete', old.id, old.norm_content, old.norm_summary);
+                    INSERT INTO memories_fts(rowid, norm_content, norm_summary)
+                    VALUES (new.id, new.norm_content, new.norm_summary);
                 END;
             """)
             if not fts_exists:
@@ -103,9 +135,18 @@ class SQLiteMemoryStore(MemoryStore):
         scope = Scope(scope)
         with self._lock:
             cursor = self._conn.execute(
-                "INSERT INTO memories (scope, key, content, summary, workspace, session_id) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (scope.value, key, content, summary, workspace, session_id),
+                "INSERT INTO memories (scope, key, content, summary, norm_content, norm_summary, workspace, session_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    scope.value,
+                    key,
+                    content,
+                    summary,
+                    _normalize_search_text(content),
+                    _normalize_search_text(summary),
+                    workspace,
+                    session_id,
+                ),
             )
             self._conn.commit()
             item = self.get(cursor.lastrowid)
@@ -148,12 +189,13 @@ class SQLiteMemoryStore(MemoryStore):
         with self._lock:
             if summary is not None:
                 self._conn.execute(
-                    "UPDATE memories SET content = ?, summary = ? WHERE id = ?",
-                    (content, summary, item_id),
+                    "UPDATE memories SET content = ?, summary = ?, norm_content = ?, norm_summary = ? WHERE id = ?",
+                    (content, summary, _normalize_search_text(content), _normalize_search_text(summary), item_id),
                 )
             else:
                 self._conn.execute(
-                    "UPDATE memories SET content = ? WHERE id = ?", (content, item_id)
+                    "UPDATE memories SET content = ?, norm_content = ? WHERE id = ?",
+                    (content, _normalize_search_text(content), item_id),
                 )
             self._conn.commit()
         return self.get(item_id)
@@ -207,7 +249,8 @@ class SQLiteMemoryStore(MemoryStore):
                 query, limit=limit, scope=scope, workspace=workspace
             )
 
-        tokens = re.findall(r"\w+", query)
+        norm_q = _normalize_search_text(query)
+        tokens = re.findall(r"\w+", norm_q)
         if not tokens:
             return []
         fts_query = " ".join(f'"{t}"*' for t in tokens)
@@ -249,8 +292,8 @@ class SQLiteMemoryStore(MemoryStore):
         scope: Optional[Scope] = None,
         workspace: Optional[str] = None,
     ) -> list[MemoryItem]:
-        like_pattern = f"%{query.strip()}%"
-        sql = "SELECT * FROM memories WHERE (content LIKE ? OR summary LIKE ?)"
+        like_pattern = f"%{_normalize_search_text(query).strip()}%"
+        sql = "SELECT * FROM memories WHERE (norm_content LIKE ? OR norm_summary LIKE ?)"
         params: list[object] = [like_pattern, like_pattern]
         if scope is not None:
             sql += " AND scope = ?"
