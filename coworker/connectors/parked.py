@@ -13,12 +13,15 @@ re-injects the parked message through the normal inbound path.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -46,25 +49,100 @@ class ParkedStore:
         self._items: list[ParkedMessage] = []
         self._load()
 
+    def _quarantine(self) -> Optional[Path]:
+        """Move an unreadable file aside so the next save cannot overwrite the only
+        copy of it. Returns the path it moved to, or None if the move failed."""
+        if not self.path:
+            return None
+        spare = self.path.with_suffix(self.path.suffix + ".corrupt")
+        try:
+            self.path.replace(spare)
+        except OSError:
+            return None
+        return spare
+
+    def _refuse_file(self, reason: str, items: list[ParkedMessage]) -> list[ParkedMessage]:
+        """Keep what could be read, move the file aside, and say so out loud.
+
+        Parked messages are what an unauthorized sender said, kept so the owner can
+        allow-and-deliver rather than asking them to re-send — dropping one is NOT
+        neutral. So the bytes are moved aside (never deleted, never overwritten by a
+        later save) and the reason is logged, the way the risk-override and
+        connection stores do it.
+        """
+        message = f"{self.path}: {reason}; kept {len(items)} parked message(s)"
+        spare = self._quarantine()
+        if spare is not None:
+            message += f" (original kept at {spare})"
+        logger.warning(message)
+        return items
+
     def _load(self) -> None:
-        if self.path and self.path.is_file():
+        if not (self.path and self.path.is_file()):
+            return
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as e:
+            # A torn file must never block startup: SessionManager builds this store.
+            self._items = self._refuse_file(f"unreadable ({type(e).__name__})", [])
+            return
+        if not isinstance(data, dict):
+            # Valid JSON of the wrong shape (`[]`, `null`, a string): `data.get` would
+            # raise AttributeError out of the constructor the same way.
+            self._items = self._refuse_file("not a JSON object", [])
+            return
+        raw_items = data.get("items")
+        if raw_items is None:
+            raw_items = []
+        if not isinstance(raw_items, list):
+            self._items = self._refuse_file("'items' is not a JSON array", [])
+            return
+
+        # A single record this build cannot represent (an unknown field a later
+        # build wrote, a required one missing) used to abort the whole comprehension
+        # and take every other parked message with it. Skip just that record.
+        items: list[ParkedMessage] = []
+        dropped: list[str] = []
+        for index, raw in enumerate(raw_items):
+            if not isinstance(raw, dict):
+                dropped.append(f"item {index}: not a JSON object")
+                continue
             try:
-                data = json.loads(self.path.read_text(encoding="utf-8"))
-                self._items = [ParkedMessage(**raw) for raw in data.get("items", [])]
-            except (OSError, ValueError, TypeError):
-                self._items = []  # a corrupt file must never block startup
+                items.append(ParkedMessage(**raw))
+            except (TypeError, ValueError) as e:
+                dropped.append(f"item {index}: {type(e).__name__}")
+        if dropped:
+            detail = "; ".join(dropped[:3])
+            if len(dropped) > 3:
+                detail += f"; … and {len(dropped) - 3} more"
+            self._items = self._refuse_file(
+                f"dropped {len(dropped)} of {len(raw_items)} parked message(s) ({detail})",
+                items,
+            )
+            return
+        self._items = items
 
     def _save(self) -> None:
         if not self.path:
             return
+        # Write a sibling .tmp and rename it over the real file, so a crash mid-write
+        # leaves the previous complete file instead of a truncated one — the same
+        # shape mentions.py uses.
+        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(
+            temporary.write_text(
                 json.dumps({"items": [asdict(i) for i in self._items]}, indent=2),
                 encoding="utf-8",
             )
-        except OSError:
-            pass  # persistence is best-effort; memory stays authoritative
+            temporary.replace(self.path)
+        except OSError as exc:
+            # Persistence is best-effort; memory stays authoritative for this process.
+            logger.warning("could not save %s: %s", self.path, exc)
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
 
     def park(self, **fields) -> ParkedMessage:
         item = ParkedMessage(**fields)
