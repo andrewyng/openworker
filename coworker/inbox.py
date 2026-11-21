@@ -440,9 +440,12 @@ class InboxStore:
                     resolved_ids.append(dependent.id)
             self._save()
         for resolved_id in resolved_ids:
-            waiter = self._waiters.get(resolved_id)
+            # Pop, don't just read: the entry exists only to wake the wait on this item.
+            # Leaving it (and its loop reference) behind after the resolution grew both
+            # dicts with every prompt the store ever resolved (#766).
+            waiter = self._waiters.pop(resolved_id, None)
             if waiter is not None:
-                loop = self._waiter_loops.get(resolved_id)
+                loop = self._waiter_loops.pop(resolved_id, None)
                 if loop is not None and not loop.is_closed():
                     loop.call_soon_threadsafe(waiter.set)
         return True
