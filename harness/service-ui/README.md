@@ -43,6 +43,9 @@ or default password. Use separate runner/publisher/administrator credentials as 
   model/purpose and tool groups, and watermarked turn timelines. Missing usage
   stays unknown; scan/group limits remain visible. See below for counting and
   process-health scope.
+- **Compliance:** filterable guardrail and approval evidence, agent activity,
+  administrator actions, and scoped export. An event links to its source trace
+  or session for users with tracing access.
 - **Agents:** visible immutable releases, definition inspection, publication,
   activation, and task submission. Release JSON selects tools already installed in
   the service. It cannot upload native binaries or arbitrary server launchers.
@@ -207,6 +210,40 @@ link to each other. Evaluation results and evaluator settings are scoped to thei
 app. To run an evaluation from a guardrail hit, expand the finding and choose
 **Evaluate matching turns**. A pre-admission finding with no turn remains visible
 in Guardrails.
+
+### Compliance
+
+**Decisions** reads the execution and security journals. The detail panel shows a
+policy version or digest when recorded, and distinguishes a decision from the
+observed effect. An approval without a reliable execution record displays
+**Execution unconfirmed**. Older events can lack correlation or policy details.
+**Agent overview** counts observed turns and decisions by app and release. A
+release with no recorded decisions shows that explicitly. **Admin audit** shows
+credential changes, service configuration revisions, release changes, and
+evidence export requests. Source trace detail depends on trace recording and
+requires the session's normal trace permissions.
+
+In **Settings → Access**, choose **Compliance reader** or **Compliance auditor**
+and enter exact app principals such as `app_finance`. Both roles can read scoped
+metadata. Auditors can also download it. App-scoped credentials have no access
+to raw transcripts or application execution. The existing explicit session
+scopes still work.
+
+**Export evidence** downloads the active Decisions filters as JSON Lines. Each
+record includes a schema version and stable event ID. Narrow the filters if
+the selection exceeds 2,000 records. Arguments, results, transcripts, and
+matched sensitive values are excluded. Download requests are audited.
+
+Administrators can optionally forward the filtered records to an existing
+configured audit endpoint. Add `config.compliance_sinks` with `name`, an HTTPS
+`endpoint`, and a `credentialEnv` reference, and enable `config.compliance`.
+In the Helm chart, set `secrets.complianceExport` to the name of the Kubernetes
+Secret containing each named credential. Credential values are available only
+to the API process. Source builds need the server's `compliance-export` feature.
+Use **Evidence delivery** to select a destination, queue a snapshot and check
+status. The service retries failed delivery with the same delivery ID and
+records. Receivers can deduplicate on `deliveryId`. This is a selected snapshot
+forwarding workflow. The existing opt-in session stream continues independently.
 
 ### Versioned cases and replays
 

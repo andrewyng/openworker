@@ -89,6 +89,18 @@ spec:
           args: [service-platform-controller]
           {{- end }}
           env:
+            {{- if and (eq $role "api") $.Values.config.compliance_sinks (not $.Values.config.recovery_read_only) }}
+            {{- $secret := required "secrets.complianceExport is required for config.compliance_sinks" $.Values.secrets.complianceExport }}
+            {{- $keys := dict }}
+            {{- range $.Values.config.compliance_sinks }}
+            {{- $key := required "compliance sink credentialEnv is required" .credentialEnv }}
+            {{- if not (hasKey $keys $key) }}
+            {{- $_ := set $keys $key true }}
+            - name: {{ $key | quote }}
+              valueFrom: {secretKeyRef: {name: {{ $secret | quote }}, key: {{ $key | quote }}}}
+            {{- end }}
+            {{- end }}
+            {{- end }}
             {{- if and $.Values.secrets.modelRegistry (or (eq $role "api") (eq $role "worker")) }}
             - name: OPENWORKER_MODEL_REGISTRY_KEY
               valueFrom: {secretKeyRef: {name: {{ $.Values.secrets.modelRegistry | quote }}, key: registry-key}}

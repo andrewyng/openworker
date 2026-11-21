@@ -9,6 +9,7 @@ mod agent_teams;
 mod app_agents;
 mod artifacts;
 mod authorization;
+pub mod compliance_catalog;
 mod eval_judge;
 pub mod eval_replay;
 pub mod evals;

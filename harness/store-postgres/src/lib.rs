@@ -6,6 +6,7 @@ mod artifacts;
 mod assistant;
 pub mod auth;
 mod compliance;
+pub mod compliance_catalog;
 mod controls;
 mod db;
 mod environments;

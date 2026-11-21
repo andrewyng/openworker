@@ -8,6 +8,7 @@ secrets:
   bootstrap: ow-service-bootstrap
   probe: ow-service-probe
   modelRegistry: "" # optional Secret with registry-key (base64-encoded 32-byte key)
+  complianceExport: "" # Secret keyed by the credentialEnv of each configured compliance sink
   model: ""
   observability: "" # optional separate recording database: database-url + ca.crt
   telemetry: "" # optional OTLP secret containing authorization (complete header value)

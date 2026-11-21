@@ -83,6 +83,11 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
         ("GET", ["", "v1", "compliance", "sessions", _, "activities" | "delivery"]) => {
             Some(Action::ComplianceRead)
         }
+        ("GET", ["", "v1", "compliance", "decisions" | "agents" | "audit"]) => {
+            Some(Action::ComplianceRead)
+        }
+        ("POST", ["", "v1", "compliance", "export"]) => Some(Action::EvidenceExport),
+        ("GET" | "POST", ["", "v1", "compliance", "delivery"]) => Some(Action::EvidenceForward),
         ("GET", ["", "v1", "compliance", "sessions", _, "content"]) => {
             Some(Action::ComplianceContent)
         }
@@ -259,6 +264,26 @@ pub(crate) fn router() -> Router<App> {
             post(crate::authorization::revoke),
         )
         .route("/v1/audit", get(crate::authorization::audit))
+        .route(
+            "/v1/compliance/decisions",
+            get(crate::compliance_catalog::decisions),
+        )
+        .route(
+            "/v1/compliance/agents",
+            get(crate::compliance_catalog::agents),
+        )
+        .route(
+            "/v1/compliance/audit",
+            get(crate::compliance_catalog::audit),
+        )
+        .route(
+            "/v1/compliance/export",
+            post(crate::compliance_catalog::export),
+        )
+        .route(
+            "/v1/compliance/delivery",
+            get(crate::compliance_catalog::deliveries).post(crate::compliance_catalog::forward),
+        )
         .route(
             "/v1/compliance/sessions/:sid/activities",
             get(compliance_activities),

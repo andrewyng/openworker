@@ -4328,7 +4328,7 @@ impl Runtime {
             &s,
             "interaction_resolved",
             control_event(
-                json!({"interaction_id":iid,"state_change": match resolved_interaction.kind.as_str() {"approval"=>Some("user_approval_done"),"question"=>Some("user_response_done"),_=>None},"decision":if approval {Some(if denied {"denied"} else {"approved"})}else{None},"origin":origin,"tool":tool,"kind":resolved_interaction.kind,"response":if approval {json!(resolved_interaction.response)} else {Value::Null},"call_id":resolved_interaction.call["call_id"],"session_grant":new_grant,"requested_at_ms":resolved_interaction.requested_at_ms,"resolved_at_ms":resolved_interaction.resolved_at_ms}),
+                json!({"interaction_id":iid,"state_change": match resolved_interaction.kind.as_str() {"approval"=>Some("user_approval_done"),"question"=>Some("user_response_done"),_=>None},"decision":if approval {Some(if denied {"denied"} else {"approved"})}else{None},"origin":origin,"tool":tool,"kind":resolved_interaction.kind,"response":if approval {json!(resolved_interaction.response)} else {Value::Null},"call_id":resolved_interaction.call["call_id"],"policy_digest":if approval { Some(&resolved_interaction.policy_digest) } else { None },"session_grant":new_grant,"requested_at_ms":resolved_interaction.requested_at_ms,"resolved_at_ms":resolved_interaction.resolved_at_ms}),
                 control,
             ),
         )?;

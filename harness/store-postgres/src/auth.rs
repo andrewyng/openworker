@@ -45,6 +45,7 @@ pub enum Scope {
     All,
     Owned,
     Sessions { ids: Vec<String> },
+    Apps { principals: Vec<String> },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -75,6 +76,8 @@ pub(crate) struct Context {
 pub enum Action {
     Identify,
     ComplianceExport,
+    EvidenceExport,
+    EvidenceForward,
     ComplianceRead,
     ComplianceContent,
     Read,
@@ -92,6 +95,8 @@ impl Action {
         match self {
             Self::Identify => "identity.read",
             Self::ComplianceExport => "compliance.export",
+            Self::EvidenceExport => "compliance.evidence.download",
+            Self::EvidenceForward => "compliance.evidence.forward",
             Self::ComplianceRead => "compliance.read",
             Self::ComplianceContent => "compliance.content.read",
             Self::Read => "read",
@@ -126,6 +131,8 @@ impl Role {
         match action {
             Action::Identify => true,
             Action::ComplianceExport => matches!(self, Self::Administrator),
+            Action::EvidenceExport => matches!(self, Self::Administrator | Self::ComplianceAuditor),
+            Action::EvidenceForward => matches!(self, Self::Administrator),
             Action::Read => !matches!(self, Self::ComplianceReader | Self::ComplianceAuditor),
             Action::ComplianceRead => matches!(
                 self,
@@ -154,13 +161,7 @@ impl Spec {
             ensure!(
                 self.scope == Scope::Owned
                     && self.environments.is_empty()
-                    && self
-                        .principal
-                        .strip_prefix("app_")
-                        .is_some_and(|n| !n.is_empty()
-                            && n.bytes().all(|b| b.is_ascii_lowercase()
-                                || b.is_ascii_digit()
-                                || b == b'-')),
+                    && is_app_principal(&self.principal),
                 Error::Invalid
             );
         }
@@ -176,6 +177,22 @@ impl Spec {
             ensure!(!ids.is_empty() && ids.len() <= 256, Error::Invalid);
             for sid in ids {
                 id(sid, 80)?;
+            }
+        }
+        if let Scope::Apps { principals } = &self.scope {
+            ensure!(
+                matches!(self.role, Role::ComplianceReader | Role::ComplianceAuditor)
+                    && !principals.is_empty()
+                    && principals.len() <= 64
+                    && principals
+                        .iter()
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len()
+                        == principals.len(),
+                Error::Invalid
+            );
+            for principal in principals {
+                ensure!(is_app_principal(principal), Error::Invalid);
             }
         }
         if matches!(
@@ -266,8 +283,23 @@ fn identity(tx: &mut Transaction<'_>, ctx: &Context) -> Result<Identity> {
         expires_at: s.expires_at,
     })
 }
+pub(crate) fn is_app_principal(value: &str) -> bool {
+    value.len() <= 64
+        && value.strip_prefix("app_").is_some_and(|name| {
+            !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+}
 pub(crate) fn session_allowed(tx: &mut Transaction<'_>, p: &Identity, sid: &str) -> Result<bool> {
-    Ok(match &p.scope {Scope::All=>true,Scope::Sessions{ids}=>ids.iter().any(|v|v==sid),Scope::Owned=>tx.query_one("SELECT EXISTS(SELECT 1 FROM api_session_owners WHERE session_id=$1 AND principal=$2)",&[&sid,&p.principal])?.get(0)})
+    let principals = match &p.scope {
+        Scope::All => return Ok(true),
+        Scope::Sessions { ids } => return Ok(ids.iter().any(|v| v == sid)),
+        Scope::Owned => std::slice::from_ref(&p.principal),
+        Scope::Apps { principals } => principals,
+    };
+    Ok(tx.query_one("SELECT EXISTS(SELECT 1 FROM api_session_owners WHERE session_id=$1 AND principal=ANY($2))", &[&sid, &principals])?.get(0))
 }
 pub(crate) fn guard(
     tx: &mut Transaction<'_>,
@@ -279,6 +311,14 @@ pub(crate) fn guard(
     let Some(ctx) = ctx else { return Ok(None) };
     let p = identity(tx, ctx)?;
     ensure!(p.role.permits(action), Error::Forbidden);
+    ensure!(
+        !matches!(p.scope, Scope::Apps { .. })
+            || matches!(
+                action,
+                Action::Identify | Action::ComplianceRead | Action::EvidenceExport
+            ),
+        Error::Forbidden
+    );
     if action == Action::Create {
         ensure!(!matches!(p.scope, Scope::Sessions { .. }), Error::Forbidden);
         ensure!(

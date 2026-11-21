@@ -389,6 +389,11 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
                     config.compliance_sinks.clone(),
                     stop.child_token(),
                 )?;
+                openworker_server_reference::compliance_catalog::start_delivery(
+                    store.clone(),
+                    config.compliance_sinks.clone(),
+                    stop.child_token(),
+                )?;
             }
 
             if let Some(options) = &config.operational_metrics {

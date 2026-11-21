@@ -1,4 +1,5 @@
 import {renderCompliance} from "./compliance.js";
+import {mountComplianceCatalog} from "./compliance-catalog.js";
 import {mountSessionTracing, serviceTracingAdapter} from "./tracing.js";
 import { mountObservability } from "./observability.js";
 import { captureEvalCase, mountEvals } from "./evals.js";
@@ -30,6 +31,7 @@ const paths = {
   more: "M5 12h.01M12 12h.01M19 12h.01",
   menu: "M4 6h16M4 12h16M4 18h16",
   external: "M14 3h7v7M10 14 21 3M10 3H3v18h18v-7",
+  download: "M12 3v12m-4-4 4 4 4-4M5 15v5h14v-5",
   branch:
     "M6 3v12a4 4 0 0 0 4 4h8M6 6h7a4 4 0 0 0 4-4M3 18a3 3 0 1 0 6 0 3 3 0 0 0-6 0",
   chart: "M4 20V10m8 10V4m8 16v-7",
@@ -76,6 +78,8 @@ let sessions = [],
   formHandler = null;
 const terminal = new Set(["completed", "failed", "cancelled", "interrupted", "truncated", "blocked"]);
 const role = () => auth?.identity.role;
+const auditOnly = () => ["compliance_reader", "compliance_auditor"].includes(role());
+const canReadCompliance = () => auth?.capabilities.features?.compliance && (role() === "administrator" || auditOnly());
 const can = {
   run: () => ["administrator", "operator","app"].includes(role()),
   publish: () => ["administrator", "publisher"].includes(role()),
@@ -293,6 +297,12 @@ function showApp() {
   $("#app").hidden = false;
   $("#workspace-name").textContent = auth.capabilities.namespace;
   $("#principal-label").textContent = auth.identity.principal;
+  for (const link of document.querySelectorAll("[data-nav]")) {
+    link.hidden = link.dataset.nav === "compliance" ? !canReadCompliance() : auditOnly();
+  }
+  $("#settings-link").hidden = auditOnly();
+  $("#search-trigger").hidden = auditOnly();
+  $(".brand").href = auditOnly() ? "#compliance" : "#overview";
   render();
 }
 const nav = [
@@ -302,6 +312,7 @@ const nav = [
   ["activity", "Activity", "activity"],
   ["observability", "Observability", "chart"],
   ["evals", "Evals", "check"],
+  ["compliance", "Compliance", "shield"],
   ["infrastructure", "Infrastructure", "infra"],
 ];
 $("#nav").innerHTML = nav
@@ -556,11 +567,15 @@ async function render() {
   const v = ++version;
   stop();
   const fragment = location.hash.slice(1);
-  const [routePath, search] = fragment.startsWith("evals") ? fragment.split("?", 2) : [fragment];
+  const [routePath, search] = /^(evals|compliance)(?:[/?]|$)/.test(fragment) ? fragment.split("?", 2) : [fragment];
   const [route = "overview", id, detailId] = routePath.split("/");
   const page = route || "overview";
+  if (auditOnly() && canReadCompliance() && page !== "compliance") {
+    location.replace("#compliance");
+    return;
+  }
   $("#sidebar").classList.remove("open");
-  $("#crumb").textContent = page === "operation" ? "Submission" : page === "evals" ? "Evals" : human(page);
+  $("#crumb").textContent = page === "operation" ? "Submission" : page === "evals" ? "Evals" : page === "compliance" ? "Compliance" : human(page);
   for (const a of document.querySelectorAll("[data-nav]")) {
     a.classList.toggle("active", a.dataset.nav === page);
     if (a.dataset.nav === page) a.setAttribute("aria-current", "page");
@@ -568,6 +583,14 @@ async function render() {
   }
   main.innerHTML = empty("Loading…");
   try {
+    if (page === "compliance") {
+      if (!canReadCompliance()) { main.innerHTML = empty("Compliance is unavailable for this credential."); return; }
+      disposeObservability = mountComplianceCatalog(main, {
+        api, icon, view: id, params: new URLSearchParams(search),
+        canExport: role() !== "compliance_reader", canTrace: !auditOnly(), canForward: role() === "administrator",
+      });
+      return;
+    }
     if (page === "evals") {
       disposeObservability = mountEvals(main, {
         api, datasetId: id, jobId: detailId, canRun: can.run(), query: new URLSearchParams(search),
@@ -957,7 +980,9 @@ async function act(action) {
           ["publisher", "Publisher"],
           ["release_administrator", "Release administrator"],
           ["service_administrator", "Service administrator"],
+          ...(auth.capabilities.features?.compliance ? [["compliance_reader", "Compliance reader"], ["compliance_auditor", "Compliance auditor"]] : []),
         ]) +
+        `<fieldset id="compliance-grants"><legend>Audit access</legend>${field("Application principals (comma separated)", "compliance-apps", "", "text", false)}</fieldset>` +
         `<fieldset id="app-grants"><legend>Application grants</legend>${field("Additional tools (comma separated)", "app-tools", "", "text", false)}${field("Model profiles (comma separated)", "app-model-profiles", "", "text", false)}${field("Models (provider/model, comma separated)", "app-models", "", "text", false)}<p>Built-in file and shell tools follow the workspace policy.</p></fieldset>`) +
         select("Lifetime", "lifetime", [
           ["3600", "1 hour"],
@@ -968,6 +993,9 @@ async function act(action) {
       async () => {
         const r = old?.spec.role ?? $("#role").value;
         const items=id=>$(id).value.split(",").map(v=>v.trim()).filter(Boolean);
+        const scopedAudit = ["compliance_reader","compliance_auditor"].includes(r);
+        const principals = scopedAudit ? items("#compliance-apps") : [];
+        if (scopedAudit && !principals.length) throw Error("Enter at least one application principal.");
         const grants=(!old && r==="app")?{
           tools:items("#app-tools"),modelProfiles:items("#app-model-profiles"),
           models:items("#app-models").map(v=>{const i=v.indexOf("/");if(i<1||i===v.length-1)throw Error("Use provider/model");return {connection:v.slice(0,i),model:v.slice(i+1)};})
@@ -980,7 +1008,7 @@ async function act(action) {
             spec: {
               principal: old?.spec.principal ?? (r==="app"?"app_"+$("#principal").value.trim():$("#principal").value),
               role: r,
-              scope: {
+              scope: scopedAudit ? {kind:"apps", principals} : {
                 kind: ["app","operator", "observer"].includes(r) ? "owned" : "all",
               },
               expires_at:
@@ -995,7 +1023,14 @@ async function act(action) {
       },
       old?"Rotate token":"Issue token",
     );
-    if (!old) {const show=()=>{$("#app-grants").hidden=$("#role").value!=="app";};$("#role").addEventListener("change",show);show();}
+    if (!old) {
+      const show=()=>{
+        $("#app-grants").hidden=$("#role").value!=="app";
+        $("#compliance-grants").hidden=!["compliance_reader","compliance_auditor"].includes($("#role").value);
+      };
+      $("#role").addEventListener("change",show);
+      show();
+    }
     return;
   }
   if (kind === "revoke")

@@ -110,7 +110,7 @@ impl PostgresStore {
             let result=Revision{revision:expected+1,configuration};
             tx.execute("UPDATE service_configuration SET revision=$1,data=$2 WHERE singleton",&[&result.revision,&json!(result.configuration)])?;
             tx.execute("INSERT INTO service_management_receipts VALUES($1,$2,$3)",&[&key,&payload,&json!(result)])?;
-            auth::audit_target(&mut tx,p.as_ref(),Action::Configure,&key,"configuration")?;tx.commit()?;Ok(result)
+            auth::audit_target(&mut tx,p.as_ref(),Action::Configure,&key,&format!("configuration@{}",result.revision))?;tx.commit()?;Ok(result)
         })
     }
     pub fn service_operation_configuration(&self, id: &str) -> Result<Revision> {

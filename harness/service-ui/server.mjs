@@ -34,6 +34,8 @@ export function allowed(method, path) {
   // Search text is URL encoded; path IDs remain strictly unencoded. This is
   // deliberately not a generic proxy or an arbitrary query passthrough.
   if (method === "GET" && (allowedRecording(path)||allowedCompliance(path))) return true;
+  if (path === "/v1/compliance/export") return method === "POST";
+  if (path === "/v1/compliance/delivery") return method === "GET" || method === "POST";
   if (method === "GET" && /^\/v1\/evals\/(datasets|runs)(?:\?|$)/.test(path)) return allowedEvalList(path);
   if (method === "GET" && /^\/v1\/evals\/(candidates|evaluators)(?:\?|$)/.test(path)) return allowedEvalSelection(path);
   if (!/^\/v1\/[A-Za-z0-9_@./?=&-]+$/.test(path) || path.includes(".."))
@@ -147,7 +149,30 @@ function allowedEvalList(path) {
 function allowedCompliance(path){
  if(path.length>1000||path.includes("#"))return false;
  const u=new URL(path,"http://local");
- if(u.pathname+u.search!==path||!new RegExp(`^/v1/compliance/sessions/${id}/(activities|delivery)$`).test(u.pathname))return false;
+ if(u.pathname+u.search!==path)return false;
+ const catalog = /^\/v1\/compliance\/(decisions|agents|audit)$/.exec(u.pathname)?.[1];
+ if (catalog) {
+   const keys = new Set();
+   for (const [key, value] of u.searchParams) {
+     if (keys.has(key)) return false;
+     keys.add(key);
+     if (["from_ms", "until_ms"].includes(key) && /^\d{1,15}$/.test(value)) continue;
+     if (catalog === "agents" && key === "after" && /^[\w.@-]{0,128}:[\w.@-]{0,128}$/.test(value)) continue;
+     if (catalog === "agents") return false;
+     if (key === "q" && Buffer.byteLength(value) <= 160 && !/\p{Cc}/u.test(value)) continue;
+     if (key === "limit" && /^([1-9]\d?|100)$/.test(value)) continue;
+     if (key === "app" && /^[\w.@-]{1,128}$/.test(value)) continue;
+     if (catalog === "audit" && key === "before" && /^[1-9]\d{0,14}$/.test(value)) continue;
+     if (catalog === "audit") return false;
+     if (["agent","policy"].includes(key) && /^[\w.@:-]{1,128}$/.test(value)) continue;
+     if (key === "before_us" && /^\d{1,18}$/.test(value)) continue;
+     if (key === "before_id" && /^[\w.@-]{1,128}:[1-9]\d{0,17}$/.test(value)) continue;
+     if (key === "outcome" && ["blocked","redacted","matched","unavailable","approved","denied"].includes(value)) continue;
+     return false;
+   }
+   return keys.has("before_id") === keys.has("before_us");
+ }
+ if(!new RegExp(`^/v1/compliance/sessions/${id}/(activities|delivery)$`).test(u.pathname))return false;
  if(u.pathname.endsWith("/delivery"))return !u.search;
  const keys=new Set();for(const [k,v] of u.searchParams){if(keys.has(k))return false;keys.add(k);if(k==="after"&&/^\d{1,15}$/.test(v))continue;if(k==="limit"&&/^[1-9]\d{0,2}$/.test(v)&&Number(v)<=500)continue;return false;}
  return true;
@@ -553,6 +578,8 @@ export async function start(config) {
         "/index.html": ["index.html", "text/html"],
         "/app.js": ["app.js", "text/javascript"],
         "/compliance.js": ["compliance.js", "text/javascript"],
+        "/compliance-catalog.js": ["compliance-catalog.js", "text/javascript"],
+        "/compliance.css": ["compliance.css", "text/css"],
         "/tracing.js": ["tracing.js", "text/javascript"],
         "/guardrail-view.js": ["guardrail-view.js", "text/javascript"],
         "/tracing.css": ["tracing.css", "text/css"],

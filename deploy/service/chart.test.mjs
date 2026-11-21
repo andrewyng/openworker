@@ -37,6 +37,16 @@ function deployment(out, role) {
       (s) => s.includes("kind: Deployment") && s.includes(`name: test-${role}`),
     );
 }
+test("compliance forwarding projects only the configured API credential reference",async()=>{
+  const config = {...base.config, compliance:{}, compliance_sinks:[
+    {name:"company-audit",endpoint:"https://audit.example.test/collect",credentialEnv:"OW_AUDIT_KEY"},
+  ]};
+  const rendered = await render({config,secrets:{complianceExport:"audit-only"}});
+  assert.match(deployment(rendered,"api"),/name: "OW_AUDIT_KEY"\s+valueFrom: \{secretKeyRef: \{name: "audit-only", key: "OW_AUDIT_KEY"/);
+  for (const role of ["worker","controller","platform"]) assert.doesNotMatch(deployment(rendered,role),/secretKeyRef: \{name: "audit-only"/);
+  assert.doesNotMatch(await render({}),/name: "OW_AUDIT_KEY"/);
+  await assert.rejects(()=>render({config}));
+});
 test("recordings stay opt-in and a separate connection uses an independently mounted secret",async()=>{
   const off=await render({});assert.doesNotMatch(off,/mountPath: \/run\/observability|"database_env": "OW_OBSERVABILITY_URL"/);
   const same=await render({config:{...base.config,schema:"ow_execution",observability:{}}});
