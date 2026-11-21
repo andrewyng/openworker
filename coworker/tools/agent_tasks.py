@@ -605,7 +605,10 @@ def agent_task_tools(
         if t is None:
             return {"error": f"no such subagent task: {task_id}"}
         out = t.snapshot()
-        if t.status in ("done", "error"):
+        # A canceled run keeps its partial report: `agent_task_cancel` promises it
+        # stays readable here, and the delivery path skips canceled runs, so this
+        # tool is the only way to see what the child found before it was stopped.
+        if t.status in ("done", "error", "canceled"):
             out["report"] = t.report
         return out
 
