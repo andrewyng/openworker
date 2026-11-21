@@ -553,10 +553,12 @@ async function render() {
   if (!auth) return;
   const v = ++version;
   stop();
-  const [route = "overview", id, detailId] = location.hash.slice(1).split("/");
+  const fragment = location.hash.slice(1);
+  const [routePath, search] = fragment.startsWith("evals") ? fragment.split("?", 2) : [fragment];
+  const [route = "overview", id, detailId] = routePath.split("/");
   const page = route || "overview";
   $("#sidebar").classList.remove("open");
-  $("#crumb").textContent = page === "operation" ? "Submission" : human(page);
+  $("#crumb").textContent = page === "operation" ? "Submission" : page === "evals" ? "Evals" : human(page);
   for (const a of document.querySelectorAll("[data-nav]")) {
     a.classList.toggle("active", a.dataset.nav === page);
     if (a.dataset.nav === page) a.setAttribute("aria-current", "page");
@@ -565,7 +567,9 @@ async function render() {
   main.innerHTML = empty("Loading…");
   try {
     if (page === "evals") {
-      disposeObservability = mountEvals(main, { api, datasetId: id, jobId: detailId, canRun: can.run() });
+      disposeObservability = mountEvals(main, {
+        api, datasetId: id, jobId: detailId, canRun: can.run(), query: new URLSearchParams(search),
+      });
       return;
     }
     if (page === "observability") {

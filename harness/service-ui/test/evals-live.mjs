@@ -31,7 +31,7 @@ try {
     const directory = process.env.OW_EVALS_SCREENSHOTS;
     if (!directory) return;
     await mkdir(directory, { recursive: true });
-    await page.screenshot({ path: join(directory, `${name}.png`), fullPage: name !== "eval-case-review" });
+    await page.screenshot({ path: join(directory, `${name}.png`), fullPage: !["eval-case-review", "evals-run-catalog-mobile"].includes(name) });
   };
 
   await page.goto(`${app.url}/#observability/${session_id}/${turn_id}`);
@@ -39,7 +39,12 @@ try {
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.getByRole("button", { name: "Add to dataset", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Add to dataset" });
-  await dialog.getByLabel("Dataset", { exact: true }).fill("Page changes");
+  const datasetField = dialog.getByLabel("Dataset", { exact: true });
+  try {
+    await datasetField.fill("Page changes");
+  } catch (error) {
+    throw Error(await dialog.innerText(), { cause: error });
+  }
   await dialog.getByRole("textbox", { name: "Expected response" }).fill('href="/pricing"');
   assert.equal(await dialog.getByText("Field Notes", { exact: false }).isVisible(), false);
   await dialog.getByText("Review captured evidence").click();
@@ -75,6 +80,62 @@ try {
   await page.getByRole("heading", { name: "Results" }).waitFor();
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
   await capture("eval-run-mobile");
+  if (process.env.OW_EVALS_VOLUME) {
+    await page.setViewportSize({ width: 1440, height: 1020 });
+    await page.goto(`${app.url}/#evals`);
+    const tableRows = () => page.locator(".ev-table tbody tr");
+    const next = page.getByRole("button", { name: "Next", exact: true });
+    await page.getByRole("table", { name: "Evaluation datasets" }).waitFor();
+    assert.equal(await tableRows().count(), 16);
+    const initial = await tableRows().first().innerText();
+    await capture("evals-dataset-catalog");
+    await next.click();
+    await page.getByText("Page 2 · 16 shown", { exact: true }).waitFor();
+    assert.notEqual(await tableRows().first().innerText(), initial);
+    await page.getByRole("button", { name: "Previous", exact: true }).click();
+    await page.getByText("Page 1 · 16 shown", { exact: true }).waitFor();
+    assert.equal(await tableRows().first().innerText(), initial);
+
+    const datasetSearch = page.getByRole("searchbox", { name: "Search datasets" });
+    await datasetSearch.fill("Page editor · Release gate");
+    await page.getByText("Page 1 · 1 shown", { exact: true }).waitFor();
+    await page.getByRole("link", { name: "Page editor · Release gate" }).click();
+    await page.getByRole("navigation", { name: "Dataset views" }).getByRole("link", { name: "Runs" }).click();
+    await page.getByRole("table", { name: "Evaluation runs" }).waitFor();
+    assert.equal(await tableRows().count(), 16);
+    assert.equal(await next.isEnabled(), true);
+    await next.click();
+    await page.getByText("Page 2 · 16 shown", { exact: true }).waitFor();
+
+    await page.goto(`${app.url}/#evals?view=runs`);
+    await page.getByRole("table", { name: "Evaluation runs" }).waitFor();
+    assert.equal(await tableRows().count(), 16);
+    await capture("evals-run-catalog");
+    await next.click();
+    await page.getByText("Page 2 · 16 shown", { exact: true }).waitFor();
+    await tableRows().first().getByRole("link").first().click();
+    await page.getByRole("heading", { name: "Evaluation run" }).waitFor();
+    await page.goBack();
+    await page.getByText("Page 2 · 16 shown", { exact: true }).waitFor();
+    await page.getByLabel("Run status").selectOption("queued");
+    await page.getByRole("heading", { name: "No matching runs" }).waitFor();
+    await page.getByLabel("Run status").selectOption("completed");
+    await page.getByLabel("Run date").selectOption("24");
+    await page.getByRole("searchbox", { name: "Search runs" }).fill("Page editor · Release gate");
+    await page.getByText("Page 1 · 2 shown", { exact: true }).waitFor();
+    await tableRows().first().getByRole("link").first().click();
+    await page.getByRole("heading", { name: "Evaluation run" }).waitFor();
+    await page.goBack();
+    await page.getByText("Page 1 · 2 shown", { exact: true }).waitFor();
+    assert.equal(await page.getByLabel("Run date").inputValue(), "24");
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${app.url}/#evals?view=runs`);
+    await page.getByRole("table", { name: "Evaluation runs" }).waitFor();
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    await capture("evals-run-catalog-mobile");
+    console.log("Chrome passed paginated dataset and run catalogs, per-dataset history, filter navigation, and mobile sizing.");
+  }
   assert.deepEqual(errors, []);
   console.log("Chrome passed trace capture, on-demand execution, three scoring outcomes and source navigation.");
 } finally {

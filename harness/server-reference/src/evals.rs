@@ -3,7 +3,7 @@ use crate::{
     service,
 };
 use axum::{
-    extract::Path,
+    extract::{Path, Query},
     http::{HeaderMap, StatusCode},
     Extension, Json,
 };
@@ -41,9 +41,20 @@ pub(crate) async fn save(
     Ok(Json(app.store.save_eval_case(key, request)?))
 }
 
-pub(crate) async fn datasets(Extension(app): Extension<App>) -> Result<Json<Value>, ApiError> {
+pub(crate) async fn datasets(
+    Extension(app): Extension<App>,
+    Query(filter): Query<evals::DatasetList>,
+) -> Result<Json<Value>, ApiError> {
     enabled(&app)?;
-    Ok(Json(app.store.eval_datasets()?))
+    Ok(Json(app.store.eval_datasets(filter)?))
+}
+
+pub(crate) async fn runs(
+    Extension(app): Extension<App>,
+    Query(filter): Query<evals::RunList>,
+) -> Result<Json<Value>, ApiError> {
+    enabled(&app)?;
+    Ok(Json(app.store.eval_runs(filter)?))
 }
 
 pub(crate) async fn dataset(

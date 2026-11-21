@@ -34,6 +34,7 @@ export function allowed(method, path) {
   // Search text is URL encoded; path IDs remain strictly unencoded. This is
   // deliberately not a generic proxy or an arbitrary query passthrough.
   if (method === "GET" && (allowedRecording(path)||allowedCompliance(path))) return true;
+  if (method === "GET" && /^\/v1\/evals\/(datasets|runs)(?:\?|$)/.test(path)) return allowedEvalList(path);
   if (!/^\/v1\/[A-Za-z0-9_@./?=&-]+$/.test(path) || path.includes(".."))
     return false;
   const u = new URL(path, "http://local");
@@ -95,6 +96,27 @@ export function allowed(method, path) {
       new RegExp(`^/v1/environments/${id}/delete$`).test(p) ||
       new RegExp(`^/v1/sessions/${id}/(turns|controls|close)$`).test(p))
   );
+}
+function allowedEvalList(path) {
+  if (path.length > 1600 || path.includes("#")) return false;
+  const url = new URL(path, "http://local");
+  if (url.pathname + url.search !== path) return false;
+  const runs = url.pathname === "/v1/evals/runs";
+  const identifier = new RegExp(`^${id}$`);
+  const seen = new Set();
+  for (const [key, value] of url.searchParams) {
+    if (seen.has(key)) return false;
+    seen.add(key);
+    if (key === "limit" && /^(?:[1-9]|[1-4][0-9]|50)$/.test(value)) continue;
+    if (key === "after" && identifier.test(value)) continue;
+    if (key === "q" && Buffer.byteLength(value) <= 400 && !/\p{Cc}/u.test(value)) continue;
+    if (!runs && key === "owner" && value.length <= 64 && identifier.test(value)) continue;
+    if (runs && key === "dataset" && identifier.test(value)) continue;
+    if (runs && key === "status" && ["queued", "completed"].includes(value)) continue;
+    if (runs && key === "since" && /^\d{1,15}$/.test(value) && Number(value) <= 253402300799000) continue;
+    return false;
+  }
+  return true;
 }
 function allowedCompliance(path){
  if(path.length>1000||path.includes("#"))return false;
@@ -498,6 +520,7 @@ export async function start(config) {
         "/tracing.js": ["tracing.js", "text/javascript"],
         "/tracing.css": ["tracing.css", "text/css"],
         "/evals.js": ["evals.js", "text/javascript"],
+        "/eval-lists.js": ["eval-lists.js", "text/javascript"],
         "/evals.css": ["evals.css", "text/css"],
         "/observability.js": ["observability.js", "text/javascript"],
         "/observability-data.js": ["observability-data.js", "text/javascript"],

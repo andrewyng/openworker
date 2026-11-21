@@ -1,6 +1,6 @@
 import { esc } from "./observability-data.js";
 
-const endpoint = "/v1/evals";
+import { datasetHref, evalEndpoint as endpoint, evalTabs, jobHref, mountEvalList, runStatus } from "./eval-lists.js";
 const id = encodeURIComponent;
 const traceLink = ({ session_id, turn_id }) =>
   `#observability/${id(session_id)}/${id(turn_id)}`;
@@ -48,14 +48,10 @@ export async function captureEvalCase(root, api, turn, signal) {
     const { session_id, turn_id } = turn;
     const evidence = await api(`${endpoint}/evidence/${id(session_id)}/${id(turn_id)}`, "GET", undefined, undefined, signal);
     if (!dialog.open || signal.aborted) return;
-    const listing = await api(`${endpoint}/datasets`, "GET", undefined, undefined, signal);
-    if (!dialog.open || signal.aborted) return;
-    const names = listing.datasets.filter((dataset) => dataset.owner === evidence.owner);
     body.innerHTML = `
       <form class="ev-capture">
-        <label>Dataset<input name="dataset" list="ev-dataset-names" maxlength="100" placeholder="Choose or name a dataset" required>
-          <datalist id="ev-dataset-names">${names.map((d) => `<option value="${esc(d.name)}"></option>`).join("")}</datalist>
-        </label>
+        <label>Dataset<input name="dataset" list="ev-dataset-names" maxlength="100" placeholder="Choose or name a dataset" required></label>
+        <datalist id="ev-dataset-names"></datalist>
         <label>Expected response<textarea name="expected" rows="3" maxlength="4000" placeholder="Enter the text the response should include" required></textarea></label>
         <details class="ev-disclosure">
           <summary>${evidence.output == null ? "Evidence unavailable" : "Review captured evidence"}</summary>
@@ -78,7 +74,35 @@ export async function captureEvalCase(root, api, turn, signal) {
       </form>`;
     const form = body.querySelector("form");
     form.querySelector("[data-ev-cancel]").addEventListener("click", cancel);
-    form.elements.dataset.focus();
+    const datasetInput = form.elements.dataset;
+    const suggestions = form.querySelector("datalist");
+    let lookupTimer, lookupRequest;
+    function lookup() {
+      lookupRequest?.abort();
+      const request = new AbortController();
+      lookupRequest = request;
+      const params = new URLSearchParams({ owner: evidence.owner, limit: "12" });
+      if (datasetInput.value.trim()) params.set("q", datasetInput.value.trim());
+      api(`${endpoint}/datasets?${params}`, "GET", undefined, undefined, request.signal)
+        .then(({ datasets }) => {
+          if (request.signal.aborted || !dialog.open) return;
+          suggestions.replaceChildren(...datasets.map(({ name }) => new Option(name, name)));
+        })
+        .catch(() => {
+          if (!request.signal.aborted) suggestions.replaceChildren();
+        });
+    }
+    datasetInput.addEventListener("input", () => {
+      lookupRequest?.abort();
+      clearTimeout(lookupTimer);
+      lookupTimer = setTimeout(lookup, 200);
+    });
+    dialog.addEventListener("close", () => {
+      lookupRequest?.abort();
+      clearTimeout(lookupTimer);
+    }, { once: true });
+    datasetInput.focus();
+    lookup();
     let previous;
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -102,7 +126,7 @@ export async function captureEvalCase(root, api, turn, signal) {
         const saved = await api(`${endpoint}/cases`, "POST", payload, previous.key, signal);
         if (!dialog.open || signal.aborted) return;
         dialog.close();
-        location.hash = `#evals/${id(saved.dataset_id)}`;
+        location.hash = datasetHref(saved.dataset_id);
       } catch (failure) {
         if (!signal.aborted) error.textContent = errorText(failure);
       } finally {
@@ -125,30 +149,17 @@ function outcome(result) {
 
 const pill = (kind, name) => `<span class="ev-pill ev-${kind}"><i></i>${esc(name)}</span>`;
 const caseName = (entry) => esc(entry.turn.name || "Agent response");
-const jobName = (job) => `Eval from ${date(job.created_ms)}`;
-const jobHref = (dataset, job) => `#evals/${id(dataset)}/${id(job)}`;
-
-function renderIndex(root, datasets) {
+function renderIndex(root, view) {
   root.innerHTML = `
     <header class="ev-heading">
-      <div><h1>Evals</h1><p>Score captured agent responses against saved expectations.</p></div>
+      <div><h1>Evals</h1><p>Evaluate captured agent responses.</p></div>
       <a class="button" href="#observability">Open tracing</a>
     </header>
-    <section class="ev-section" aria-labelledby="ev-datasets">
-      <div class="ev-section-head"><h2 id="ev-datasets">Datasets</h2></div>
-      ${datasets.length ? `
-        <div class="ev-list">
-          ${datasets.map((dataset) => `
-            <a class="ev-dataset-row" href="#evals/${id(dataset.id)}">
-              <span class="ev-dataset-icon" aria-hidden="true">▤</span>
-              <div><strong>${esc(dataset.name)}</strong><small>${esc(dataset.owner)}</small></div>
-              <span class="ev-muted">${count(dataset.version, "case")}</span><span aria-hidden="true">›</span>
-            </a>`).join("")}
-        </div>` : '<div class="ev-empty"><h3>No datasets yet</h3><p>Open a completed turn in Tracing and choose Add to dataset.</p></div>'}
-    </section>`;
+    ${evalTabs(view)}
+    <section class="ev-section" data-eval-list></section>`;
 }
 
-function renderDataset(root, dataset, canRun) {
+function renderDataset(root, dataset, canRun, view) {
   root.innerHTML = `
     <nav class="ev-breadcrumb" aria-label="Evaluation breadcrumb"><a href="#evals">Evals</a><span aria-hidden="true">/</span><span>${esc(dataset.name)}</span></nav>
     <header class="ev-heading">
@@ -156,7 +167,8 @@ function renderDataset(root, dataset, canRun) {
       ${canRun ? '<button class="button primary" type="button" data-ev-run>Run eval</button>' : ""}
     </header>
     <p class="ev-error ev-run-error" role="alert"></p>
-    <section class="ev-section" aria-labelledby="ev-cases">
+    ${evalTabs(view, dataset.id)}
+    ${view === "runs" ? '<section class="ev-section" data-eval-list></section>' : `<section class="ev-section" aria-labelledby="ev-cases">
       <div class="ev-section-head"><h2 id="ev-cases">Cases</h2><a href="#observability">Add from trace ↗</a></div>
       <div class="ev-list">
         ${dataset.cases.map((entry) => `
@@ -165,16 +177,7 @@ function renderDataset(root, dataset, canRun) {
             <div class="ev-case-detail"><div data-ev-evidence><p class="ev-muted" role="status">Loading captured evidence…</p></div></div>
           </details>`).join("")}
       </div>
-    </section>
-    <section class="ev-section" aria-labelledby="ev-runs">
-      <div class="ev-section-head"><h2 id="ev-runs">Runs</h2></div>
-      ${dataset.jobs.length ? `<div class="ev-list">${dataset.jobs.map((job) => `
-        <a class="ev-run-row" href="${jobHref(dataset.id, job.id)}">
-          <span><strong>${esc(jobName(job))}</strong><small>Version ${job.dataset_version}</small></span>
-          ${job.status === "completed" ? pill("passed", "Completed") : pill("queued", "Queued")}
-          <span aria-hidden="true">›</span>
-        </a>`).join("")}</div>` : '<div class="ev-empty"><h3>No runs yet</h3><p>Run an eval to check the saved responses.</p></div>'}
-    </section>`;
+    </section>`}`;
 }
 
 function renderCase(target, item) {
@@ -194,7 +197,7 @@ function renderJob(root, dataset, job) {
     <nav class="ev-breadcrumb" aria-label="Evaluation breadcrumb"><a href="#evals">Evals</a><span aria-hidden="true">/</span><a href="#evals/${id(dataset.id)}">${esc(dataset.name)}</a><span aria-hidden="true">/</span><span>Run</span></nav>
     <header class="ev-heading">
       <div><h1>Evaluation run</h1><p>${esc(date(job.created_ms))} · Dataset version ${job.dataset_version}</p></div>
-      ${job.status === "completed" ? pill("passed", "Completed") : pill("queued", "Queued")}
+      ${runStatus(job.status)}
     </header>
     ${job.status !== "completed" ? '<div class="ev-empty" role="status"><h3>Waiting for results</h3><p>This page updates as the cluster finishes the eval.</p></div>' : `
       <div class="ev-metrics">${[["passed", "Passed"], ["failed", "Failed"], ["error", "Evaluator errors"]].map(([kind, label]) => `
@@ -214,10 +217,14 @@ function renderJob(root, dataset, job) {
       </section>`}`;
 }
 
-export function mountEvals(root, { api, datasetId, jobId, canRun }) {
+export function mountEvals(root, { api, datasetId, jobId, canRun, query }) {
   const lifetime = new AbortController();
   const { signal } = lifetime;
   let timer;
+  const view = query.get("view") === "runs" ? "runs" : "datasets";
+  const loadList = () => mountEvalList(root.querySelector("[data-eval-list]"), {
+    api, view, datasetId, query, signal, errorText,
+  });
   const get = (path) => api(path, "GET", undefined, undefined, signal);
   const showError = (error) => {
     if (signal.aborted) return;
@@ -243,8 +250,8 @@ export function mountEvals(root, { api, datasetId, jobId, canRun }) {
   async function load() {
     try {
       if (!datasetId) {
-        const { datasets } = await get(`${endpoint}/datasets`);
-        if (!signal.aborted) renderIndex(root, datasets);
+        renderIndex(root, view);
+        loadList();
         return;
       }
       const dataset = await get(pathFor(datasetId));
@@ -262,8 +269,9 @@ export function mountEvals(root, { api, datasetId, jobId, canRun }) {
         await poll();
         return;
       }
-      renderDataset(root, dataset, canRun);
-      loadCaseEvidence();
+      renderDataset(root, dataset, canRun, view);
+      if (view === "runs") loadList();
+      else loadCaseEvidence();
       const key = crypto.randomUUID();
       const run = root.querySelector("[data-ev-run]");
       run?.addEventListener("click", async () => {

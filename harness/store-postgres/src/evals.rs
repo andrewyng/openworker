@@ -32,7 +32,11 @@ pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
         CREATE INDEX IF NOT EXISTS eval_jobs_pending
           ON eval_jobs(created_ms,id) WHERE results IS NULL;
         CREATE INDEX IF NOT EXISTS eval_jobs_dataset
-          ON eval_jobs(dataset,created_ms DESC,id DESC);",
+          ON eval_jobs(dataset,created_ms DESC,id DESC);
+        CREATE INDEX IF NOT EXISTS eval_jobs_recent
+          ON eval_jobs(created_ms DESC,id DESC);
+        CREATE INDEX IF NOT EXISTS eval_datasets_name ON eval_datasets(lower(name),id);
+        CREATE INDEX IF NOT EXISTS eval_datasets_owner_name ON eval_datasets(owner,lower(name),id);",
     )?;
     Ok(())
 }
@@ -71,6 +75,46 @@ pub struct SaveCase {
     pub turn: Turn,
     pub include_input: bool,
     pub check: Check,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatasetList {
+    pub q: Option<String>,
+    pub owner: Option<String>,
+    pub after: Option<String>,
+    pub limit: Option<u16>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunList {
+    pub q: Option<String>,
+    pub dataset: Option<String>,
+    pub status: Option<RunStatus>,
+    pub since: Option<i64>,
+    pub after: Option<String>,
+    pub limit: Option<u16>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunStatus {
+    Queued,
+    Completed,
+}
+
+fn list_page(q: Option<String>, after: Option<&str>, limit: Option<u16>) -> Result<(String, i64)> {
+    let q = q.unwrap_or_default().trim().to_owned();
+    let limit = i64::from(limit.unwrap_or(20));
+    ensure!(
+        q.len() <= 400 && !q.chars().any(char::is_control) && (1..=50).contains(&limit),
+        SubmissionError::InvalidRequest
+    );
+    if let Some(after) = after {
+        validate_id(after, 100)?;
+    }
+    Ok((q, limit))
 }
 
 fn identity(
@@ -260,19 +304,96 @@ impl PostgresStore {
         })
     }
 
-    pub fn eval_datasets(&self) -> Result<Value> {
+    pub fn eval_datasets(&self, filter: DatasetList) -> Result<Value> {
+        let (q, limit) = list_page(filter.q, filter.after.as_deref(), filter.limit)?;
+        if let Some(owner) = &filter.owner {
+            validate_id(owner, 64)?;
+        }
         self.call(move |db| {
             let mut tx = db.client.transaction()?;
             let p = identity(&mut tx, db.auth.as_ref(), Action::Read, None)?;
             let rows = tx.query(
-                "SELECT id,name,owner,version FROM eval_datasets WHERE $1 OR owner=$2
-                 ORDER BY lower(name),id",
-                &[&(p.scope == Scope::All), &p.principal],
+                "SELECT d.id,d.name,d.owner,d.version,
+                    (SELECT j.created_ms FROM eval_jobs j WHERE j.dataset=d.id
+                     ORDER BY j.created_ms DESC,j.id DESC LIMIT 1) AS last_run_ms
+                 FROM eval_datasets d
+                 LEFT JOIN eval_datasets anchor ON anchor.id=$4 AND ($1 OR anchor.owner=$2)
+                 WHERE ($1 OR d.owner=$2) AND ($3::text IS NULL OR d.owner=$3)
+                   AND ($4::text IS NULL OR (lower(d.name),d.id)>(lower(anchor.name),anchor.id))
+                   AND ($5='' OR strpos(lower(d.name),lower($5))>0 OR strpos(lower(d.owner),lower($5))>0)
+                 ORDER BY lower(d.name),d.id LIMIT $6",
+                &[&(p.scope == Scope::All), &p.principal, &filter.owner, &filter.after, &q, &(limit + 1)],
             )?;
-            Ok(json!({"datasets":rows.iter().map(|row| json!({
+            let page = &rows[..rows.len().min(limit as usize)];
+            let next_cursor = (rows.len() > page.len()).then(|| page.last().unwrap().get::<_, String>(0));
+            Ok(json!({"datasets":page.iter().map(|row| json!({
                 "id":row.get::<_, String>(0), "name":row.get::<_, String>(1),
-                "owner":row.get::<_, String>(2), "version":row.get::<_, i32>(3)
-            })).collect::<Vec<_>>() }))
+                "owner":row.get::<_, String>(2), "version":row.get::<_, i32>(3),
+                "last_run_ms":row.get::<_, Option<i64>>(4),
+            })).collect::<Vec<_>>(), "next_cursor":next_cursor}))
+        })
+    }
+
+    pub fn eval_runs(&self, filter: RunList) -> Result<Value> {
+        let (q, limit) = list_page(filter.q, filter.after.as_deref(), filter.limit)?;
+        if let Some(dataset) = &filter.dataset {
+            validate_id(dataset, 100)?;
+        }
+        ensure!(
+            filter
+                .since
+                .is_none_or(|since| (0..=253402300799000).contains(&since)),
+            SubmissionError::InvalidRequest
+        );
+        let ready = filter
+            .status
+            .map(|status| matches!(status, RunStatus::Completed));
+        self.call(move |db| {
+            let mut tx = db.client.transaction()?;
+            let p = identity(&mut tx, db.auth.as_ref(), Action::Read, None)?;
+            if let Some(id) = &filter.dataset {
+                owned_dataset(&mut tx, &p, id)?;
+            }
+            let rows = tx.query(
+                "WITH anchor AS (
+                    SELECT j.created_ms,j.id FROM eval_jobs j JOIN eval_datasets d ON d.id=j.dataset
+                    WHERE j.id=$4 AND ($1 OR d.owner=$2)
+                 ), page AS MATERIALIZED (
+                    SELECT j.id,j.dataset,j.version,j.created_ms,j.results IS NOT NULL AS ready,
+                        d.name AS dataset_name,d.owner
+                    FROM eval_jobs j JOIN eval_datasets d ON d.id=j.dataset
+                    LEFT JOIN anchor ON TRUE
+                    WHERE ($1 OR d.owner=$2) AND ($3::text IS NULL OR j.dataset=$3)
+                      AND ($4::text IS NULL OR (j.created_ms,j.id)<(anchor.created_ms,anchor.id))
+                      AND ($5='' OR strpos(lower(d.name),lower($5))>0 OR strpos(lower(d.owner),lower($5))>0 OR strpos(j.id,lower($5))>0)
+                      AND ($6::bool IS NULL OR (j.results IS NOT NULL)=$6)
+                      AND ($7::bigint IS NULL OR j.created_ms >= $7)
+                    ORDER BY j.created_ms DESC,j.id DESC LIMIT $8
+                 )
+                 SELECT p.*, CASE WHEN p.ready THEN (
+                    SELECT jsonb_build_object(
+                        'passed',count(*) FILTER(WHERE item->'result'->'score'->'value'='true'::jsonb),
+                        'failed',count(*) FILTER(WHERE item->'result'->'score'->'value'='false'::jsonb),
+                        'errors',count(*) FILTER(WHERE item->'result'->>'status'='error')
+                    ) FROM jsonb_array_elements(j.results) AS item
+                 ) END AS counts
+                 FROM page p JOIN eval_jobs j ON j.id=p.id
+                 ORDER BY p.created_ms DESC,p.id DESC",
+                &[&(p.scope == Scope::All), &p.principal, &filter.dataset, &filter.after, &q,
+                  &ready, &filter.since, &(limit + 1)],
+            )?;
+            let page = &rows[..rows.len().min(limit as usize)];
+            let next_cursor = (rows.len() > page.len())
+                .then(|| page.last().unwrap().get::<_, String>("id"));
+            let runs = page.iter().map(|row| {
+                let mut run = summary(row);
+                run["dataset_id"] = json!(row.get::<_, String>("dataset"));
+                run["dataset_name"] = json!(row.get::<_, String>("dataset_name"));
+                run["owner"] = json!(row.get::<_, String>("owner"));
+                run["counts"] = json!(row.get::<_, Option<Value>>("counts"));
+                run
+            }).collect::<Vec<_>>();
+            Ok(json!({"runs":runs,"next_cursor":next_cursor}))
         })
     }
 

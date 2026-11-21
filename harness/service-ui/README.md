@@ -185,8 +185,16 @@ the source turn. Attachments and tool payloads stay out of the case.
 Open the dataset under **Evals** and choose **Run eval**. The cluster scores
 the saved responses against their expected text and records the results for
 the selected dataset version. **Cases** expands to show the captured evidence.
-**Runs** shows completed and queued jobs. Each result links to its source turn.
-An unavailable final response shows up as an evaluator error.
+**Runs** in the dataset shows its history. **Evals → Runs** shows recent jobs
+across the datasets you have access to. Search by dataset, app or run ID,
+then narrow by status and date. The catalogs load one page at a time.
+Open a run to see its case results and links to the source turns. An unavailable
+final response shows up as an evaluator error.
+
+Set `OW_EVALS_VOLUME=1` when running the `evals_flow` integration test with an
+isolated PostgreSQL database and the optional Playwright setup. The fixture
+adds 96 synthetic datasets and queues 1,426 jobs through the existing scorer
+for catalog and browser qualification.
 
 ## Complete-stack local Kubernetes qualification
 

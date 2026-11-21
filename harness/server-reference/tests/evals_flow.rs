@@ -76,6 +76,77 @@ async fn run(runtime: &std::sync::Arc<Runtime>, root: &Path, text: &str) -> Valu
     .unwrap()
 }
 
+/// Populate a disposable catalog using captured evidence from the two agents.
+/// The normal queue worker scores every inserted job.
+fn seed_volume(connection: &str, schema: &str, editor: &str, other: &str) {
+    let mut client = postgres::Client::connect(connection, postgres::NoTls).unwrap();
+    let mut tx = client.transaction().unwrap();
+    tx.batch_execute(&format!("SET LOCAL search_path TO {schema},pg_catalog"))
+        .unwrap();
+    let groups = [
+        "Account recovery",
+        "Agent handoffs",
+        "Billing questions",
+        "Build diagnostics",
+        "Document extraction",
+        "Knowledge search",
+        "Order fulfillment",
+        "Page editor",
+        "Policy guidance",
+        "Support triage",
+        "Tool reliability",
+        "Vision checks",
+    ];
+    let suites = [
+        "Core flows",
+        "Edge cases",
+        "Long responses",
+        "Multilingual",
+        "Recent failures",
+        "Release gate",
+        "Smoke suite",
+        "Structured output",
+    ];
+    let mut position = 0i32;
+    for group in groups {
+        for suite in suites {
+            let (owner, template) = if position < 84 {
+                ("app_editor", editor)
+            } else {
+                ("app_other", other)
+            };
+            let cases = 4 + (position * 9) % 40;
+            let dataset = format!("evalset_volume_{position:03}");
+            let name = format!("{group} · {suite}");
+            tx.execute(
+                "INSERT INTO eval_datasets(id,owner,name,version) VALUES ($1,$2,$3,$4)",
+                &[&dataset, &owner, &name, &cases],
+            )
+            .unwrap();
+            tx.execute(
+                "INSERT INTO eval_cases(id,dataset,version,source,evidence,check_spec)
+                 SELECT $1||'_'||v,$1,v,jsonb_set(c.source,'{name}',to_jsonb($3::text||' · Case '||v)),c.evidence,c.check_spec
+                 FROM generate_series(1,$4::integer) AS v
+                 JOIN eval_cases c ON c.dataset=$2 AND c.version=CASE
+                    WHEN $5 AND v=$4 AND mod($6,11)=0 THEN 3
+                    WHEN $5 AND mod(v + $6,9)=0 THEN 2 ELSE 1 END",
+                &[&dataset,&template,&name,&cases,&(owner=="app_editor"),&position],
+            ).unwrap();
+            let now = openworker_runtime::store::now_ms() as i64;
+            tx.execute(
+                "INSERT INTO eval_jobs(id,dataset,version,created_ms)
+                 SELECT 'run_'||$1||'_'||n,$1,greatest(1,$2::integer-mod(n,4)),
+                    $3::bigint-(n-1)::bigint*43200000-mod($4*17,96)::bigint*240000-120000
+                 FROM generate_series(1,CASE WHEN $4=61 THEN 96 ELSE 14 END) AS n",
+                &[&dataset, &cases, &now, &position],
+            )
+            .unwrap();
+            position += 1;
+        }
+    }
+    tx.commit().unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires isolated OW_PG_TEST_URL and an optional browser fixture"]
 async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
@@ -332,6 +403,29 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     assert_eq!(own["datasets"].as_array().unwrap().len(), 1);
     assert_eq!(own["datasets"][0]["id"], second_case["dataset_id"]);
 
+    let pending = send(
+        reqwest::Method::GET,
+        "runs?status=queued&limit=1".into(),
+        EDITOR,
+        "".into(),
+    )
+    .send()
+    .await
+    .unwrap()
+    .json::<Value>()
+    .await
+    .unwrap();
+    assert_eq!(pending["runs"][0]["id"], queued["id"]);
+    assert_eq!(pending["runs"][0]["counts"], Value::Null);
+    let volume = std::env::var_os("OW_EVALS_VOLUME").is_some();
+    if volume {
+        let (connection, schema, dataset) = (connection.clone(), schema.clone(), dataset.clone());
+        let other = second_case["dataset_id"].as_str().unwrap().to_owned();
+        tokio::task::spawn_blocking(move || seed_volume(&connection, &schema, &dataset, &other))
+            .await
+            .unwrap();
+    }
+
     // Delay starting the worker until the API has persisted the job.
     let worker = tokio::spawn(openworker_server_reference::evals::run(
         store.clone(),
@@ -357,6 +451,72 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     assert_eq!(finished["results"][0]["result"]["score"]["value"], true);
     assert_eq!(finished["results"][1]["result"]["score"]["value"], false);
     assert_eq!(finished["results"][2]["result"]["status"], "error");
+
+    if volume {
+        // Let the worker fill the historical catalog before capturing it in Chrome.
+        tokio::time::timeout(Duration::from_secs(45), async {
+            loop {
+                let pending = send(
+                    reqwest::Method::GET,
+                    "runs?status=queued&limit=1".into(),
+                    ADMIN,
+                    "".into(),
+                )
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap();
+                if pending["runs"] == json!([]) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(150)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let all = send(
+            reqwest::Method::GET,
+            "runs?limit=2&status=completed".into(),
+            ADMIN,
+            "".into(),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+        assert_eq!(all["runs"].as_array().unwrap().len(), 2);
+        assert!(all["runs"][0]["counts"].is_object());
+        let after = all["next_cursor"].as_str().unwrap();
+        let later = send(
+            reqwest::Method::GET,
+            format!("runs?limit=2&status=completed&after={after}"),
+            ADMIN,
+            "".into(),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+        assert_ne!(all["runs"][1]["id"], later["runs"][0]["id"]);
+        let other_id = second_case["dataset_id"].as_str().unwrap();
+        let foreign = send(
+            reqwest::Method::GET,
+            format!("runs?dataset={other_id}"),
+            EDITOR,
+            "".into(),
+        )
+        .send()
+        .await
+        .unwrap();
+        assert_eq!(foreign.status(), 404);
+    }
 
     if let Ok(playwright) = std::env::var("OW_PLAYWRIGHT_MODULE") {
         let result = tokio::process::Command::new("node")
