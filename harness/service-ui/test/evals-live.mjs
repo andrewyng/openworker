@@ -27,6 +27,7 @@ try {
       errors.push(m.text());
   });
   const { session_id, turn_id } = JSON.parse(process.env.OW_EVALS_PASS_TURN);
+  const failedTurn = JSON.parse(process.env.OW_EVALS_FAILED_TURN);
   const capture = async (name) => {
     const directory = process.env.OW_EVALS_SCREENSHOTS;
     if (!directory) return;
@@ -176,6 +177,16 @@ try {
     assert.equal(await page.locator(".ev-target-table tbody tr").count(), 1);
   }
   await page.setViewportSize({ width: 1360, height: 900 });
+  await page.goto(`${app.url}/#observability/${failedTurn.session_id}/${failedTurn.turn_id}`);
+  await page.getByRole("button", { name: "Turn tags", exact: true }).click();
+  const failedTags = page.getByRole("dialog", { name: "Turn tags" });
+  await failedTags.getByLabel("Tag", { exact: true }).fill("failure-review");
+  await failedTags.getByRole("button", { name: "Add tag", exact: true }).click();
+  await failedTags.getByRole("link", { name: "failure-review", exact: true }).waitFor();
+  await failedTags.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("link", { name: "Evaluate the tagged turn", exact: true }).click();
+  assert.equal(await page.getByLabel("Tag", { exact: true }).inputValue(), "failure-review");
+  await page.getByRole("button", { name: "Preview turns", exact: true }).waitFor();
   await page.goto(`${app.url}/#observability/${session_id}/${turn_id}`);
   await page.getByRole("button", { name: "Turn tags", exact: true }).click();
   const tags = page.getByRole("dialog", { name: "Turn tags" });
@@ -199,7 +210,6 @@ try {
   await page.getByLabel("Expected text", { exact: true }).fill("/pricing");
   await page.getByRole("button", { name: "Save evaluator", exact: true }).click();
   await page.getByText("Saved Browser pricing check · v1.", { exact: true }).waitFor();
-  const failedTurn = JSON.parse(process.env.OW_EVALS_FAILED_TURN);
   for (const selected of [turn_id, failedTurn.turn_id]) {
     await page.locator(".ev-target-table tbody tr")
       .filter({ has: page.locator(`a[href="#observability/${session_id}/${selected}"]`) })

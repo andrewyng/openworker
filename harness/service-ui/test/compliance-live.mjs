@@ -64,6 +64,16 @@ try{
  await page.getByRole("button",{name:/block-ssn/}).first().waitFor();
  await page.getByRole("button",{name:"Next page"}).click();
  await page.getByText("Page 2 · 25 shown",{exact:true}).waitFor();
+ await page.getByRole("button",{name:/block-ssn/}).first().click();
+ const investigation = new URL(page.url()).hash;
+ const selectedDecision = await page.locator("tr[data-current=true]").innerText();
+ await detail.getByRole("link",{name:"Open session"}).click();
+ await page.waitForURL("**/#sessions/s_support");
+ await page.goBack();
+ await page.getByText("Page 2 · 25 shown",{exact:true}).waitFor();
+ assert.equal(new URL(page.url()).hash, investigation);
+ assert.equal(await page.locator("tr[data-current=true]").innerText(), selectedDecision);
+ await detail.getByRole("heading",{name:"block-ssn",exact:true}).waitFor();
  await page.getByRole("button",{name:"Previous page"}).click();
  await page.getByText("Page 1 · 25 shown",{exact:true}).waitFor();
 

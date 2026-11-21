@@ -216,6 +216,10 @@ export function mountSessionTracing(
         ? `${count(total.input.total + total.output.total)}${total.input.unknown || total.output.unknown ? " + unknown" : ""}`
         : "Not reported";
     let html = annotations + `<div class="tr-turn-metrics"><span>${esc(duration(summary?.wall_elapsed_us))} elapsed</span><span>${tokens} tokens</span><span>${ss.length} steps loaded</span>${onCapture && t.status === "completed" ? button("capture", "Add to dataset", `class="tr-capture" data-turn="${esc(t.turn_id)}"`) : ""}</div>`;
+    if (onCapture && onTags && t.status === "failed") {
+      const tag = c.evalTags?.tags[0]?.tag;
+      html += `<p class="tr-note">Save this failure from an evaluation result. ${tag ? "" : "Add a turn tag, then "}<a href="${evalSelectionLink(tag)}">${tag ? "Evaluate the tagged turn" : "evaluate the tagged turn"}</a>.</p>`;
+    }
     if (mode === "waterfall")
       html += `<div class="tr-axis">${[0, 1, 2, 3, 4].map((i) => `<span>${i ? esc(duration(((range * i) / 4) * 1000)) : "0 s"}</span>`).join("")}</div>`;
     // Indentation follows recorded parent IDs only. Missing parents are roots;

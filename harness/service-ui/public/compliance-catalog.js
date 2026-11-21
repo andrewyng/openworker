@@ -153,7 +153,14 @@ export function mountComplianceCatalog(root, { api, icon, view, params, canExpor
   const split = root.querySelector(".cp-split");
   const exportButton = root.querySelector("[data-export]");
   const delivery = root.querySelector(".cp-delivery");
-  let data = [], selected = params.get("decision"), filters = {}, appliedDays = initialDay, cursors = [null], nextCursor = null;
+  const saved = history.state?.complianceList;
+  const restored = saved?.hash === location.hash && Number.isSafeInteger(saved.until)
+    && saved.until > Number(initialDay) * day && saved.until <= Date.now() + 60_000
+    && Array.isArray(saved.cursors) && saved.cursors[0] === null && saved.cursors.slice(1).every(cursor =>
+      isDecisions ? Number.isSafeInteger(cursor?.before_us) && typeof cursor?.before_id === "string"
+        : isAgents ? typeof cursor === "string" : Number.isSafeInteger(cursor))
+    ? saved : null;
+  let data = [], selected = restored?.closed ? "" : params.get("decision"), filters = {}, appliedDays = initialDay, cursors = [null], nextCursor = null;
   let generation = 0;
   for (const key of ["app", "agent", "policy", "outcome", "q"]) {
     if (form.elements[key] && params.has(key)) form.elements[key].value = params.get(key);
@@ -165,7 +172,10 @@ export function mountComplianceCatalog(root, { api, icon, view, params, canExpor
     const { from_ms, until_ms, ...current } = filters;
     current.days = appliedDays;
     if (selected) current.decision = selected;
-    history.replaceState(null, "", hash(tab, current));
+    const fragment = hash(tab, current);
+    history.replaceState({ ...history.state, complianceList: {
+      hash: fragment, until: until_ms, cursors, closed: selected === "",
+    } }, "", fragment);
   }
 
   function showMessage(value, error = true) {
@@ -183,7 +193,7 @@ export function mountComplianceCatalog(root, { api, icon, view, params, canExpor
     detail.innerHTML = active ? inspector(active, icon, canTrace) : "";
   }
 
-  async function loadPage() {
+  async function loadPage(save = false) {
     const current = ++generation;
     const cursor = cursors.at(-1);
     let query = filters;
@@ -211,6 +221,7 @@ export function mountComplianceCatalog(root, { api, icon, view, params, canExpor
       previous.disabled = cursors.length <= 1;
       next.disabled = !nextCursor;
       if (exportButton) exportButton.disabled = !data.length;
+      if (save) remember();
     } catch {
       if (!signal.aborted && current === generation) {
         data = [];
@@ -222,15 +233,15 @@ export function mountComplianceCatalog(root, { api, icon, view, params, canExpor
     }
   }
 
-  function apply() {
+  function apply(resume = null) {
     const entered = Object.fromEntries(new FormData(form));
-    const until = Date.now() + 1;
+    const until = resume?.until ?? Date.now() + 1;
     appliedDays = entered.days;
     filters = { until_ms:until, from_ms:until - Number(appliedDays) * day };
     for (const key of ["app","agent","outcome","policy","q"]) {
       if (entered[key]?.trim()) filters[key] = entered[key].trim();
     }
-    cursors = [null];
+    cursors = resume?.cursors ?? [null];
     void loadPage();
   }
 
@@ -304,10 +315,10 @@ export function mountComplianceCatalog(root, { api, icon, view, params, canExpor
       tbody.querySelector(`[data-row="${index}"] button`)?.focus({preventScroll:true});
     } else if (control?.dataset.page === "-1" && cursors.length > 1) {
       cursors.pop();
-      void loadPage();
+      void loadPage(true);
     } else if (control?.dataset.page === "1" && nextCursor) {
       cursors.push(nextCursor);
-      void loadPage();
+      void loadPage(true);
     }
   }, { signal });
   exportButton?.addEventListener("click", async () => {
@@ -334,6 +345,6 @@ export function mountComplianceCatalog(root, { api, icon, view, params, canExpor
       if (!signal.aborted) exportButton.disabled = !data.length;
     }
   }, { signal });
-  apply();
+  apply(restored);
   return () => lifetime.abort();
 }
