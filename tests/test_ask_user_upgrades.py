@@ -282,3 +282,30 @@ def test_grouped_ask_round_trip_through_manager(tmp_path):
     payload = json.loads(tool_msgs[-1]["content"])
     assert payload == {"answers": {"Chart": "Bar", "Distribution": "Stacked"}}
     assert mgr.inbox.pending(sid) == []
+
+
+def test_a_string_options_argument_is_one_option_not_characters():
+    """`options="yes,no"` must be ONE option, not six single-letter buttons.
+
+    A non-list argument is one item (the same rule todo_write follows): nothing
+    validates the argument against the schema before the call, so a model that
+    quoted the array reached the tool as-is and the card showed y/e/s/,/n/o.
+    """
+    fields = question_item_fields({"question": "Ship it?", "options": "yes,no"})
+    assert fields["options"] == ["yes,no"]
+    fields = question_item_fields({"question": "Ship it?", "options": "ok"})
+    assert fields["options"] == ["ok"]
+    # A list is untouched, and a rich object still canonicalizes.
+    fields = question_item_fields({"question": "Ship it?", "options": ["yes", "no"]})
+    assert fields["options"] == ["yes", "no"]
+    fields = question_item_fields(
+        {"question": "Ship it?", "options": [{"label": "yes", "recommended": True}]}
+    )
+    assert fields["options"][0]["label"] == "yes"
+    # The grouped path has the same iteration.
+    fields = question_item_fields(
+        {"questions": [{"question": "Ship it?", "options": "yes,no"}]}
+    )
+    assert fields["options"] == [{"label": "yes,no", "description": "",
+                                 "recommended": False, "preview": ""}]
+    assert fields["questions"][0]["options"] == fields["options"]
