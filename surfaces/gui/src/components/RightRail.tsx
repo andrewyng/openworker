@@ -203,6 +203,9 @@ export function RightRail({
   const [content, setContent] = useState<ArtifactContent | null>(null);
   const artifactListRequest = useRef(0);
   const artifactContentRequest = useRef(0);
+  const rootsRequest = useRef(0);
+  const agentTasksRequest = useRef(0);
+  const journalRequest = useRef(0);
   const sessionRef = useRef(sessionId);
   sessionRef.current = sessionId;
 
@@ -259,27 +262,68 @@ export function RightRail({
     };
   }, [active, sessionId, refreshKey, showArtifacts]);
 
+  // The session's roots, subagents and journal are session-owned exactly like the
+  // artifact list above, so they take the same guard: every refresh owns a request id
+  // and only the newest response may update this rail. Without it a slow session's
+  // late answer paints its rows over the fast session the person just switched to.
   useEffect(() => {
-    if (!active) return;
-    getRoots(sessionId).then(setRootDirs).catch(() => setRootDirs([]));
+    if (!active) {
+      rootsRequest.current += 1;
+      return;
+    }
+    const request = ++rootsRequest.current;
+    getRoots(sessionId)
+      .then((roots) => {
+        if (request === rootsRequest.current) setRootDirs(roots);
+      })
+      .catch(() => {
+        if (request === rootsRequest.current) setRootDirs([]);
+      });
+    return () => {
+      rootsRequest.current += 1;
+    };
   }, [active, sessionId, refreshKey]);
 
   // Async subagents (OPE-257): the registry view, refetched on every agent_task event.
   const [agentTasks, setAgentTasks] = useState<AgentTaskInfo[]>([]);
   useEffect(() => setAgentTasks([]), [sessionId]);
   useEffect(() => {
-    if (!active) return;
-    getAgentTasks(sessionId).then(setAgentTasks).catch(() => setAgentTasks([]));
+    if (!active) {
+      agentTasksRequest.current += 1;
+      return;
+    }
+    const request = ++agentTasksRequest.current;
+    getAgentTasks(sessionId)
+      .then((tasks) => {
+        if (request === agentTasksRequest.current) setAgentTasks(tasks);
+      })
+      .catch(() => {
+        if (request === agentTasksRequest.current) setAgentTasks([]);
+      });
+    return () => {
+      agentTasksRequest.current += 1;
+    };
   }, [active, sessionId, refreshKey, agentTaskKey]);
 
   // Journal cases surface only when a board exists — same visibility rule as the
   // Board section, so plain sessions carry zero team chrome.
   useEffect(() => {
     if (!active || !board?.space) {
+      journalRequest.current += 1;
       setJournal([]);
       return;
     }
-    getJournalCases(sessionId).then(setJournal).catch(() => setJournal([]));
+    const request = ++journalRequest.current;
+    getJournalCases(sessionId)
+      .then((cases) => {
+        if (request === journalRequest.current) setJournal(cases);
+      })
+      .catch(() => {
+        if (request === journalRequest.current) setJournal([]);
+      });
+    return () => {
+      journalRequest.current += 1;
+    };
   }, [active, sessionId, refreshKey, board?.space]);
 
   useEffect(() => {
