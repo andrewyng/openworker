@@ -16,6 +16,24 @@ import aisuite as ai
 from .models import Schedule, ScheduledTask, grant_entries
 from .store import TaskStore
 
+
+def _flag(value: object) -> bool:
+    """A boolean argument read by value, not by Python truthiness.
+
+    Every non-empty string is truthy, so `update_scheduled_task(enabled="false")` used
+    to keep the task running — the caller asked to disable it and got the opposite, with
+    `{"ok": true}` either way. Policy, same as the `_flag` helper in
+    `coworker/tools/shell.py`: only `True`, the number `1`, and the strings `"true"`,
+    `"1"` and `"yes"` (case-insensitive, whitespace-trimmed) count as true — everything
+    else, `"false"` and `"0"` included, is false.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes")
+    return value == 1
+
+
 _CREATE_SCHEMA = {
     "type": "function",
     "function": {
@@ -214,7 +232,7 @@ def scheduling_tools(
             task.schedule.cron = cron
             task.schedule.kind = "cron"
         if enabled is not None:
-            task.enabled = bool(enabled)
+            task.enabled = _flag(enabled)
         if instructions is not None:
             task.instructions = instructions
         if title is not None:
