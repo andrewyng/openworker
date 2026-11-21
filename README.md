@@ -153,7 +153,7 @@ Under the hood:
 ```
 
 
-Prerequisites: Python 3.10+, Node 20+, and (for the desktop shell) the Rust toolchain via [rustup](https://rustup.rs/).
+Prerequisites: Python 3.10+, Node 22.12+, and (for the desktop shell) the Rust toolchain via [rustup](https://rustup.rs/).
 
 ```shell
 git clone https://github.com/andrewyng/openworker
