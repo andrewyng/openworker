@@ -103,19 +103,28 @@ export function MachinesSection() {
   const [sandboxes, setSandboxes] = useState<SandboxesInfo>({ sandboxes: [], cap: 0, used: 0 });
   const [creating, setCreating] = useState(false);
 
-  const knownIds = useRef<string>("");
+  const knownIds = useRef<string | null>(null);
   const refresh = useCallback(async () => {
     try {
       const d = await getMachines();
       const rows = d.machines ?? [];
       setMachines(rows);
       setLoaded(true);
-      // Tell the Settings rail (and any other picker) when the fleet changed.
-      const ids = rows.map((m) => m.id).sort().join(",");
-      if (knownIds.current && ids !== knownIds.current) {
+      // Tell the Settings rail (and any other picker) when the fleet changed. The
+      // fingerprint carries the names too: the rail's picker shows them, and a
+      // rename leaves the id set untouched — an id-only fingerprint kept the old
+      // name in the picker until the page was reloaded. `null` means "nothing seen
+      // yet" (the first load announces nothing), and an empty fleet has a stable
+      // fingerprint of its own, so an unchanged fleet stays quiet.
+      const fingerprint = JSON.stringify(
+        rows
+          .map((m) => [m.id, m.name])
+          .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
+      );
+      if (knownIds.current !== null && fingerprint !== knownIds.current) {
         window.dispatchEvent(new CustomEvent(MACHINES_CHANGED));
       }
-      knownIds.current = ids || "-";
+      knownIds.current = fingerprint;
     } catch {
       /* sidecar unreachable — keep the last list */
     }
