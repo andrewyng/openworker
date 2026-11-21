@@ -266,3 +266,12 @@ test("private management UI preview terminates TLS without giving the UI server 
   assert.match(out,/name: https, port: 443, targetPort: https/);
   assert.match(out,/proxy_set_header Host \$http_host/);
 });
+
+test("only the API and worker receive the optional model registry key", async () => {
+  const out = await render({secrets: {modelRegistry: "registry-test-key"}});
+  const roles = out.split("\n---").filter(doc => doc.includes("OPENWORKER_MODEL_REGISTRY_KEY"));
+  assert.equal(roles.length, 2);
+  for (const role of ["api", "worker"]) {
+    assert(roles.some(doc => doc.includes("name: test-" + role) && doc.includes('name: "registry-test-key", key: registry-key')));
+  }
+});

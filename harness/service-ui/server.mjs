@@ -64,7 +64,7 @@ export function allowed(method, path) {
       return false;
     }
     return (
-      /^\/v1\/(capabilities|auth\/me|sessions|profiles|releases|configuration|worker-pools|credentials|audit|environments)$/.test(
+      /^\/v1\/(capabilities|auth\/me|sessions|profiles|releases|app-agents|configuration|worker-pools|credentials|audit|environments)$/.test(
         p,
       ) ||
       new RegExp(
@@ -76,13 +76,13 @@ export function allowed(method, path) {
     );
   }
   if (u.search) return false;
-  if (method === "PUT") return p === "/v1/configuration";
+  if (method === "PUT") return p === "/v1/configuration" || new RegExp(`^/v1/app-agents/${id}/sharing$`).test(p);
   return (
     method === "POST" &&
     (/^\/v1\/(releases|profiles|submissions|sessions|credentials)$/.test(p) ||
       new RegExp(`^/v1/(releases|profiles)/${id}/activate$`).test(p) ||
       new RegExp(`^/v1/worker-pools/${id}/scale$`).test(p) ||
-      new RegExp(`^/v1/credentials/${id}/revoke$`).test(p) ||
+      new RegExp(`^/v1/credentials/${id}/(revoke|rotate)$`).test(p) ||
       new RegExp(`^/v1/environments/${id}/delete$`).test(p) ||
       new RegExp(`^/v1/sessions/${id}/(turns|controls|close)$`).test(p))
   );

@@ -61,6 +61,10 @@ pub struct Defaults {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HostEndpoint {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_private_http: bool,
     pub api: crate::model_api::Api,
     pub base_url: String,
     #[serde(default)]
@@ -68,7 +72,32 @@ pub struct HostEndpoint {
     #[serde(default)]
     pub integrations: crate::integrations::Settings,
 }
+pub type HostKeySource = std::sync::Arc<dyn Fn() -> Result<Zeroizing<String>> + Send + Sync>;
+/// Stable selection identity includes the protocol and endpoint, independent of the secret.
+pub fn host_identity(
+    id: &str,
+    provider: crate::provider::Kind,
+    identity: &str,
+    endpoint: Option<&HostEndpoint>,
+) -> Result<String> {
+    let mut wire = format!("host-model-v1:{identity}:{}:{id}", provider.name());
+    if let Some(endpoint) = endpoint {
+        wire.push(':');
+        wire.push_str(&crate::bundle::digest(&serde_json::to_vec(endpoint)?));
+    }
+    Ok(crate::bundle::digest(wire.as_bytes()))
+}
+impl HostEndpoint {
+    fn validated_url(&self) -> Result<String> {
+        if self.allow_private_http {
+            crate::model_api::private_base_url(&self.base_url)
+        } else {
+            crate::model_api::base_url(&self.base_url)
+        }
+    }
+}
 struct State {
+    host_key_sources: BTreeMap<String, HostKeySource>,
     host_endpoints: BTreeMap<String, HostEndpoint>,
     db: Connection,
     memory: BTreeMap<String, Zeroizing<String>>,
@@ -202,18 +231,19 @@ impl Manager {
         {
             bail!("Invalid host model connection");
         }
-        let mut wire_identity = format!("host-model-v1:{identity}:{}:{id}", provider.name());
+        let wire_identity = host_identity(id, provider, identity, endpoint.as_ref())?;
         if let Some(e) = &endpoint {
             anyhow::ensure!(
                 e.api.kind() == provider,
                 "Host provider and endpoint API disagree"
             );
-            crate::model_api::base_url(&e.base_url)?;
+            e.validated_url()?;
+            anyhow::ensure!(
+                e.context_limit
+                    .is_none_or(|n| (1024..=2_000_000).contains(&n)),
+                "Invalid host model context limit"
+            );
             e.inference_options.validate()?;
-            wire_identity.push_str(&format!(
-                ":{}",
-                crate::bundle::digest(&serde_json::to_vec(e)?)
-            ));
         }
         self.integrations.configure_provider(
             id,
@@ -222,7 +252,7 @@ impl Manager {
                 .map(|e| e.integrations.clone())
                 .unwrap_or_default(),
         )?;
-        let identity = crate::bundle::digest(wire_identity.as_bytes());
+        let identity = wire_identity;
         let mut state = self.state.lock().unwrap();
         use rusqlite::OptionalExtension;
         let custom_endpoint: bool = state.db.query_row(
@@ -315,6 +345,7 @@ impl Manager {
                 memory: BTreeMap::new(),
                 host_endpoints: Default::default(),
                 host_references: Default::default(),
+                host_key_sources: Default::default(),
                 tokens: Default::default(),
             }),
         })
@@ -657,6 +688,26 @@ impl Manager {
         }
         Ok(selected)
     }
+    pub fn set_host_key_source(&self, id: &str, source: HostKeySource) -> Result<()> {
+        let mut state = self.state.lock().unwrap();
+        anyhow::ensure!(
+            state.host_references.contains(id),
+            "Unknown host model connection"
+        );
+        state.host_key_sources.insert(id.to_owned(), source);
+        Ok(())
+    }
+    pub fn host_identities(&self) -> Result<BTreeMap<String, String>> {
+        let ids = self.state.lock().unwrap().host_references.clone();
+        ids.into_iter()
+            .map(|id| {
+                Ok((
+                    id.clone(),
+                    self.resolve(&Choice::new(id, "validation"))?.identity,
+                ))
+            })
+            .collect()
+    }
     pub fn key(&self, selected: &Selection) -> Result<Zeroizing<String>> {
         let state = self.state.lock().unwrap();
         let (identity, kind, secret, provider): (String, String, Option<Vec<u8>>, String) = state
@@ -669,6 +720,10 @@ impl Manager {
             .map_err(|_| anyhow::anyhow!("Credentials required: selected connection is missing"))?;
         if identity != selected.identity || provider != selected.provider.name() {
             bail!("Connection identity changed; create a new session");
+        }
+        if let Some(source) = state.host_key_sources.get(&selected.connection).cloned() {
+            drop(state);
+            return source();
         }
         if kind == "none" {
             return Ok(Zeroizing::new(String::new()));
@@ -788,11 +843,7 @@ impl Manager {
         if let Some(wire) = state.host_endpoints.get(&selected.connection) {
             return Ok((
                 wire.api,
-                format!(
-                    "{}/{}",
-                    crate::model_api::base_url(&wire.base_url)?,
-                    wire.api.path()
-                ),
+                format!("{}/{}", wire.validated_url()?, wire.api.path()),
             ));
         }
         let endpoint: Option<(String, String)> = state
@@ -835,6 +886,14 @@ impl Manager {
             params![selected.connection, selected.identity],
             |r| r.get(0),
         ).context("Selected model provider is missing or its identity changed")
+    }
+    pub fn context_limit(&self, selected: &Selection) -> Option<usize> {
+        self.state
+            .lock()
+            .unwrap()
+            .host_endpoints
+            .get(&selected.connection)
+            .and_then(|wire| wire.context_limit)
     }
     pub fn inference_options(
         &self,

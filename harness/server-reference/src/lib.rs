@@ -6,12 +6,14 @@ use openworker_store_postgres::{Config as DbConfig, PostgresStore, Tls};
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 mod agent_teams;
+mod app_agents;
 mod artifacts;
 mod authorization;
 pub mod git_access;
 pub mod http;
 pub mod kubernetes;
 pub mod management;
+mod model_registry;
 pub mod operations;
 pub mod readiness;
 pub mod recording;
@@ -323,11 +325,12 @@ impl Config {
         )?;
         self.install_security_scanners()?;
         let service_mode = self.service.is_some();
+        let policy_store = store.clone();
         let policy = Arc::new(move || {
             if !service_mode {
                 return Ok(Default::default());
             }
-            let current = store.service_configuration()?;
+            let current = policy_store.service_configuration()?;
             Ok(openworker_runtime::integrations::PolicyRevision {
                 revision: current.revision,
                 policies: current.configuration.integration_policies,
@@ -408,6 +411,14 @@ impl Config {
                     &connection.identity,
                     key,
                     connection.endpoint.clone(),
+                )?;
+            }
+            for route in store.model_routes()? {
+                model_registry::check_static(self, &route.name)?;
+                model_registry::install(
+                    &rt.connections,
+                    &route,
+                    load_credentials.then(|| store.clone()),
                 )?;
             }
             let mut registry = openworker_runtime::environment::Registry::default();

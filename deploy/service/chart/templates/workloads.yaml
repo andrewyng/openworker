@@ -89,6 +89,10 @@ spec:
           args: [service-platform-controller]
           {{- end }}
           env:
+            {{- if and $.Values.secrets.modelRegistry (or (eq $role "api") (eq $role "worker")) }}
+            - name: OPENWORKER_MODEL_REGISTRY_KEY
+              valueFrom: {secretKeyRef: {name: {{ $.Values.secrets.modelRegistry | quote }}, key: registry-key}}
+            {{- end }}
             - name: POD_NAME
               valueFrom: {fieldRef: {fieldPath: metadata.name}}
             {{- if $azure }}

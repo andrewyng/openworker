@@ -370,6 +370,23 @@ impl Model {
             Some((manager, selection)) => manager.inference_options(selection)?,
             None => Default::default(),
         };
+        let max_tokens = if let Some(limit) = self
+            .connection
+            .as_ref()
+            .and_then(|(manager, selected)| manager.context_limit(selected))
+        {
+            let prompt = crate::compaction::estimate(history)
+                .saturating_add(crate::compaction::estimate(tools))
+                .saturating_add(instructions.len().div_ceil(4));
+            let remaining = limit.saturating_sub(prompt);
+            anyhow::ensure!(
+                remaining > 0,
+                "Estimated input exceeds configured model context limit"
+            );
+            max_tokens.min(remaining)
+        } else {
+            max_tokens
+        };
         self.request_endpoint(
             api,
             &endpoint,

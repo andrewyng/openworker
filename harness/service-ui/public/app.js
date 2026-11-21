@@ -63,6 +63,7 @@ let auth = null,
 let sessions = [],
   nextAfter = null,
   releases = [],
+  appAgents = [],
   profiles = [],
   pools = [],
   snapshot = null,
@@ -73,7 +74,7 @@ let sessions = [],
 const terminal = new Set(["completed", "failed", "cancelled", "interrupted", "truncated", "blocked"]);
 const role = () => auth?.identity.role;
 const can = {
-  run: () => ["administrator", "operator"].includes(role()),
+  run: () => ["administrator", "operator","app"].includes(role()),
   publish: () => ["administrator", "publisher"].includes(role()),
   activate: () => ["administrator", "release_administrator"].includes(role()),
   configure: () =>
@@ -93,8 +94,8 @@ const status = (s) =>
 const head = (title, sub = "", actions = "") =>
   `<div class="page-heading"><div><h1>${esc(title)}</h1>${sub ? `<p>${esc(sub)}</p>` : ""}</div><div class="heading-actions">${actions}${btn("Refresh", "refresh", false)}</div></div>`;
 const empty = (text) => `<div class="empty">${esc(text)}</div>`;
-const field = (name, id, value = "", type = "text") =>
-  `<div class="field"><label for="${id}">${esc(name)}</label>${type === "textarea" ? `<textarea id="${id}" required>${esc(value)}</textarea>` : `<input id="${id}" type="${type}" value="${esc(value)}" required>`}</div>`;
+const field = (name, id, value = "", type = "text", required = true) =>
+  `<div class="field"><label for="${id}">${esc(name)}</label>${type === "textarea" ? `<textarea id="${id}" ${required ? "required" : ""}>${esc(value)}</textarea>` : `<input id="${id}" type="${type}" value="${esc(value)}" ${required ? "required" : ""}>`}</div>`;
 const select = (name, id, options) =>
   `<div class="field"><label for="${id}">${esc(name)}</label><select id="${id}">${options.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("")}</select></div>`;
 function toast(text) {
@@ -386,7 +387,7 @@ function agentsPage() {
       "",
       can.publish() ? btn("Publish release", "new-release", true, "plus") : "",
     ) +
-    `<div class="agent-grid">${releases.map((a) => `<article class="card agent-card"><div class="agent-card-top"><span class="row-icon">${icon("agents")}</span><span class="tag">${a.activated ? "Active" : "Unactivated"}</span></div><h2>${esc(a.id)}</h2><p>${esc(a.definition.instructions.slice(0, 160))}</p><div class="agent-card-meta"><span class="tag">${esc(a.definition.defaultModel?.model || "Service default")}</span><span class="tag">${a.definition.tools.length} tools</span></div><div class="agent-card-foot">${btn("Details", "release:" + a.id)}${can.activate() && !a.activated ? btn("Activate", "activate-release:" + a.id) : ""}${can.run() && a.activated ? btn("Run", "run:" + a.id, true) : ""}</div></article>`).join("")}</div>${releases.length ? "" : empty("No visible agent releases.")}`
+    `<div class="agent-grid">${releases.map((a) => `<article class="card agent-card"><div class="agent-card-top"><span class="row-icon">${icon("agents")}</span><span class="tag">${a.activated ? "Active" : "Unactivated"}</span></div><h2>${esc(a.id)}</h2><p>${esc(a.definition.instructions.slice(0, 160))}</p><div class="agent-card-meta"><span class="tag">${esc(a.definition.defaultModel?.model || "Service default")}</span><span class="tag">${a.definition.tools.length} tools</span></div><div class="agent-card-foot">${btn("Details", "release:" + a.id)}${can.admin() && appAgents.some(row=>row.releaseId===a.id)?btn("Share revision","share-app:"+a.id):""}${can.activate() && !a.activated ? btn("Activate", "activate-release:" + a.id) : ""}${can.run() && a.activated ? btn("Run", "run:" + a.id, true) : ""}</div></article>`).join("")}</div>${releases.length ? "" : empty("No visible agent releases.")}`
   );
 }
 function sessionList() {
@@ -415,10 +416,12 @@ function infrastructure() {
     `<div class="pool-layout">${pools.map((p) => `<section class="card pool-card"><div class="pool-top"><h2>${esc(p.binding.id)}</h2><span class="tag">${esc(p.binding.ownership)}</span></div><div class="pool-count">${p.desiredReplicas}<small>desired workers</small></div><p class="small-note">${esc(human(p.observed.status || "unknown"))} · ${p.observed.readyReplicas ?? "—"} ready</p><p class="small-note">${esc(p.observed.reason || "")}</p><div class="pool-footer">${btn("Details", "pool:" + p.binding.id)}${can.admin() && p.binding.ownership === "manual" ? btn("Scale", "scale:" + p.binding.id) : ""}</div></section>`).join("") || empty("No registered worker pools.")}</div><div class="section-heading"><h2>Runtime profiles</h2>${can.configure() ? btn("New profile", "new-profile", false, "plus") : ""}</div>${profileTable()}${can.admin() ? `<div class="section-heading activity-heading"><h2>Environments</h2>${btn("View environments", "environments")}</div>` : ""}`
   );
 }
+let visibleCredentials=[];
 function settings(value) {
+  if(settingsTab === "Access") visibleCredentials = value.credentials || [];
   return (
     head("Settings") +
-    `<div class="tabs">${["Defaults", ...(can.admin() ? ["Access", "Audit"] : []), "Integrations"].map((t) => `<button class="tab ${t === settingsTab ? "active" : ""}" data-settings-tab="${t}">${t}</button>`).join("")}</div><div class="settings-layout">${settingsTab === "Defaults" ? `<div class="settings-section"><div class="setting-row"><span>Admissions</span><span>${value.configuration.admissionsPaused ? "Paused" : "Open"}</span></div><div class="setting-row"><span>Compaction threshold</span><span>${esc(Math.round(value.configuration.compaction.threshold_pct * 100))}%</span></div><div class="setting-row"><span>Environments per principal</span><span>${value.configuration.maxEnvironmentsPerPrincipal}</span></div><div class="setting-row"><span>Revision</span><span>${value.revision}</span></div></div>${can.admin() ? btn("Edit configuration", "configuration", true) : ""}` : settingsTab === "Access" ? `<div class="section-heading"><h2>Service credentials</h2>${btn("Issue token", "issue", true)}</div><div class="card table-wrap"><table class="table"><thead><tr><th>Principal</th><th>Role</th><th>Expires</th><th></th></tr></thead><tbody>${(value.credentials || []).map((c) => `<tr><td>${esc(c.principal || c.spec?.principal || c.id)}</td><td>${esc(c.role || c.spec?.role)}</td><td>${c.expires_at || c.spec?.expires_at ? esc(new Date((c.expires_at || c.spec.expires_at) * 1000).toLocaleString()) : "—"}</td><td>${c.revoked ? "Revoked" : btn("Revoke", "revoke:" + c.id)}</td></tr>`).join("")}</tbody></table></div>${value.next_after ? btn("Next page", "credentials-next:" + value.next_after) : ""}` : settingsTab === "Audit" ? `<details open><summary>Security audit</summary><pre>${esc(pretty(value))}</pre></details>` : `<div class="integration-card"><div><h3>Grafana and Langfuse</h3><p>Export configuration will be added here.</p></div></div>`}</div>`
+    `<div class="tabs">${["Defaults", ...(can.admin() ? ["Access", "Audit"] : []), "Integrations"].map((t) => `<button class="tab ${t === settingsTab ? "active" : ""}" data-settings-tab="${t}">${t}</button>`).join("")}</div><div class="settings-layout">${settingsTab === "Defaults" ? `<div class="settings-section"><div class="setting-row"><span>Admissions</span><span>${value.configuration.admissionsPaused ? "Paused" : "Open"}</span></div><div class="setting-row"><span>Compaction threshold</span><span>${esc(Math.round(value.configuration.compaction.threshold_pct * 100))}%</span></div><div class="setting-row"><span>Environments per principal</span><span>${value.configuration.maxEnvironmentsPerPrincipal}</span></div><div class="setting-row"><span>Revision</span><span>${value.revision}</span></div></div>${can.admin() ? btn("Edit configuration", "configuration", true) : ""}` : settingsTab === "Access" ? `<div class="section-heading"><h2>Service credentials</h2>${btn("Issue token", "issue", true)}</div><div class="card table-wrap"><table class="table"><thead><tr><th>Principal</th><th>Role</th><th>Expires</th><th></th></tr></thead><tbody>${(value.credentials || []).map((c) => `<tr><td>${esc(c.principal || c.spec?.principal || c.id)}</td><td>${esc(c.role || c.spec?.role)}</td><td>${c.expires_at || c.spec?.expires_at ? esc(new Date((c.expires_at || c.spec.expires_at) * 1000).toLocaleString()) : "—"}</td><td>${c.revoked ? "Revoked" : (c.spec?.role==="app"?btn("Rotate","rotate-app:"+c.id):"")+btn("Revoke", "revoke:" + c.id)}</td></tr>`).join("")}</tbody></table></div>${value.next_after ? btn("Next page", "credentials-next:" + value.next_after) : ""}` : settingsTab === "Audit" ? `<details open><summary>Security audit</summary><pre>${esc(pretty(value))}</pre></details>` : `<div class="integration-card"><div><h3>Grafana and Langfuse</h3><p>Export configuration will be added here.</p></div></div>`}</div>`
   );
 }
 function renderTrace() {
@@ -602,6 +605,7 @@ async function render() {
             : sessionList();
     } else if (page === "agents") {
       await loadCatalog();
+      appAgents = auth.capabilities.features?.appAgents ? (await api("/v1/app-agents")).agents : [];
       html = agentsPage();
     } else if (page === "infrastructure") {
       await loadCatalog();
@@ -908,20 +912,34 @@ async function act(action) {
     );
     return;
   }
-  if (kind === "issue") {
+  if (kind === "share-app") {
+    const entry=appAgents.find(e=>e.releaseId===id);
+    if(!entry) return;
+    return drawer("Share agent revision",
+      `<p>${esc(entry.owner)} / ${esc(entry.name)} · Revision ${esc(entry.revision)}</p>`+
+      field("App principals (comma separated)", "shared-apps", (entry.sharedWith || []).join(", "), "text", false)+
+      "<p>Each app owns the sessions it starts. Clear this list to make the revision private.</p>",
+      ()=>mutate(`/v1/app-agents/${id}/sharing`, "PUT",{sharedWith:$("#shared-apps").value.split(",").map(s=>s.trim()).filter(Boolean)},render),
+      "Save sharing");
+  }
+  if (kind === "issue" || kind === "rotate-app") {
+    const old=kind==="rotate-app"?visibleCredentials.find(c=>c.id===id):null;
+    if(kind==="rotate-app" && !old)throw Error("Reload the credential page before rotating");
     const value = Array.from(crypto.getRandomValues(new Uint8Array(32)), (x) =>
       x.toString(16).padStart(2, "0"),
     ).join("");
     drawer(
-      "Issue service token",
-      field("Principal", "principal", "") +
+      old?"Rotate app token":"Issue service token",
+      (old ? `<p>Rotate the token for ${esc(old.spec.principal)}. Its assigned grants carry over.</p><pre>${esc(JSON.stringify(old.grants ?? {}, null, 2))}</pre>` : field("Principal", "principal", "") +
         select("Role", "role", [
           ["operator", "Runner"],
+          ...(auth.capabilities.features?.appAgents ? [["app","Application"]] : []),
           ["observer", "Observer"],
           ["publisher", "Publisher"],
           ["release_administrator", "Release administrator"],
           ["service_administrator", "Service administrator"],
         ]) +
+        `<fieldset id="app-grants"><legend>Application grants</legend>${field("Additional tools (comma separated)", "app-tools", "", "text", false)}${field("Model profiles (comma separated)", "app-model-profiles", "", "text", false)}${field("Models (provider/model, comma separated)", "app-models", "", "text", false)}<p>Built-in file and shell tools follow the workspace policy.</p></fieldset>`) +
         select("Lifetime", "lifetime", [
           ["3600", "1 hour"],
           ["86400", "1 day"],
@@ -929,17 +947,22 @@ async function act(action) {
         ]) +
         `<details><summary>Token — copy before issuing</summary><pre>${value}</pre><p class="small-note">Keep this value private. It is cleared when this drawer closes.</p></details>`,
       async () => {
-        const r = $("#role").value;
+        const r = old?.spec.role ?? $("#role").value;
+        const items=id=>$(id).value.split(",").map(v=>v.trim()).filter(Boolean);
+        const grants=(!old && r==="app")?{
+          tools:items("#app-tools"),modelProfiles:items("#app-model-profiles"),
+          models:items("#app-models").map(v=>{const i=v.indexOf("/");if(i<1||i===v.length-1)throw Error("Use provider/model");return {connection:v.slice(0,i),model:v.slice(i+1)};})
+        }:undefined;
         await mutate(
-          "/v1/credentials",
+          old?`/v1/credentials/${old.id}/rotate`:"/v1/credentials",
           "POST",
           {
-            token: value,
+            token: value, grants,
             spec: {
-              principal: $("#principal").value,
+              principal: old?.spec.principal ?? (r==="app"?"app_"+$("#principal").value.trim():$("#principal").value),
               role: r,
               scope: {
-                kind: ["operator", "observer"].includes(r) ? "owned" : "all",
+                kind: ["app","operator", "observer"].includes(r) ? "owned" : "all",
               },
               expires_at:
                 Math.floor(Date.now() / 1000) + Number($("#lifetime").value),
@@ -951,8 +974,9 @@ async function act(action) {
           },
         );
       },
-      "Issue token",
+      old?"Rotate token":"Issue token",
     );
+    if (!old) {const show=()=>{$("#app-grants").hidden=$("#role").value!=="app";};$("#role").addEventListener("change",show);show();}
     return;
   }
   if (kind === "revoke")

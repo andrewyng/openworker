@@ -21,6 +21,7 @@ trusted-git-test = ["trusted-git", "openworker-git-broker/fixture"]
 team-test = ["openworker-store-postgres/test-support"]
 
 [dependencies]
+ring = "0.17"
 openworker-security-adapters = { path = "../security-adapters", optional = true }
 openworker-git-broker = { path = "../git-broker", optional = true }
 openworker-observability = { path = "../observability", features = ["postgres"] }

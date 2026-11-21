@@ -124,6 +124,8 @@ pub(crate) fn migrate(config: &Config) -> Result<()> {
     tx.batch_execute("ALTER TABLE submissions ADD COLUMN IF NOT EXISTS limits JSONB; ALTER TABLE submissions ADD COLUMN IF NOT EXISTS input_content JSONB")?;
     crate::artifacts::migrate(&mut tx)?;
     crate::auth::migrate(&mut tx)?;
+    crate::app_agents::migrate(&mut tx)?;
+    tx.batch_execute("ALTER TABLE api_credentials ADD COLUMN IF NOT EXISTS replaces TEXT UNIQUE REFERENCES api_credentials(id), ADD COLUMN IF NOT EXISTS app_grants JSONB")?;
     crate::compliance::migrate(&mut tx)?;
     crate::pools::migrate(&mut tx)?;
     crate::teams::migrate(&mut tx)?;
@@ -131,6 +133,7 @@ pub(crate) fn migrate(config: &Config) -> Result<()> {
     crate::agent_team::migrate(&mut tx)?;
     crate::service::migrate(&mut tx)?;
     crate::service_catalog::migrate(&mut tx)?;
+    crate::model_registry::migrate(&mut tx)?;
     crate::service_team_placements::migrate(&mut tx)?;
     crate::service_team_sources::migrate(&mut tx)?;
     crate::service_team_imports::migrate(&mut tx)?;

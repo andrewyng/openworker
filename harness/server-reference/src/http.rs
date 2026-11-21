@@ -52,6 +52,10 @@ impl App {
                 store.verify_service(&service.id, &service.namespace)?;
             } else {
                 store.bind_service(&service.id, &service.namespace)?;
+                store.install_app_tool_defaults(
+                    &crate::management::installation(config)?,
+                    crate::app_agents::default_tools(&runtime.bundle),
+                )?;
             }
         }
         Ok(Self {
@@ -274,6 +278,20 @@ impl From<anyhow::Error> for ApiError {
 }
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        if let Some(problem) = self
+            .0
+            .downcast_ref::<openworker_store_postgres::model_registry::RegistryError>()
+        {
+            use openworker_store_postgres::model_registry::RegistryError;
+            let status = match problem {
+                RegistryError::ProfileUnavailable => StatusCode::NOT_FOUND,
+                RegistryError::NativeRouteRequired => StatusCode::BAD_REQUEST,
+                RegistryError::ProviderDisabled | RegistryError::ImmutableProvider => {
+                    StatusCode::CONFLICT
+                }
+            };
+            return (status, Json(json!({"error":problem.to_string()}))).into_response();
+        }
         if self
             .0
             .is::<openworker_runtime::attachments::InspectionUnsupported>()

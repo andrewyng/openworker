@@ -193,6 +193,21 @@ pub(crate) async fn put_release(
     headers: HeaderMap,
     Json(r): Json<Release>,
 ) -> Result<Json<Value>, ApiError> {
+    validate_release(&app, &r)?;
+    Ok(Json(json!(app.store.catalog_put(
+        &crate::service::key(&app, &headers, "release")?,
+        "release",
+        json!(r),
+        &installation(&app.config)?
+    )?)))
+}
+pub(crate) fn validate_release(app: &App, r: &Release) -> Result<(), ApiError> {
+    crate::model_registry::refresh(app)?;
+    if let Some(name) = &r.model_profile {
+        app.runtime
+            .connections
+            .resolve(&app.store.current_profile_model(name)?)?;
+    }
     r.validate()?;
     if app.service.as_ref().is_some_and(|s| s.agent == r.id) {
         return Err(ApiError(SubmissionError::Conflict.into()));
@@ -213,12 +228,7 @@ pub(crate) async fn put_release(
     for p in &r.runtime_profiles {
         app.store.catalog_get("profile", p)?;
     }
-    Ok(Json(json!(app.store.catalog_put(
-        &crate::service::key(&app, &headers, "release")?,
-        "release",
-        json!(r),
-        &installation(&app.config)?
-    )?)))
+    Ok(())
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -338,10 +348,20 @@ pub(crate) async fn admit_kind(
     }
     let spec = provider(&app.config, &profile)?.spec(p.sharing.clone(), Management::Harness);
     let request = crate::service::key(&app, &headers, kind)?;
+    crate::model_registry::refresh(&app)?;
+    let pinned = if input.model.is_none() {
+        r.model_profile
+            .as_deref()
+            .map(|n| app.store.current_profile_model(n))
+            .transpose()?
+    } else {
+        None
+    };
     if let Some(text) = &input.initial_message {
         let model = input
             .model
             .as_ref()
+            .or(pinned.as_ref())
             .or(r.default_model.as_ref())
             .map(|c| app.runtime.connections.resolve(c))
             .transpose()?;
@@ -364,6 +384,26 @@ pub(crate) async fn admit_kind(
     let loop_spec = if p.loop_placement.is_service() {
         None
     } else {
+        // Native sandbox inference uses OpenShell's provisioned provider identity.
+        // A registry credential is held on workers and cannot substitute for that identity.
+        if let Some(choice) = input
+            .model
+            .as_ref()
+            .or(pinned.as_ref())
+            .or(r.default_model.as_ref())
+        {
+            if app
+                .store
+                .model_routes()?
+                .iter()
+                .any(|p| p.name == choice.connection)
+            {
+                return Err(ApiError(
+                    openworker_store_postgres::model_registry::RegistryError::NativeRouteRequired
+                        .into(),
+                ));
+            }
+        }
         let c = app.config.profile_config(&p)?;
         let route = c
             .openshell
@@ -374,6 +414,7 @@ pub(crate) async fn admit_kind(
             && input
                 .model
                 .as_ref()
+                .or(pinned.as_ref())
                 .or(r.default_model.as_ref())
                 .is_none_or(|m| m.connection != route.connection)
         {
@@ -386,7 +427,7 @@ pub(crate) async fn admit_kind(
     };
     let op = app
         .store
-        .service_admit_with_loop(&request, input, release, profile, spec, loop_spec)?;
+        .service_admit_reviewed(&request, input, release, profile, spec, loop_spec, pinned)?;
     Ok((
         if op.status == "complete" {
             StatusCode::OK
@@ -512,13 +553,25 @@ async fn finish_ready_admission(
     if let Some(reference) = &input.workspace_id {
         parameters["workspace_id"] = json!(reference);
     }
-    if let Some(model) = input.model {
+    let pin = store.operation_model_pin(&op.id)?;
+    if let Some(model) = pin.as_ref().map(|p| p.choice.clone()).or(input.model) {
         parameters["model"] = json!(model);
     }
     if let Some(model) = release.reviewer_model {
         parameters["reviewer_model"] = json!(model);
     }
     let mut session = runtime.prepare_session(parameters)?;
+    if let Some(pin) = pin {
+        ensure!(
+            session
+                .model_selection
+                .as_ref()
+                .is_some_and(|m| m.identity == pin.selection.identity
+                    && m.connection == pin.choice.connection
+                    && m.model == pin.choice.model),
+            SubmissionError::Conflict
+        );
+    }
     session.allow_workspace_reads = profile.allow_workspace_reads.clone();
     if let Some(id) = &op.loop_environment_id {
         session.loop_environment = Some(
@@ -697,21 +750,7 @@ pub fn selector(
         scripted: config.scripted,
         fallback_model: config.model.clone(),
         model_provider: config.model_provider,
-        model_connections: config
-            .model_connections
-            .iter()
-            .map(|c| {
-                Ok((
-                    c.id.clone(),
-                    rt.connections
-                        .resolve(&openworker_runtime::connections::Choice::new(
-                            &c.id,
-                            "validation",
-                        ))?
-                        .identity,
-                ))
-            })
-            .collect::<Result<_>>()?,
+        model_connections: rt.connections.host_identities()?,
         environment_provider: Some(env.provider),
         environment_identity: Some(env.provider_identity),
         environment_profile: Some(env.profile_digest),
@@ -810,6 +849,8 @@ pub async fn worker_with_options(
         "legacy".into(),
         (base_selector.clone(), default_factory.clone()),
     );
+    let mut registered_routes = None;
+    let mut advertised = base_selector.clone();
     let work = Worker::new(
         db,
         base_selector.clone(),
@@ -817,7 +858,7 @@ pub async fn worker_with_options(
             slots,
             ..Default::default()
         },
-        default_factory,
+        default_factory.clone(),
     )?
     .with_catalog(catalog)
     .run_with_drain(
@@ -830,9 +871,22 @@ pub async fn worker_with_options(
         let mut type_cursor = String::new();
         while !abort.is_cancelled() {
             provider.check_gateway().await?;
+            let routes = store.model_routes()?;
+            if registered_routes.as_ref() != Some(&routes) {
+                let template = config.api_runtime("service-worker-base", store.clone())?;
+                advertised = selector(&config, &template)?;
+                template.shutdown().await?;
+                let mut catalog = cache.lock().unwrap();
+                catalog.clear();
+                catalog.insert(
+                    "legacy".into(),
+                    (advertised.clone(), default_factory.clone()),
+                );
+                registered_routes = Some(routes);
+            }
             store.advertise_worker(
                 &node,
-                base_selector.clone(),
+                advertised.clone(),
                 slots as u16,
                 drain.is_requested(),
             )?;

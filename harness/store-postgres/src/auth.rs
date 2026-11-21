@@ -32,6 +32,7 @@ pub enum Role {
     ComplianceReader,
     ComplianceAuditor,
     Observer,
+    App,
     Operator,
     Administrator,
     Publisher,
@@ -134,7 +135,7 @@ impl Role {
                 matches!(self, Self::Administrator | Self::ComplianceAuditor)
             }
             Action::Create | Action::Submit | Action::Control | Action::Artifact => {
-                matches!(self, Self::Operator | Self::Administrator)
+                matches!(self, Self::Operator | Self::App | Self::Administrator)
             }
             Action::Admin => matches!(self, Self::Administrator | Self::ServiceAdministrator),
             Action::Publish => matches!(self, Self::Administrator | Self::Publisher),
@@ -149,6 +150,20 @@ impl Role {
 impl Spec {
     pub fn validate(&self) -> Result<()> {
         id(&self.principal, 64)?;
+        if self.role == Role::App {
+            ensure!(
+                self.scope == Scope::Owned
+                    && self.environments.is_empty()
+                    && self
+                        .principal
+                        .strip_prefix("app_")
+                        .is_some_and(|n| !n.is_empty()
+                            && n.bytes().all(|b| b.is_ascii_lowercase()
+                                || b.is_ascii_digit()
+                                || b == b'-')),
+                Error::Invalid
+            );
+        }
         ensure!(
             self.expires_at.is_none_or(|t| t > 0 && t < 253402300800),
             Error::Invalid
@@ -335,7 +350,11 @@ fn record(
     Ok(())
 }
 fn public(row: &postgres::Row) -> Value {
-    json!({"id":row.get::<_,String>("id"),"request_id":row.get::<_,String>("request_id"),"spec":row.get::<_,Value>("spec"),"revoked":row.get::<_,bool>("revoked")})
+    let mut row_info = json!({"id":row.get::<_,String>("id"),"request_id":row.get::<_,String>("request_id"),"spec":row.get::<_,Value>("spec"),"revoked":row.get::<_,bool>("revoked")});
+    if let Ok(Some(grants)) = row.try_get::<_, Option<Value>>("effective_grants") {
+        row_info["grants"] = grants;
+    }
+    row_info
 }
 fn admin_lock(tx: &mut Transaction<'_>) -> Result<()> {
     tx.query_one(
@@ -450,12 +469,20 @@ impl Database {
         request: String,
         spec: Spec,
         digest: String,
+        replaces: Option<String>,
+        grants: Option<crate::app_agents::Grants>,
     ) -> Result<Value> {
         let mut tx = self.client.transaction()?;
         check(&mut tx)?;
         admin_lock(&mut tx)?;
         let p = guard(&mut tx, self.auth.as_ref(), Action::Admin, None, None)?
             .ok_or(Error::Unauthorized)?;
+        ensure!(
+            (grants.is_none() || spec.role == Role::App)
+                && (spec.role != Role::App || replaces.is_some() || grants.is_some()),
+            Error::Invalid
+        );
+        let grant_json = grants.as_ref().map(serde_json::to_value).transpose()?;
         let data = serde_json::to_value(&spec)?;
         if let Some(row) = tx.query_opt(
             "SELECT * FROM api_credentials WHERE request_id=$1",
@@ -464,12 +491,65 @@ impl Database {
             ensure!(
                 row.get::<_, String>("token_hash") == digest
                     && row.get::<_, Value>("spec") == data
-                    && row.get::<_, String>("created_by") == p.principal,
+                    && row.get::<_, String>("created_by") == p.principal
+                    && row.get::<_, Option<String>>("replaces") == replaces
+                    && row.get::<_, Option<Value>>("app_grants") == grant_json,
                 Error::Conflict
             );
             let out = public(&row);
             tx.commit()?;
             return Ok(out);
+        }
+        if spec.role == Role::App {
+            ensure!(!tx.query_one("SELECT EXISTS(SELECT 1 FROM api_credentials WHERE spec->>'principal'=$1 AND spec->>'role'<>'app')",&[&spec.principal])?.get::<_,bool>(0), Error::Conflict);
+        } else {
+            if spec.principal.starts_with("app_") {
+                ensure!(
+                    !tx.query_one(
+                        "SELECT EXISTS(SELECT 1 FROM service_app_grants WHERE principal=$1)",
+                        &[&spec.principal]
+                    )?
+                    .get::<_, bool>(0),
+                    Error::Conflict
+                );
+            }
+        }
+        if let Some(g) = &grants {
+            g.validate()?;
+            tx.execute("INSERT INTO service_app_grants(principal,grants) VALUES($1,$2) ON CONFLICT(principal) DO NOTHING",&[&spec.principal,&json!(g)])?;
+            ensure!(
+                crate::app_agents::grants(&mut tx, &spec.principal)? == *g,
+                Error::Conflict
+            );
+        }
+        if let Some(previous) = &replaces {
+            let old = tx
+                .query_opt(
+                    "SELECT spec,revoked FROM api_credentials WHERE id=$1 FOR UPDATE",
+                    &[previous],
+                )?
+                .ok_or(Error::Invalid)?;
+            let old_spec: Spec = serde_json::from_value(old.get(0))?;
+            ensure!(
+                old_spec.role == Role::App
+                    && spec.role == Role::App
+                    && old_spec.principal == spec.principal
+                    && !old.get::<_, bool>(1),
+                Error::Conflict
+            );
+            tx.execute(
+                "UPDATE api_credentials SET revoked=TRUE WHERE id=$1",
+                &[previous],
+            )?;
+            record(
+                &mut tx,
+                Some(&p),
+                "credential.rotate",
+                None,
+                Some(&request),
+                "revoked",
+                Some(previous),
+            )?;
         }
         ensure!(
             tx.query_one("SELECT count(*) FROM api_credentials", &[])?
@@ -514,7 +594,7 @@ impl Database {
             );
         }
         let id = format!("key_{}", uuid::Uuid::new_v4().simple());
-        let row=tx.query_one("INSERT INTO api_credentials(id,request_id,token_hash,spec,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *",&[&id,&request,&digest,&data,&p.principal])?;
+        let row=tx.query_one("INSERT INTO api_credentials(id,request_id,token_hash,spec,created_by,replaces,app_grants) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",&[&id,&request,&digest,&data,&p.principal,&replaces,&grant_json])?;
         record(
             &mut tx,
             Some(&p),
@@ -571,7 +651,7 @@ impl Database {
         guard(&mut tx, self.auth.as_ref(), Action::Admin, None, None)?
             .ok_or(Error::Unauthorized)?;
         let rows = tx.query(
-            "SELECT * FROM api_credentials WHERE id>$1 ORDER BY id LIMIT 101",
+            "SELECT k.*,g.grants AS effective_grants FROM api_credentials k LEFT JOIN service_app_grants g ON g.principal=k.spec->>'principal' WHERE k.id>$1 ORDER BY k.id LIMIT 101",
             &[&after],
         )?;
         let more = rows.len() > 100;
@@ -643,7 +723,43 @@ impl PostgresStore {
         spec.validate()?;
         let digest = token_hash(token)?;
         let request = request.to_owned();
-        self.call(move |db| db.auth_issue(request, spec, digest))
+        self.call(move |db| db.auth_issue(request, spec, digest, None, None))
+    }
+    pub fn issue_app_token(
+        &self,
+        request: &str,
+        spec: Spec,
+        token: &str,
+        grants: crate::app_agents::Grants,
+    ) -> Result<Value> {
+        id(request, 100)?;
+        spec.validate()?;
+        grants.validate()?;
+        ensure!(
+            spec.role == Role::App && spec.expires_at.is_some(),
+            Error::Invalid
+        );
+        let digest = token_hash(token)?;
+        let request = request.to_owned();
+        self.call(move |db| db.auth_issue(request, spec, digest, None, Some(grants)))
+    }
+    pub fn rotate_app_token(
+        &self,
+        request: &str,
+        previous: &str,
+        spec: Spec,
+        token: &str,
+    ) -> Result<Value> {
+        id(request, 100)?;
+        id(previous, 80)?;
+        spec.validate()?;
+        ensure!(
+            spec.role == Role::App && spec.expires_at.is_some(),
+            Error::Invalid
+        );
+        let digest = token_hash(token)?;
+        let (request, previous) = (request.to_owned(), previous.to_owned());
+        self.call(move |db| db.auth_issue(request, spec, digest, Some(previous), None))
     }
     /// Infrastructure-admin recovery only. Keeps bootstrap tombstone and all audit history.
     pub fn auth_recover(

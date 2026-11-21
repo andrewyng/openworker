@@ -326,15 +326,20 @@ try {
     await page
       .getByRole("button", { name: "Issue token", exact: true })
       .click();
+    await page.getByLabel("Role",{exact:true}).selectOption("app");
+    await page.getByLabel("Additional tools (comma separated)").fill("web_search");
+    await page.getByLabel("Model profiles (comma separated)").fill("coding");
     await page.getByLabel("Principal", { exact: true }).fill("browser-issued");
     await page.locator("#save").click();
     await expect(page.locator("main")).toContainText("browser-issued");
-    const row = page.locator("tr").filter({ hasText: "browser-issued" });
+    const row = page.locator("tr").filter({ hasText:"app_browser-issued" }).filter({has:page.getByRole("button",{name:"Revoke",exact:true})});
+    await row.getByRole("button",{name:"Rotate",exact:true}).click();
+    await page.locator("#save").click();
+    await expect(page.locator("tr").filter({hasText:"app_browser-issued"})).toHaveCount(2);
+
     await row.getByRole("button", { name: "Revoke" }).click();
     await page.locator("#save").click();
-    await expect(
-      page.locator("tr").filter({ hasText: "browser-issued" }),
-    ).toContainText("Revoked");
+    await expect(page.locator("tr").filter({hasText:"app_browser-issued"}).filter({hasText:"Revoked"})).toHaveCount(2);
     await page.locator("#profile-button").click();
     await page.getByRole("button", { name: "Sign out", exact: true }).click();
     await page

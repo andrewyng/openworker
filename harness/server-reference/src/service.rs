@@ -49,6 +49,12 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
     }
     let p = path.split('/').collect::<Vec<_>>();
     match (method, p.as_slice()) {
+        ("GET" | "POST", ["", "v1", "model-providers"])
+        | ("POST", ["", "v1", "model-providers", _, "rotate" | "disable"])
+        | ("PUT", ["", "v1", "model-profiles", _]) => Some(Action::Admin),
+        ("GET", ["", "v1", "app-agents"]) => Some(Action::Read),
+        ("POST", ["", "v1", "app-agents", _]) => Some(Action::Submit),
+        ("PUT", ["", "v1", "app-agents", _, "sharing"]) => Some(Action::Admin),
         ("POST", ["", "v1", "workspace-providers"])
         | ("POST", ["", "v1", "workspace-providers", _, "workspaces" | "stop" | "delete-data"]) => {
             Some(Action::Submit)
@@ -81,7 +87,9 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
         ("GET", ["", "v1", "sessions", _, "team"])
         | ("GET", ["", "v1", "sessions", _, "team", "messages"]) => Some(Action::Read),
         ("POST", ["", "v1", "sessions", _, "team"])
-        | ("POST", ["", "v1", "sessions", _, "team", "commands"]) => Some(Action::Control),
+        | ("POST", ["", "v1", "sessions", _, "team", "commands" | "reauthorize"]) => {
+            Some(Action::Control)
+        }
         ("POST", ["", "v1", "sessions", _, "controls" | "close"]) => Some(Action::Control),
         ("GET", ["", "v1", "worker-pools"]) => Some(Action::Read),
         ("POST", ["", "v1", "worker-pools", _, "scale"]) => Some(Action::Admin),
@@ -93,7 +101,7 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
             Some(Action::Configure)
         }
         ("GET" | "POST", ["", "v1", "credentials"])
-        | ("POST", ["", "v1", "credentials", _, "revoke"])
+        | ("POST", ["", "v1", "credentials", _, "revoke" | "rotate"])
         | ("GET", ["", "v1", "audit"]) => Some(Action::Admin),
         ("GET", ["", "v1", "profiles" | "releases" | "environments" | "operations", _]) => {
             Some(Action::Read)
@@ -113,6 +121,28 @@ fn check(ok: bool, error: SubmissionError) -> Result<(), ApiError> {
 }
 pub(crate) fn router() -> Router<App> {
     Router::new()
+        .route(
+            "/v1/model-providers",
+            get(crate::model_registry::catalog).post(crate::model_registry::register),
+        )
+        .route(
+            "/v1/model-providers/:name/rotate",
+            post(crate::model_registry::rotate),
+        )
+        .route(
+            "/v1/model-providers/:name/disable",
+            post(crate::model_registry::disable),
+        )
+        .route(
+            "/v1/model-profiles/:name",
+            axum::routing::put(crate::model_registry::profile),
+        )
+        .route("/v1/app-agents", get(crate::app_agents::list))
+        .route("/v1/app-agents/:id", post(crate::app_agents::publish))
+        .route(
+            "/v1/app-agents/:id/sharing",
+            axum::routing::put(crate::app_agents::share),
+        )
         .route("/v1/workspace-providers", post(crate::workspace_api::start))
         .route(
             "/v1/workspace-providers/:id/workspaces",
@@ -171,6 +201,14 @@ pub(crate) fn router() -> Router<App> {
         .route(
             "/v1/compliance/sessions/:sid/delivery",
             get(compliance_delivery),
+        )
+        .route(
+            "/v1/sessions/:sid/team/reauthorize",
+            post(crate::agent_teams::reauthorize),
+        )
+        .route(
+            "/v1/credentials/:id/rotate",
+            post(crate::authorization::rotate_app),
         )
         .route("/v1/agents/:id", get(agent))
         .route("/v1/worker-pools", get(pools))
@@ -234,7 +272,7 @@ fn cfg(app: &App) -> &ServiceConfig {
 }
 async fn capabilities(Extension(app): Extension<App>) -> Json<Value> {
     Json(
-        json!({"configuredIntegrations":app.runtime.integrations.configured_ids().collect::<Vec<_>>(),"integrations":app.runtime.integrations.catalog.catalog(),"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"sandboxedLoop":app.config.openshell.loop_inference.is_some(),"workspaceProviders":app.runtime.workspaces.available(),"attachments":cfg!(feature="attachments"),"compliance":cfg!(feature="compliance"),"turnLimits":true,"toolArgumentRecovery":true,"environmentProcesses":cfg!(target_os="linux"),"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":true,"standaloneSubagents":true,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
+        json!({"configuredIntegrations":app.runtime.integrations.configured_ids().collect::<Vec<_>>(),"integrations":app.runtime.integrations.catalog.catalog(),"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"appAgents":true,"modelRegistry":true,"sandboxedLoop":app.config.openshell.loop_inference.is_some(),"workspaceProviders":app.runtime.workspaces.available(),"attachments":cfg!(feature="attachments"),"compliance":cfg!(feature="compliance"),"turnLimits":true,"toolArgumentRecovery":true,"environmentProcesses":cfg!(target_os="linux"),"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":true,"standaloneSubagents":true,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
     )
 }
 async fn agent(
