@@ -557,14 +557,26 @@ def agent_task_tools(
         """
         if mode not in ("read_only", "inherit"):
             return {"error": f"unknown mode: {mode!r} (use 'read_only' or 'inherit')"}
+        if not isinstance(task, str) or not task.strip():
+            return {"error": "task must be a non-empty string: say what the subagent should do"}
         if mode == "inherit" and registry.loop is None:
             return {"error": "inherit mode is only available under the desktop app session; use read_only"}
         if registry.active_count() >= _MAX_ACTIVE:
             return {"error": f"already {_MAX_ACTIVE} subagents running — wait for one to finish"}
         timeout = None
-        if approval_timeout:
-            timeout = max(float(approval_timeout), _MIN_APPROVAL_TIMEOUT)
-        t = registry.new_task(label.strip() or task.strip()[:40], task, mode, timeout)
+        if approval_timeout is not None:
+            # 0 is a value, not "unset": the timeout used to be dropped when it was
+            # falsy, and the approval card then waited forever instead of expiring.
+            try:
+                timeout = max(float(approval_timeout), _MIN_APPROVAL_TIMEOUT)
+            except (TypeError, ValueError):
+                return {
+                    "error": f"approval_timeout must be a number of seconds, got {approval_timeout!r}"
+                }
+        # The arguments are not schema-validated before they reach the tool, so a
+        # model can send null for the optional label: fall back to the task's text.
+        name = str(label or "").strip() or task.strip()[:40]
+        t = registry.new_task(name, task, mode, timeout)
         # Observability (OPE-244 integration): the child records under THIS spawn step,
         # on the parent's turn, exactly like explore's helper — so background runs show
         # in the Steps panel and their tokens reach the Usage ledger. The recording
