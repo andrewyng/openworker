@@ -25,6 +25,13 @@ def required(row):
     return row
 
 
+def session_id(req):
+    value = req["sessionId"]
+    if not isinstance(value, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", value):
+        raise Failure("invalid_workspace_request", 400)
+    return value
+
+
 def profile(options, default="small"):
     if not isinstance(options, dict) or options.keys() - {"podProfile"}:
         raise Failure("invalid_workspace_request", 400)
@@ -291,13 +298,14 @@ class Controller:
                 self.stop(workspace)
                 return {}
             if action == "detach":
-                if self.inflight.get((workspace, req["sessionId"]), 0):
+                session = session_id(req)
+                if self.inflight.get((workspace, session), 0):
                     raise Failure("workspace_in_use", 409)
                 with self.db:
                     self.db.execute("""INSERT INTO attachments
                         SELECT ?,?,0 WHERE EXISTS(SELECT 1 FROM compute WHERE id=?)
                         ON CONFLICT(workspace,session) DO UPDATE SET active=0""",
-                        (workspace, req["sessionId"], workspace))
+                        (workspace, session, workspace))
                     self.db.execute("UPDATE compute SET idle=? WHERE id=?", (time.time(), workspace))
                 return {}
             row = self.compute(workspace)
@@ -306,9 +314,7 @@ class Controller:
             if action == "recover":
                 self.provision(row)
                 return {"profile": row["profile"], "processTools": "imageProfile" in json.loads(row["runtime"])}
-            session = req["sessionId"]
-            if not isinstance(session, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", session):
-                raise Failure("invalid_workspace_request", 400)
+            session = session_id(req)
             if action == "attach":
                 self.provision(row)
                 with self.db:
