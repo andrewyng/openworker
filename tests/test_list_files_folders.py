@@ -81,3 +81,22 @@ def test_catalog_registers_the_folder_aware_listing(tmp_path):
         listings = [t for t in expand([capability], ctx) if t.__name__ == "list_files"]
         assert len(listings) == 1, capability
         assert hasattr(listings[0], "__coworker_schema__"), capability
+
+
+def test_a_pattern_cannot_leave_the_workspace(tmp_path):
+    # The scope check covers `path`, not `pattern`: a ".." segment in the pattern
+    # walked out of the session's directories (and listed the user's other files),
+    # and an absolute pattern raised out of the tool.
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "app.py").write_text("x", encoding="utf-8")
+    (tmp_path / "secret.txt").write_text("s3cret", encoding="utf-8")
+    tool = _list_files(ws)
+    assert tool(path=".", pattern="../**/*") == {
+        "error": "pattern escapes the session's directories"
+    }
+    assert tool(path=".", pattern="/etc/*") == {
+        "error": "pattern must be relative to the path"
+    }
+    # A pattern that stays inside still works.
+    assert tool(path=".", pattern="**/*.py") == ["app.py"]

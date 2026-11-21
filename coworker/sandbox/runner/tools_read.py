@@ -45,6 +45,14 @@ def list_files(
     """Files and folders under `path`, folders marked with a trailing '/', sorted. Paths
     inside the workspace come back relative to it; paths inside another of the session's
     `roots` come back absolute."""
+    # The scope check below covers `path`, not `pattern`: a pattern with a ".."
+    # segment walks out of the session's directories (and an absolute one raises
+    # out of the tool), so both are refused here.
+    if isinstance(pattern, str) and pattern:
+        if Path(pattern).is_absolute():
+            return {"error": "pattern must be relative to the path"}
+        if ".." in Path(pattern).parts:
+            return {"error": "pattern escapes the session's directories"}
     root = Path(workspace).resolve()
     extra_roots = [Path(str(r)).resolve() for r in (roots or [])]
     n = (
