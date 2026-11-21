@@ -38,15 +38,17 @@ from urllib.parse import urlparse
 import httpx
 
 from .. import model_config
-from . import local_machine
+from . import local_machine, probe_http
 from .recommended import recommendation_for
 
+# Defaults name 127.0.0.1, not `localhost`: on Windows `localhost` resolves to ::1 first,
+# so a probe of a server that is not running fails twice (OPE-229 did the same for Ollama).
 LOCAL_SERVERS: dict[str, dict[str, str]] = {
-    "llamacpp": {"title": "llama.cpp", "default_base": "http://localhost:8080"},
-    "vllm": {"title": "vLLM", "default_base": "http://localhost:8000"},
-    "lmstudio": {"title": "LM Studio", "default_base": "http://localhost:1234"},
+    "llamacpp": {"title": "llama.cpp", "default_base": "http://127.0.0.1:8080"},
+    "vllm": {"title": "vLLM", "default_base": "http://127.0.0.1:8000"},
+    "lmstudio": {"title": "LM Studio", "default_base": "http://127.0.0.1:1234"},
     "jan": {"title": "Jan", "default_base": "http://127.0.0.1:1337"},
-    "docker": {"title": "Docker Model Runner", "default_base": "http://localhost:12434/engines"},
+    "docker": {"title": "Docker Model Runner", "default_base": "http://127.0.0.1:12434/engines"},
     "mlx": {"title": "mlx-lm", "default_base": "http://127.0.0.1:8080"},
 }
 PLACEHOLDER_KEY = "none"
@@ -91,7 +93,7 @@ def _headers(api_key: Optional[str]) -> dict[str, str]:
 def alive(name: str, base_url: Optional[str], api_key: Optional[str] = None) -> bool:
     try:
         url = v1_base(name, base_url) + "/models"
-        return httpx.get(url, headers=_headers(api_key), timeout=probe_timeout(url, 0.8)).status_code == 200
+        return probe_http.get(url, headers=_headers(api_key), timeout=probe_timeout(url, 0.8)).status_code == 200
     except Exception:  # noqa: BLE001 - a probe never raises
         return False
 
@@ -154,7 +156,7 @@ def context_window_for(model: str) -> Optional[int]:
 def _fetch(name: str, base: str, api_key: Optional[str]) -> list[dict[str, Any]]:
     headers = _headers(api_key)
     try:
-        listing = httpx.get(base + "/models", headers=headers, timeout=probe_timeout(base, 4.0)).json()
+        listing = probe_http.get(base + "/models", headers=headers, timeout=probe_timeout(base, 4.0)).json()
     except (httpx.HTTPError, ValueError, OSError):
         return []
     items = listing.get("data") if isinstance(listing, dict) else None
@@ -165,7 +167,7 @@ def _fetch(name: str, base: str, api_key: Optional[str]) -> list[dict[str, Any]]
         props = _lmstudio_catalog(base, headers)
     if name == "llamacpp":
         try:
-            got = httpx.get(base[: -len("/v1")] + "/props", headers=headers, timeout=4.0).json()
+            got = probe_http.get(base[: -len("/v1")] + "/props", headers=headers, timeout=probe_timeout(base, 4.0)).json()
             props = got if isinstance(got, dict) else {}
         except (httpx.HTTPError, ValueError, OSError):
             props = {}
@@ -188,7 +190,7 @@ def _lmstudio_catalog(base: str, headers: dict[str, str]) -> dict[str, Any]:
     (`max_context_length`) and the load state the OpenAI-compatible listing leaves out.
     Empty when the server does not answer it."""
     try:
-        got = httpx.get(base[: -len("/v1")] + "/api/v0/models", headers=headers, timeout=4.0).json()
+        got = probe_http.get(base[: -len("/v1")] + "/api/v0/models", headers=headers, timeout=probe_timeout(base, 4.0)).json()
     except (httpx.HTTPError, ValueError, OSError):
         return {}
     items = got.get("data") if isinstance(got, dict) else None
@@ -207,7 +209,7 @@ def _vllm_tools_on(base: str, headers: dict[str, str], model: str) -> Optional[b
         "tools": [{"type": "function", "function": {"name": "noop", "parameters": {"type": "object", "properties": {}}}}],
     }
     try:
-        resp = httpx.post(base + "/chat/completions", json=probe, headers=headers, timeout=30.0)
+        resp = probe_http.post(base + "/chat/completions", json=probe, headers=headers, timeout=30.0)
     except (httpx.HTTPError, OSError):
         return None
     if resp.status_code == 200:
