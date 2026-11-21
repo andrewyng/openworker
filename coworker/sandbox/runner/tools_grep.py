@@ -52,7 +52,13 @@ def grep(
     max_results: int = 100,
 ) -> dict[str, Any]:
     root = Path(workspace).resolve()
-    n = max_results if isinstance(max_results, int) and max_results > 0 else 100
+    n = (
+        max_results
+        if isinstance(max_results, int)
+        and not isinstance(max_results, bool)
+        and max_results > 0
+        else 100
+    )
     n = min(n, 1000)
     base = (root / (path or ".")).resolve()
     try:

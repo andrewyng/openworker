@@ -49,7 +49,9 @@ def list_files(
     extra_roots = [Path(str(r)).resolve() for r in (roots or [])]
     n = (
         max_results
-        if isinstance(max_results, int) and max_results > 0
+        if isinstance(max_results, int)
+        and not isinstance(max_results, bool)
+        and max_results > 0
         else _DEFAULT_MAX_RESULTS
     )
     n = min(n, _MAX_RESULTS_CAP)
@@ -92,10 +94,18 @@ def read_file(
     them resolves too."""
     root = Path(workspace).resolve()
     extra_roots = [Path(str(r)).resolve() for r in (roots or [])]
-    start = start_line if isinstance(start_line, int) and start_line > 0 else 1
+    start = (
+        start_line
+        if isinstance(start_line, int)
+        and not isinstance(start_line, bool)
+        and start_line > 0
+        else 1
+    )
     n = (
         max_lines
-        if isinstance(max_lines, int) and max_lines > 0
+        if isinstance(max_lines, int)
+        and not isinstance(max_lines, bool)
+        and max_lines > 0
         else _DEFAULT_MAX_LINES
     )
     n = min(n, _DEFAULT_MAX_LINES)
