@@ -24,6 +24,7 @@ ECHO_ENV = "echo $env:GREETING" if _WIN else "echo $GREETING"
 EXIT_OK = "cmd /c exit 0" if _WIN else "true"
 EXIT_FAIL = "cmd /c exit 1" if _WIN else "false"
 SLEEP_5 = "Start-Sleep -Seconds 5" if _WIN else "sleep 5"
+SLEEP_2 = "Start-Sleep -Seconds 2" if _WIN else "sleep 2"
 PWD = "(Get-Location).Path" if _WIN else "pwd"  # PowerShell's `pwd` is a table that cuts long paths
 PRINT_1000 = (
     'foreach ($i in 1..1000) { "line$i" }'
@@ -199,6 +200,16 @@ def test_timeout_kills_command(executor):
     assert elapsed < 4.0  # did not block for the full sleep
     # session survives the timeout — still usable (POSIX keeps the shell; Windows respawns)
     assert executor.run("echo alive")["output"].strip().endswith("alive")
+
+
+def test_run_shell_treats_a_bool_timeout_as_absent(executor):
+    # `bool` subclasses `int`, so True would read as a 1-second timeout and the command
+    # would be SIGINT-killed (exit 130, timed_out) instead of running to completion.
+    reg = ToolRegistry()
+    reg.register_all(shell_tools(executor))
+    out = reg.execute("run_shell", {"command": SLEEP_2, "timeout_seconds": True})
+    assert out["exit_code"] == 0
+    assert out["timed_out"] is False
 
 
 def test_large_output_truncated_keeps_tail(tmp_path):
