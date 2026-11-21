@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import re
 import shutil
 import threading
@@ -29,6 +30,54 @@ import aisuite as ai
 
 from ..secrets import state_dir
 from .base import Skill, _parse_skill
+
+logger = logging.getLogger(__name__)
+
+
+def _quarantine(path: Optional[Path]) -> Optional[Path]:
+    """Move an unreadable file aside so the next save cannot overwrite the only copy
+    of it. Returns the path it moved to, or None if the move failed."""
+    if not path:
+        return None
+    spare = path.with_suffix(path.suffix + ".corrupt")
+    try:
+        path.replace(spare)
+    except OSError:
+        return None
+    return spare
+
+
+def _refuse_file(path: Optional[Path], reason: str) -> None:
+    """Say out loud that a file could not be used, keeping its bytes aside.
+
+    Both stores here hold user choices (which skills a session muted; which skills
+    the user turned off), so dropping a file is NOT neutral — a silent empty read
+    re-enables everything the user disabled. The bytes are moved aside (never
+    deleted, never overwritten by a later save) and the reason is logged, the way
+    the risk-override, connection, parked and team stores do it.
+    """
+    message = f"{path}: {reason}"
+    spare = _quarantine(path)
+    if spare is not None:
+        message += f" (original kept at {spare})"
+    logger.warning(message)
+
+
+def _write_json(path: Path, data: dict) -> None:
+    """Persist `data` atomically: a sibling .tmp renamed over the real file, so a
+    crash mid-write leaves the previous complete file instead of a truncated one
+    (the mentions.py shape). OSError still propagates — only the .tmp is cleaned up."""
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        temporary.replace(path)
+    except OSError:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _MAX_NAME = 64
@@ -256,11 +305,29 @@ class SkillStore:
 
     # -- enable / disable (personal, survives restarts) -----------------------------
     def disabled_names(self) -> set[str]:
-        try:
-            data = json.loads(self._settings_path.read_text(encoding="utf-8"))
-            return {str(n) for n in data.get("disabled", [])}
-        except (OSError, ValueError):
+        """The skills the user turned off. An unreadable file is reported and its
+        bytes kept, not silently read as "nothing disabled" — that reading is what
+        used to re-enable every skill the user had turned off after one torn write."""
+        path = self._settings_path
+        if not path.is_file():
             return set()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as e:
+            _refuse_file(path, f"unreadable ({type(e).__name__})")
+            return set()
+        if not isinstance(data, dict):
+            _refuse_file(path, "not a JSON object")
+            return set()
+        raw = data.get("disabled")
+        if raw is None:
+            return set()
+        if not isinstance(raw, list):
+            # A string would be iterated into characters: "notalist" → {n,o,t,…},
+            # and the next save would persist those characters as real skill names.
+            _refuse_file(path, "'disabled' is not a JSON array")
+            return set()
+        return {str(n) for n in raw}
 
     def set_enabled(self, name: str, enabled: bool) -> None:
         name = validate_name(name)
@@ -270,11 +337,7 @@ class SkillStore:
                 disabled.discard(name)
             else:
                 disabled.add(name)
-            self._settings_path.parent.mkdir(parents=True, exist_ok=True)
-            self._settings_path.write_text(
-                json.dumps({"disabled": sorted(disabled)}, indent=2),
-                encoding="utf-8",
-            )
+            _write_json(self._settings_path, {"disabled": sorted(disabled)})
 
     # -- uploads: stage → preview → confirm -----------------------------------------
     def stage_upload(self, data: bytes, filename: str = "") -> dict[str, Any]:
@@ -414,23 +477,35 @@ class SessionSkillStore:
         self._load()
 
     def _load(self) -> None:
-        if self.path and self.path.is_file():
-            try:
-                data = json.loads(self.path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                return
-            self._rows = {
-                sid: {str(s): bool(v) for s, v in (row or {}).items()}
-                for sid, row in data.get("sessions", {}).items()
-            }
+        path = self.path
+        if not (path and path.is_file()):
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as e:
+            # A torn file must never block startup: SessionManager builds this store.
+            _refuse_file(path, f"unreadable ({type(e).__name__})")
+            return
+        if not isinstance(data, dict):
+            # Valid JSON of the wrong shape (`[]`, `null`, a string): `data.get`
+            # raises AttributeError out of the constructor the same way.
+            _refuse_file(path, "not a JSON object")
+            return
+        raw = data.get("sessions")
+        if raw is None:
+            return
+        if not isinstance(raw, dict):
+            _refuse_file(path, "'sessions' is not a JSON object")
+            return
+        self._rows = {
+            str(sid): {str(s): bool(v) for s, v in (row or {}).items()}
+            for sid, row in raw.items()
+        }
 
     def _save(self) -> None:
         if not self.path:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"sessions": self._rows}, indent=2), encoding="utf-8"
-        )
+        _write_json(self.path, {"sessions": self._rows})
 
     def get(self, session_id: str) -> dict[str, bool]:
         return dict(self._rows.get(session_id, {}))
