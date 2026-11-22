@@ -168,6 +168,34 @@ def test_a_patch_that_deletes_a_file_needs_a_delete_step(tmp_path):
     assert _m(tmp_path, [PlanStep("delete", "old.txt")], "apply_patch", {"patch": patch})
 
 
+_MOVE = (
+    "*** Begin Patch\n*** Update File: notes.md\n*** Move to: archive.md\n"
+    "@@\n-old\n+old\n*** End Patch"
+)
+
+
+def test_a_patch_that_moves_a_file_needs_a_delete_step(tmp_path):
+    """A move unlinks the original name, so the file the plan approved no longer exists.
+
+    `_PATCH_DELETE` only knows `*** Delete File:`, so a move's source arrived as an
+    ordinary write and two write steps covered it — no delete step, no card. A delete
+    step for the source is what the same removal costs when written as `Delete File`.
+    """
+    assert not _m(
+        tmp_path,
+        [PlanStep("write", "notes.md"), PlanStep("write", "archive.md")],
+        "apply_patch",
+        {"patch": _MOVE},
+    )
+    assert not _m(tmp_path, [PlanStep("write", "notes.md")], "apply_patch", {"patch": _MOVE})
+    assert _m(
+        tmp_path,
+        [PlanStep("delete", "notes.md"), PlanStep("write", "archive.md")],
+        "apply_patch",
+        {"patch": _MOVE},
+    )
+
+
 @pytest.mark.skipif(sys.platform not in ("win32", "darwin"), reason="case-insensitive file systems")
 def test_a_write_matches_regardless_of_case_where_the_disk_ignores_case(tmp_path):
     assert _m(tmp_path, [PlanStep("write", "Summary.TXT")], "write_file", {"path": "summary.txt", "content": "x"})
