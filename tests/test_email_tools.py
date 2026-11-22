@@ -239,6 +239,47 @@ def test_search_returns_newest_first_envelopes(tmp_path):
     assert all(sel[2] is True for sel in imap.commands if sel[0] == "select")
 
 
+def test_search_max_results_true_is_not_one_message(tmp_path):
+    """A JSON `true` reaches Python as True, and `bool` subclasses int — so
+    `int(max_results or 10)` used to clamp the search to ONE message."""
+    imap = FakeIMAP({"1": _multipart_message(), "2": _multipart_message()})
+    tools = _tools(_connected_secrets(tmp_path), imap=imap)
+    result = tools["email_search"](subject="report", max_results=True)
+    assert result["ok"] and len(result["messages"]) == 2
+
+
+def test_search_max_results_zero_is_not_the_default(tmp_path):
+    """`max_results or 10` swallowed 0: asking for nothing returned ten."""
+    imap = FakeIMAP({"1": _multipart_message(), "2": _multipart_message()})
+    tools = _tools(_connected_secrets(tmp_path), imap=imap)
+    result = tools["email_search"](subject="report", max_results=0)
+    assert result["ok"] and len(result["messages"]) == 1
+
+
+def test_search_max_results_unparsable_is_not_a_python_error(tmp_path):
+    """`int("abc")` raised out to the blanket `except Exception`, which handed
+    the model Python's own words — `invalid literal for int() ...` — instead of
+    a search."""
+    imap = FakeIMAP({"1": _multipart_message(), "2": _multipart_message()})
+    tools = _tools(_connected_secrets(tmp_path), imap=imap)
+    result = tools["email_search"](subject="report", max_results="abc")
+    assert result["ok"] and len(result["messages"]) == 2
+
+
+def test_search_max_results_values_that_already_worked(tmp_path):
+    """Controls: an ordinary count, an absent count, and the documented cap."""
+    imap = FakeIMAP({"1": _multipart_message(), "2": _multipart_message()})
+    tools = _tools(_connected_secrets(tmp_path), imap=imap)
+    assert len(tools["email_search"](subject="report", max_results=1)["messages"]) == 1
+    assert len(tools["email_search"](subject="report", max_results=None)["messages"]) == 2
+    assert len(tools["email_search"](subject="report")["messages"]) == 2
+
+    # the schema promises "max 25": 30 matches must come back as 25, not 30
+    many = FakeIMAP({str(i): _multipart_message() for i in range(1, 31)})
+    big = _tools(_connected_secrets(tmp_path), imap=many)
+    assert len(big["email_search"](subject="report", max_results=999)["messages"]) == 25
+
+
 def test_read_returns_body_and_attachment_list(tmp_path):
     imap = FakeIMAP({"7": _multipart_message()})
     tools = _tools(_connected_secrets(tmp_path), imap=imap)
