@@ -172,6 +172,7 @@ from ..inbox import VIS_INBOX, VIS_INLINE, args_preview
 from ..permissions import Mode
 from ..providers import AssistantTurn
 from .. import toolchain
+from ..memory.settings import _flag
 
 
 def _session_sandbox(engine: Any) -> dict[str, Any]:
@@ -1436,7 +1437,7 @@ def create_app(manager: SessionManager) -> FastAPI:
     def memory_settings_put(body: dict) -> dict[str, Any]:
         body = body or {}
         return manager.set_memory_settings(
-            enabled=bool(body["enabled"]) if "enabled" in body else None,
+            enabled=_flag(body["enabled"]) if "enabled" in body else None,
             user_rules=str(body["user_rules"]) if "user_rules" in body else None,
         )
 

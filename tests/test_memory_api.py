@@ -106,6 +106,16 @@ def test_settings_path_never_parses_as_memory_id(tmp_path):
     assert client.patch("/v1/memory/settings", json={"content": "x"}).status_code == 422
 
 
+def test_settings_put_string_false_is_off(tmp_path):
+    """`bool("false")` is True: a client sending the string "false" used to
+    turn memory ON. The flag policy (True/1/"true"/"1"/"yes") applies here too."""
+    client, _ = _fixture(tmp_path)
+    out = client.put("/v1/memory/settings", json={"enabled": "false"}).json()
+    assert out["enabled"] is False
+    out = client.put("/v1/memory/settings", json={"enabled": "yes"}).json()
+    assert out["enabled"] is True
+
+
 def test_user_rules_clamped_server_side(tmp_path):
     """Security: a hostile/buggy client can't inflate every future system prompt."""
     client, _ = _fixture(tmp_path)
