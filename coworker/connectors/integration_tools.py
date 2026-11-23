@@ -575,7 +575,22 @@ def _linear_gql(api_key: str, query: str, variables: dict[str, Any]) -> dict[str
 
 
 def _clamp(n: Any, default: int = 10, ceiling: int = 20) -> int:
-    return max(1, min(int(n or default), ceiling))
+    """A caller's page (or character) count, in ``1..ceiling``.
+
+    ``bool`` subclasses ``int``, so a JSON ``true`` reached ``int(True)`` == 1 —
+    one result, or one character of output — while ``0`` was swallowed by
+    ``n or default`` and returned the default instead of nothing. A bool is not
+    a count, so it falls back to the default (the same shape as
+    ``email_tools._search_limit``); every other value is converted and clamped,
+    so ``0`` and negatives come back as at least one.
+    """
+    if isinstance(n, bool):
+        return default
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(n, ceiling))
 
 
 def _qbo_base(profile: dict[str, Any]) -> str:
@@ -615,7 +630,7 @@ def make_integration_tools(
             secrets,
             "GET",
             f"/search/{kind}",
-            params={"q": query, "per_page": max(1, min(int(max_results or 10), 20))},
+            params={"q": query, "per_page": _clamp(max_results)},
         )
         if "error" in out:
             return out
@@ -774,7 +789,7 @@ def make_integration_tools(
         author: str = "",
         max_results: int = 30,
     ) -> dict[str, Any]:
-        params: dict[str, Any] = {"per_page": max(1, min(int(max_results or 30), 100))}
+        params: dict[str, Any] = {"per_page": _clamp(max_results, default=30, ceiling=100)}
         if since:
             params["since"] = since
         if until:
@@ -1107,7 +1122,7 @@ def make_integration_tools(
             "GET",
             "https://gmail.googleapis.com/gmail/v1/users/me/messages",
             headers=_google_headers(token),
-            params={"q": query, "maxResults": max(1, min(int(max_results or 10), 20))},
+            params={"q": query, "maxResults": _clamp(max_results)},
         )
         filters = _gmail_filters(secrets)
         if result.get("ok") and filters:
@@ -1276,7 +1291,7 @@ def make_integration_tools(
         params: dict[str, Any] = {
             "singleEvents": True,
             "orderBy": "startTime",
-            "maxResults": max(1, min(int(max_results or 10), 20)),
+            "maxResults": _clamp(max_results),
         }
         if time_min:
             params["timeMin"] = time_min
@@ -1737,7 +1752,7 @@ def make_integration_tools(
                     "startDateTime": start or now.strftime(fmt),
                     "endDateTime": end or (now + _dt.timedelta(days=7)).strftime(fmt),
                     "$orderby": "start/dateTime",
-                    "$top": max(1, min(int(max_results or 10), 50)),
+                    "$top": _clamp(max_results, ceiling=50),
                 },
             ),
         )
@@ -1980,7 +1995,7 @@ def make_integration_tools(
             "GET",
             f"{_atlassian_base(profile)}/rest/api/3/search",
             auth=_basic_auth(profile["email"], profile["api_token"]),
-            params={"jql": jql, "maxResults": max(1, min(int(max_results or 10), 20))},
+            params={"jql": jql, "maxResults": _clamp(max_results)},
         )
 
     jira_search_issues.__name__ = "jira_search_issues"
@@ -2083,7 +2098,7 @@ def make_integration_tools(
             auth=_basic_auth(profile["email"], profile["api_token"]),
             params={
                 "cql": f'text ~ "{query}"',
-                "limit": max(1, min(int(max_results or 10), 20)),
+                "limit": _clamp(max_results),
             },
         )
 
@@ -3122,7 +3137,7 @@ def make_integration_tools(
         if "error" in out:
             return out
         text = out["data"] if isinstance(out["data"], str) else str(out["data"])
-        cap = max(1, min(int(max_chars or 20000), 100000))
+        cap = _clamp(max_chars, default=20000, ceiling=100000)
         return {"path": path, "text": text[:cap], "truncated": len(text) > cap}
 
     dropbox_read_file.__name__ = "dropbox_read_file"
@@ -3200,7 +3215,7 @@ def make_integration_tools(
         if "error" in out:
             return out
         text = out["data"] if isinstance(out["data"], str) else str(out["data"])
-        cap = max(1, min(int(max_chars or 20000), 100000))
+        cap = _clamp(max_chars, default=20000, ceiling=100000)
         return {"file_id": file_id, "text": text[:cap], "truncated": len(text) > cap}
 
     box_read_file.__name__ = "box_read_file"
