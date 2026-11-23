@@ -618,3 +618,20 @@ def test_a_company_policy_manages_the_page(tmp_path):
     finally:
         obs.close()
         store.close()
+
+
+def test_put_settings_reads_the_record_flag_by_value(tmp_path):
+    """`bool("false")` is True: a body that stringified the record switch used
+    to START recording while the user was turning it off."""
+    obs = ex.ObservabilityExport(tmp_path, FakeSecrets(), RecordingStore(tmp_path / "r.db", background=False))
+    try:
+        code, answer = obs.put_settings({"record": "false"})
+        assert code == 200 and answer["ok"] is True
+        assert obs.settings.record is False
+
+        obs.put_settings({"record": "true"})
+        assert obs.settings.record is True
+        obs.put_settings({"record": "0"})
+        assert obs.settings.record is False
+    finally:
+        obs.store.close()

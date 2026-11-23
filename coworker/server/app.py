@@ -168,6 +168,7 @@ from ..attachment_workspace import materialize_pdf_attachments
 from ..engine import ApprovalOutcome
 from ..events import EventType
 from ..connectors import connector_list
+from ..flags import flag
 from ..inbox import VIS_INBOX, VIS_INLINE, args_preview
 from ..permissions import Mode
 from ..providers import AssistantTurn
@@ -692,10 +693,10 @@ def create_app(manager: SessionManager) -> FastAPI:
                 # Disable archives the persona's sessions atomically (server-side, one
                 # request) so any client gets the same semantic. See set_persona_enabled.
                 archived = manager.set_persona_enabled(
-                    persona_id, bool(body["enabled"])
+                    persona_id, flag(body["enabled"])
                 )["archived_sessions"]
             if "surfaced" in body:
-                reg.set_surfaced(persona_id, bool(body["surfaced"]))
+                reg.set_surfaced(persona_id, flag(body["surfaced"]))
             if body.get("default"):
                 reg.set_default(persona_id)
         except KeyError:
@@ -991,8 +992,8 @@ def create_app(manager: SessionManager) -> FastAPI:
         if "pinned" in body or "archived" in body:
             return manager.set_session_flags(
                 session_id,
-                pinned=bool(body["pinned"]) if "pinned" in body else None,
-                archived=bool(body["archived"]) if "archived" in body else None,
+                pinned=flag(body["pinned"]) if "pinned" in body else None,
+                archived=flag(body["archived"]) if "archived" in body else None,
             )
         return manager.rename_session(session_id, str(body.get("title", "")))
 

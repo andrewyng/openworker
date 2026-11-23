@@ -103,3 +103,18 @@ def test_removal_never_touches_a_dirty_worktree(repo):
     # The branch survives: unmerged work is never deleted with its folder.
     branches = subprocess.run(["git", "branch", "--list", info["branch"]], cwd=repo, capture_output=True, text=True).stdout
     assert info["branch"] in branches
+
+
+def test_validate_settings_reads_boolean_flags_by_value():
+    """`bool("false")` is True: a settings body that stringified its booleans
+    used to turn `fetch_first` ON when the user asked for off."""
+    assert wt.validate_settings({"fetch_first": "false"}) == {"fetch_first": False}
+    assert wt.validate_settings({"cleanup_on_archive": "false"}) == {
+        "cleanup_on_archive": False
+    }
+    assert wt.validate_settings({"fetch_first": "0"}) == {"fetch_first": False}
+    # real booleans and the on-strings still work
+    assert wt.validate_settings({"fetch_first": True}) == {"fetch_first": True}
+    assert wt.validate_settings({"cleanup_on_archive": "yes"}) == {
+        "cleanup_on_archive": True
+    }

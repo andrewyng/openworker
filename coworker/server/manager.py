@@ -32,6 +32,7 @@ from ..connections import (
     SessionConnectionStore,
     effective as effective_connections,
 )
+from ..flags import flag
 from ..inbox import KIND_APPROVAL, VIS_INBOX, InboxStore, args_preview
 from ..inbox_routing import InboxRouting
 from ..personas import PersonaRegistry
@@ -10405,7 +10406,7 @@ class SessionManager:
     def update_skill(self, name: str, body: dict[str, Any]) -> dict[str, Any]:
         try:
             if "enabled" in body:
-                self.skill_store.set_enabled(name, bool(body["enabled"]))
+                self.skill_store.set_enabled(name, flag(body["enabled"]))
             if body.get("description") is not None or body.get("instructions") is not None:
                 self.skill_store.update(
                     name,

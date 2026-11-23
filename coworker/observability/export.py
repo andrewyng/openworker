@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import urlparse
 
+from ..flags import flag
+
 from . import export_spans as spans_mod
 from .export_spans import Masker, _is_gap, build_turn_spans, encode_otlp, resource_attrs, switches_from
 
@@ -650,7 +652,7 @@ class ObservabilityExport:
         with self._lock:
             s = self.settings
             if "record" in body:
-                s.record = bool(body["record"])
+                s.record = flag(body["record"])
             if "retention_days" in body:
                 if body["retention_days"] not in RETENTION_CHOICES:
                     return 400, {"ok": False, "error": "retention_days must be 7, 30 or 90"}
