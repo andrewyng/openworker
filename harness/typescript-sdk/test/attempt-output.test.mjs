@@ -28,6 +28,9 @@ test("attempt projection scopes sessions and drops cancelled provisional output"
   assert.throws(()=>new AttemptOutput(0));
 });
 test("diagnostics expose only safe structured values",()=>{
+  for (const code of ["adapter_invalid_receipt", "adapter_outcome_unknown", "connection_refused"]) {
+    assert.equal(providerDiagnostic({category:"transport",retryable:false,code}).code, code);
+  }
   assert.deepEqual(providerDiagnostic({category:"authentication",retryable:false,http_status:401,request_id:"req_fixture",api:"anthropic",message:"SECRET",body:"SECRET"}),
     {category:"authentication",retryable:false,httpStatus:401,requestId:"req_fixture",api:"anthropic"});
   assert.equal(providerDiagnostic({category:"arbitrary secret",retryable:true}),undefined);

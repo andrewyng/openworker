@@ -39,6 +39,13 @@ pub struct Provider {
     pub base_url: String,
     pub api: Api,
     pub context_limit: usize,
+    #[serde(
+        default,
+        skip_serializing_if = "openworker_runtime::inference_options::InferenceOptions::is_empty"
+    )]
+    pub inference_options: openworker_runtime::inference_options::InferenceOptions,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub integrations: openworker_runtime::integrations::Settings,
 }
 impl Provider {
     pub fn endpoint(&self) -> openworker_runtime::connections::HostEndpoint {
@@ -47,8 +54,8 @@ impl Provider {
             allow_private_http: self.allow_private_http,
             api: self.api,
             base_url: self.base_url.clone(),
-            inference_options: Default::default(),
-            integrations: Default::default(),
+            inference_options: self.inference_options.clone(),
+            integrations: self.integrations.clone(),
         }
     }
     pub fn installation_id(&self) -> Result<String> {
@@ -73,6 +80,7 @@ impl Provider {
     }
     pub fn validate(&self) -> Result<()> {
         Choice::new(&self.name, "model").validate()?;
+        self.inference_options.validate()?;
         if self.allow_private_http {
             openworker_runtime::model_api::private_base_url(&self.base_url)?;
         } else {
@@ -305,5 +313,36 @@ impl PostgresStore {
                 .map(serde_json::from_value)
                 .transpose()?)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn managed_provider_options_are_pinned_and_empty_options_keep_existing_identity() {
+        let legacy = json!({
+            "name":"private-inference", "api":"chat-completions",
+            "baseUrl":"https://model.example/v1", "contextLimit":8192,
+        });
+        let original: Provider = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(json!(original), legacy);
+        let configured: Provider = serde_json::from_value(json!({
+            "name":"private-inference", "api":"chat-completions",
+            "baseUrl":"https://model.example/v1", "contextLimit":8192,
+            "inferenceOptions":{"body":{"deployment":"local"}},
+            "integrations":{"scheduler":{"enabled":true}},
+        }))
+        .unwrap();
+        let reloaded: Provider = serde_json::from_value(json!(configured)).unwrap();
+        reloaded.validate().unwrap();
+        let endpoint = reloaded.endpoint();
+        assert_eq!(endpoint.inference_options.body["deployment"], "local");
+        assert_eq!(endpoint.integrations["scheduler"], json!({"enabled":true}));
+        assert_ne!(
+            original.installation_id().unwrap(),
+            reloaded.installation_id().unwrap()
+        );
     }
 }

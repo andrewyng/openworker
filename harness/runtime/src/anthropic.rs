@@ -482,7 +482,7 @@ pub(crate) async fn request_with_adapter(
         .json(&body)
         .send()
         .await
-        .map_err(|_| Error::new(Failure::Transport))?;
+        .map_err(Error::request_failed)?;
     let status = response.status().as_u16();
     let request_id = crate::provider::request_id(response.headers(), key);
     let retry_after = response

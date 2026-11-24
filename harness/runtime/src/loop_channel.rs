@@ -34,6 +34,8 @@ struct ModelStart {
     pub summary: bool,
     pub api: crate::model_api::Api,
     pub base_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeouts: Option<crate::inference_options::ModelTimeouts>,
 }
 
 async fn frame(input: &mut (impl AsyncBufRead + Unpin)) -> Result<Option<Value>> {
@@ -198,6 +200,7 @@ pub async fn serve(
                     .sandbox_inference(
                         c.api,
                         &c.base_url,
+                        c.timeouts.clone(),
                         &cache.instructions,
                         &cache.history,
                         &cache.tools,
@@ -494,6 +497,12 @@ mod driver {
                     summary: model.budget_summary,
                     api: self.api,
                     base_url: self.base_url.clone(),
+                    timeouts: model
+                        .connection
+                        .as_ref()
+                        .map(|(manager, selection)| manager.inference_options(selection))
+                        .transpose()?
+                        .and_then(|options| options.timeouts),
                 };
                 wire.send(serde_json::to_value(start)?).await?;
                 let mut bytes = 0;

@@ -20,7 +20,8 @@ impl Observer for RecordingObserver {
             writeln!(
                 log,
                 "{}",
-                json!({"session":event.session_id,"state":event.state,"seq":event.sequence,"interaction":event.interaction_id})
+                json!({"session":event.session_id,"state":event.state,"seq":event.sequence,"interaction":event.interaction_id,
+                    "agent_context":event.agent_context.map(|c| json!({"agent_id":c.agent_id,"parent_agent_id":c.parent_agent_id,"root_agent_id":c.root_agent_id}))})
             )?;
             // Fail every delivery, including session creation and tool completion.
             anyhow::bail!("fixture observer unavailable")

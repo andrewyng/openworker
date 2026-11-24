@@ -25,7 +25,13 @@ pub use observation::{Gauge, Observation};
 /// strings. Reserved typed fields cannot be overridden via metadata strings.
 pub fn metadata_attribute(key: &str, value: &str) -> bool {
     attributes::field(key).is_some_and(|f| f.capture == attributes::CaptureClass::Metadata)
-        && !value.is_empty()
+        && bounded_identifier(value)
+        && (key != attributes::POLICY_DIGEST
+            || value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+fn bounded_identifier(value: &str) -> bool {
+    !value.is_empty()
         && value.len() <= 256
         && !value.starts_with('/')
         && !value.contains("://")
@@ -33,11 +39,10 @@ pub fn metadata_attribute(key: &str, value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"_-./:".contains(&b))
         && redact(value) == value
-        && (key != attributes::POLICY_DIGEST
-            || value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 pub fn export_attribute(key: &str, value: &str) -> bool {
     metadata_attribute(key, value)
+        || (key == attributes::MODEL_REQUEST_ID && bounded_identifier(value))
         || attributes::field(key)
             .is_some_and(|f| f.capture == attributes::CaptureClass::Full && value.len() <= 65539)
 }
@@ -722,6 +727,17 @@ impl Span {
                 r.output_tokens = usage.output;
                 r.usage_details = usage;
             }
+        }
+    }
+    /// Provider correlation uses a bounded identifier and never becomes a metric label.
+    pub fn model_request_id(&mut self, id: &str) {
+        if self
+            .record
+            .as_ref()
+            .is_some_and(|r| r.operation == Operation::Model)
+            && bounded_identifier(id)
+        {
+            self.push_attribute(attributes::MODEL_REQUEST_ID, id.to_owned());
         }
     }
     pub fn purpose(&mut self, purpose: ModelPurpose) {

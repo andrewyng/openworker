@@ -142,6 +142,10 @@ pub(crate) async fn register(
 ) -> Result<Json<Value>, ApiError> {
     r.provider.validate()?;
     check_static(&app.config, &r.provider.name)?;
+    app.runtime
+        .integrations
+        .validate_provider(&r.provider.name, &r.provider.integrations)
+        .map_err(|_| ApiError(SubmissionError::InvalidRequest.into()))?;
     let sealed = seal(&r.provider.name, r.api_key)?;
     Ok(Json(app.store.provider_put(
         r.provider,

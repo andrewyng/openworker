@@ -65,6 +65,8 @@ export interface ClusterModelProvider {
   api: "responses" | "chat-completions" | "anthropic";
   contextLimit: number;
   allowPrivateHttp?: boolean;
+  inferenceOptions?: import("./types.js").InferenceOptions;
+  integrations?: Record<string, import("./types.js").IntegrationOptions>;
 }
 export interface AgentRelease {
   integrations?: Record<string, import("./types.js").IntegrationOptions>;
@@ -524,6 +526,7 @@ export class Service {
   }
 
   registerModelProvider(provider: ClusterModelProvider, apiKey: string, options: MutationOptions = {}): Promise<ClusterModelProvider> {
+    validateIntegrationOptions(provider.integrations);
     return this.json("POST", "/v1/model-providers", {provider, apiKey}, options.idempotencyKey ?? randomUUID());
   }
 

@@ -612,9 +612,11 @@ impl Runtime {
         feedback: Option<&str>,
     ) -> Result<crate::provider::Completion> {
         let started = tokio::time::Instant::now();
+        let state = self.store.lock().unwrap().metadata(sid)?;
+        let generation_timeout = self.session_model(&state).timeouts()?.generation();
         let max_attempts = if summary { 1 } else { 3 };
         for number in 1..=max_attempts {
-            if started.elapsed().as_secs() >= 240 {
+            if started.elapsed() >= generation_timeout {
                 return Err(
                     crate::provider::Error::new(crate::provider::Failure::Transport).into(),
                 );
@@ -827,8 +829,11 @@ impl Runtime {
             }
 
             let event = self.store.lock().unwrap().start_attempt(sid, &id, number)?;
+            model.agent_context = Some(crate::provider_adapters::AgentContext::resolve(
+                &self.store,
+                &s,
+            )?);
             if !summary
-                && s.agent_team.is_none()
                 && model
                     .connection
                     .as_ref()
@@ -851,7 +856,7 @@ impl Runtime {
                     images.hydrate(sid, &attachment_history)
                 };
                 tokio::time::timeout(
-                    std::time::Duration::from_secs(240).saturating_sub(started.elapsed()),
+                    generation_timeout.saturating_sub(started.elapsed()),
                     async {
                         if let Some(binding) = &s.loop_environment {
                             #[cfg(not(windows))]
@@ -929,6 +934,11 @@ impl Runtime {
                             }
                         },
                         Some(Progress::Usage(u))=>{reported_output=u.output;},
+                        Some(Progress::ProviderMetadata(metadata))=>{
+                            let mut data=serde_json::to_value(metadata)?;
+                            data["attempt_id"]=json!(id);
+                            self.progress(sid,"model_route",data)?;
+                        },
                         Some(Progress::OutputStarted)=>{},
                         Some(Progress::Complete(r))=>{if completed.is_some(){bail!("Duplicate provider completion");}completed=Some(r);},
                         None=>closed=true
@@ -1029,7 +1039,7 @@ impl Runtime {
                     }
                     if number == max_attempts
                         || !failure.is_some_and(|e| e.retryable())
-                        || started.elapsed().as_secs() >= 240
+                        || started.elapsed() >= generation_timeout
                     {
                         return Err(error);
                     }
@@ -1045,9 +1055,10 @@ impl Runtime {
                         "model_retrying",
                         json!({"attempt_id":id,"next_attempt":number+1,"delay_ms":delay}),
                     )?;
-                    tokio::time::sleep(std::time::Duration::from_millis(delay).min(
-                        std::time::Duration::from_secs(240).saturating_sub(started.elapsed()),
-                    ))
+                    tokio::time::sleep(
+                        std::time::Duration::from_millis(delay)
+                            .min(generation_timeout.saturating_sub(started.elapsed())),
+                    )
                     .await;
                 }
             }
@@ -1202,6 +1213,10 @@ impl Runtime {
                 return Err(safety::Blocked.into());
             }
             let mut summarizer = self.session_model(&s);
+            summarizer.agent_context = Some(crate::provider_adapters::AgentContext::resolve(
+                &self.store,
+                &s,
+            )?);
             summarizer.content_withheld =
                 safety_config.enforces(crate::safety::Phase::ModelOutput, None);
             if let Some(model) = &cfg.summary_model {
@@ -3033,6 +3048,11 @@ impl Runtime {
                         match permissions::review_context(&s, &self.bundle, call) {
                             Ok(input) => match reviewer {
                                 Some(mut model) => {
+                                    model.agent_context =
+                                        Some(crate::provider_adapters::AgentContext::resolve(
+                                            &self.store,
+                                            &s,
+                                        )?);
                                     let safety_config = self.effective_safety(sid)?;
                                     let (_, blocked) = self
                                         .check_content(

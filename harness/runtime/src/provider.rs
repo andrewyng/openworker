@@ -124,6 +124,23 @@ impl Error {
             },
         }
     }
+    /// Classify a failure from sending the request. A refused connection
+    /// never reached the provider, even when an adapter owns the request.
+    pub fn request_failed(error: reqwest::Error) -> Self {
+        let mut source = std::error::Error::source(&error);
+        if error.is_connect() {
+            while let Some(cause) = source {
+                if cause
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionRefused)
+                {
+                    return Self::new(Failure::Transport).with_code("connection_refused");
+                }
+                source = cause.source();
+            }
+        }
+        Self::new(Failure::Transport)
+    }
     pub fn diagnostic(&self) -> Diagnostic {
         Diagnostic {
             category: self.kind,
@@ -197,6 +214,27 @@ pub struct ReasoningDelta {
 mod diagnostics_tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn distinguishes_connection_refusal_from_incomplete_response() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            drop(socket);
+        });
+        let url = format!("http://{addr}");
+        let disconnected = client.get(&url).send().await.unwrap_err();
+        server.await.unwrap();
+        assert_eq!(Error::request_failed(disconnected).code, None);
+        let refused = client.get(&url).send().await.unwrap_err();
+        assert_eq!(
+            Error::request_failed(refused).code,
+            Some("connection_refused")
+        );
+    }
+
     #[test]
     fn safe_diagnostics_exclude_credentials_and_unbounded_header_text() {
         let mut headers = reqwest::header::HeaderMap::new();
@@ -519,7 +557,7 @@ pub(crate) async fn request_decoded<D: StreamDecoder>(
         .json(&body)
         .send()
         .await
-        .map_err(|_| Error::new(Failure::Transport))?;
+        .map_err(Error::request_failed)?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
         let request_id = request_id(response.headers(), key);

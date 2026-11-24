@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 #[derive(Clone)]
@@ -8,6 +9,7 @@ pub struct Model {
     pub name: String,
     pub scripted: bool,
     pub session_sequence: Option<i64>,
+    pub agent_context: Option<crate::provider_adapters::AgentContext>,
     pub observation: Option<CallContext>,
     /// Withhold candidate bodies from exporters until runtime safety checks finish.
     pub content_withheld: bool,
@@ -44,6 +46,8 @@ pub enum Progress {
     OutputStarted,
     /// Latest cumulative provider snapshot, not a token increment.
     Usage(crate::telemetry::TokenUsage),
+    /// Bounded provider metadata after successful receipt and stream validation.
+    ProviderMetadata(crate::provider_adapters::AttemptAnnotations),
     Complete(crate::provider::Completion),
 }
 #[derive(Clone)]
@@ -56,6 +60,39 @@ pub struct CallContext {
     pub action: String,
     pub purpose: crate::telemetry::ModelPurpose,
     pub attempt: u32,
+}
+
+struct ModelAttemptSpan {
+    span: Option<openworker_telemetry::Span>,
+    annotations: crate::provider_adapters::AnnotationSlot,
+}
+impl ModelAttemptSpan {
+    fn attach_annotations(&mut self, success: bool) {
+        let Some(span) = &mut self.span else {
+            return;
+        };
+        let data = self.annotations.lock().unwrap();
+        if let Some(id) = &data.request_id {
+            span.model_request_id(id);
+        }
+        if success {
+            if let Some(route) = &data.route_locus {
+                span.metadata(openworker_telemetry::attributes::MODEL_ROUTE_LOCUS, route);
+            }
+            if let Some(model) = &data.response_model {
+                span.metadata(openworker_telemetry::attributes::RESPONSE_MODEL, model);
+            }
+        }
+    }
+    fn finish(mut self, outcome: crate::telemetry::Outcome) {
+        self.attach_annotations(outcome == crate::telemetry::Outcome::Ok);
+        self.span.take().unwrap().finish(outcome);
+    }
+}
+impl Drop for ModelAttemptSpan {
+    fn drop(&mut self) {
+        self.attach_annotations(false);
+    }
 }
 
 impl Model {
@@ -92,6 +129,15 @@ impl Model {
         }
         Ok(())
     }
+    fn options(&self) -> Result<crate::inference_options::InferenceOptions> {
+        Ok(match &self.connection {
+            Some((manager, selection)) => manager.inference_options(selection)?,
+            None => Default::default(),
+        })
+    }
+    pub(crate) fn timeouts(&self) -> Result<crate::inference_options::ModelTimeouts> {
+        Ok(self.options()?.timeouts.unwrap_or_default())
+    }
     pub fn with_provider(mut self, provider: crate::provider::Kind) -> Self {
         self.provider = provider;
         self
@@ -102,6 +148,7 @@ impl Model {
             name,
             scripted,
             session_sequence: None,
+            agent_context: None,
             observation: None,
             content_withheld: false,
             stream_reasoning: false,
@@ -256,7 +303,14 @@ impl Model {
         Fut: std::future::Future<Output = Result<()>>,
     {
         let Some(context) = self.observation.as_ref().filter(|c| c.telemetry.enabled()) else {
-            return request(tx).await;
+            let annotations: crate::provider_adapters::AnnotationSlot = Default::default();
+            let result = crate::provider_adapters::ATTEMPT_ANNOTATIONS
+                .scope(annotations.clone(), request(tx.clone()))
+                .await;
+            if result.is_ok() {
+                Self::emit_annotations(&tx, &annotations).await?;
+            }
+            return result;
         };
         let mut span = context.telemetry.span(
             crate::telemetry::Operation::Model,
@@ -273,8 +327,13 @@ impl Model {
         if !self.content_withheld {
             span.content_tail("gen_ai.prompt",||serde_json::to_string(&json!({"instructions":instructions,"history":public_items(&history[history.len().saturating_sub(20)..])})).unwrap_or_default());
         }
+        let mut observed = ModelAttemptSpan {
+            span: Some(span),
+            annotations: Default::default(),
+        };
         let (inner, mut rx) = mpsc::channel(32);
-        let future = request(inner);
+        let future = crate::provider_adapters::ATTEMPT_ANNOTATIONS
+            .scope(observed.annotations.clone(), request(inner));
         tokio::pin!(future);
         let mut finished = None;
         let mut closed = false;
@@ -288,18 +347,26 @@ impl Model {
                 continue;
             };
             match &progress {
-                Progress::Delta(text) if !text.is_empty() => span.first_output(),
-                Progress::Reasoning(delta) if !delta.text.is_empty() => span.first_output(),
-                Progress::OutputStarted => span.first_output(),
-                Progress::Usage(usage) => span.reported_usage(*usage),
+                Progress::Delta(text) if !text.is_empty() => {
+                    observed.span.as_mut().unwrap().first_output()
+                }
+                Progress::Reasoning(delta) if !delta.text.is_empty() => {
+                    observed.span.as_mut().unwrap().first_output()
+                }
+                Progress::OutputStarted => observed.span.as_mut().unwrap().first_output(),
+                Progress::Usage(usage) => observed.span.as_mut().unwrap().reported_usage(*usage),
                 Progress::Complete(completion) => {
                     if completed {
-                        span.finish(crate::telemetry::Outcome::Error);
+                        observed.finish(crate::telemetry::Outcome::Error);
                         bail!("Duplicate provider completion");
                     }
                     completed = true;
                     if let Some(usage) = &completion.usage {
-                        span.reported_usage(usage.reported());
+                        observed
+                            .span
+                            .as_mut()
+                            .unwrap()
+                            .reported_usage(usage.reported());
                     }
                     if completion.output.iter().any(|item| {
                         item["type"] == "function_call"
@@ -310,19 +377,23 @@ impl Model {
                                     })
                                 })
                     }) {
-                        span.first_output();
+                        observed.span.as_mut().unwrap().first_output();
                     }
                     if !self.content_withheld {
-                        span.content("gen_ai.completion", || {
-                            serde_json::to_string(&public_items(&completion.output))
-                                .unwrap_or_default()
-                        });
+                        observed
+                            .span
+                            .as_mut()
+                            .unwrap()
+                            .content("gen_ai.completion", || {
+                                serde_json::to_string(&public_items(&completion.output))
+                                    .unwrap_or_default()
+                            });
                     }
                 }
                 _ => {}
             }
             if tx.send(progress).await.is_err() {
-                span.finish(crate::telemetry::Outcome::Interrupted);
+                observed.finish(crate::telemetry::Outcome::Interrupted);
                 bail!("Model consumer closed");
             }
         }
@@ -333,12 +404,28 @@ impl Model {
                 Err(anyhow::anyhow!("Missing provider completion"))
             }
         });
-        span.finish(if result.is_ok() {
+        if result.is_ok() {
+            Self::emit_annotations(&tx, &observed.annotations).await?;
+        }
+        observed.finish(if result.is_ok() {
             crate::telemetry::Outcome::Ok
         } else {
             crate::telemetry::Outcome::Error
         });
         result
+    }
+    async fn emit_annotations(
+        tx: &mpsc::Sender<Progress>,
+        slot: &crate::provider_adapters::AnnotationSlot,
+    ) -> Result<()> {
+        let data = slot.lock().unwrap().sanitized();
+        if data.request_id.is_some() || data.route_locus.is_some() || data.response_model.is_some()
+        {
+            tx.send(Progress::ProviderMetadata(data))
+                .await
+                .map_err(|_| anyhow::anyhow!("Model consumer closed"))?;
+        }
+        Ok(())
     }
     #[allow(clippy::too_many_arguments)]
     async fn request_plain(
@@ -366,10 +453,7 @@ impl Model {
                 (api, format!("{}/{}", api.default_url(), api.path()))
             }
         };
-        let options = match &self.connection {
-            Some((manager, selection)) => manager.inference_options(selection)?,
-            None => Default::default(),
-        };
+        let options = self.options()?;
         let max_tokens = if let Some(limit) = self
             .connection
             .as_ref()
@@ -410,6 +494,7 @@ impl Model {
         &self,
         api: crate::model_api::Api,
         base: &str,
+        timeouts: Option<crate::inference_options::ModelTimeouts>,
         instructions: &str,
         history: &[Value],
         tools: &[Value],
@@ -425,10 +510,15 @@ impl Model {
             std::env::var(api.kind().key_env())
                 .context("Sandbox inference provider is not attached")?,
         );
+        let options = crate::inference_options::InferenceOptions {
+            timeouts,
+            ..Default::default()
+        };
+        options.validate()?;
         self.request_endpoint(
             api,
             &endpoint,
-            &Default::default(),
+            &options,
             instructions,
             history,
             tools,
@@ -482,10 +572,11 @@ impl Model {
         let client = builder
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(std::time::Duration::from_secs(15))
-            .timeout(std::time::Duration::from_secs(180))
+            .timeout(options.timeouts.clone().unwrap_or_default().request())
             .build()?;
         let provider_error = |e: crate::provider::Error| {
             if transport.is_some()
+                && e.code != Some("connection_refused")
                 && matches!(
                     e.kind,
                     crate::provider::Failure::Transport
@@ -515,6 +606,7 @@ impl Model {
                         a.prepare(
                             body,
                             crate::provider_adapters::Endpoint {
+                                agent_context: self.agent_context.as_ref(),
                                 api,
                                 url: &request_url,
                                 key,
@@ -524,6 +616,7 @@ impl Model {
                         )
                     })
                     .transpose()
+                    .map(|attempt| attempt.map(crate::provider_adapters::track))
             };
         if api == crate::model_api::Api::ChatCompletions {
             let binding = crate::chat_completions::replay_binding(
@@ -681,6 +774,13 @@ impl Model {
         self.text_response_usage(instructions, input, max_tokens, None)
             .await
     }
+    fn review_timeout(&self) -> Duration {
+        self.options()
+            .ok()
+            .and_then(|options| options.timeouts)
+            .map_or(Duration::from_secs(90), |timeouts| timeouts.request())
+    }
+
     pub async fn review_with_usage(
         &self,
         input: &str,
@@ -694,7 +794,7 @@ impl Model {
             return (self.review(input).await, Some(0));
         }
         match tokio::time::timeout(
-            std::time::Duration::from_secs(90),
+            self.review_timeout(),
             self.text_response_usage(
                 crate::permissions::REVIEW_INSTRUCTIONS,
                 input,
@@ -744,7 +844,7 @@ impl Model {
                 r=&mut request,if !finished=>{r?;finished=true;},
                 p=rx.recv(),if !closed=>match p {
                     Some(Progress::Complete(r))=>response=Some(r),
-                    Some(Progress::Delta(_)|Progress::Reasoning(_)|Progress::OutputStarted|Progress::Usage(_))=>{},None=>closed=true
+                    Some(Progress::Delta(_)|Progress::Reasoning(_)|Progress::OutputStarted|Progress::Usage(_)|Progress::ProviderMetadata(_))=>{},None=>closed=true
                 }
             }
         }
@@ -781,7 +881,7 @@ impl Model {
             );
         }
         match tokio::time::timeout(
-            std::time::Duration::from_secs(90),
+            self.review_timeout(),
             self.text_response(
                 REVIEW_INSTRUCTIONS,
                 input,
