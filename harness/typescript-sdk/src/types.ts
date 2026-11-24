@@ -154,8 +154,10 @@ export interface Agent extends ApplicationGuidance {
   approvals?: Approvals;
   /** Skip structured ask_user calls without changing tool approvals. */
   autoSkipQuestions?: boolean;
+  /** Reject outside-workspace first-party file operations before review. Defaults to false. */
+  neverAllowReadWriteOutsideWorkspace?: boolean;
   /** Existing arrays configure board workers; an object enables standalone children. */
-  subagents?: Agent[] | { enabled: boolean; maxConcurrent?: number; maxChildren?: number; limits?: TurnLimits };
+  subagents?: Agent[] | SubagentOptions;
   servers?: string;
   toolPolicy?: string;
   runtimePolicy?: string;
@@ -172,6 +174,14 @@ export interface Model {
 }
 export interface ComplianceOptions { retentionDays?: number; maxPendingEvents?:number }
 export interface ComplianceQuery { after?: number; limit?: number; kind?: string; outcome?: string }
+export interface SubagentOptions {
+  enabled: boolean;
+  maxConcurrent?: number;
+  maxChildren?: number;
+  limits?: TurnLimits;
+  creationGrant?: { maxCreations: number; tools: string[]; workspace?: { read?: string[]; write?: string[] } };
+}
+
 export interface SessionOptions extends SafetyOptions, ApplicationGuidance {
   integrations?: Record<string, IntegrationOptions>;
   /** Completed portable transcript only. Imported calls never execute. */
@@ -344,7 +354,7 @@ export interface ApprovalDecision {
   interactionId: string;
   callId: string;
   tool: string;
-  origin: "reviewer" | "human" | "app_policy" | "session_grant" | "hard_policy" | "bypass";
+  origin: "reviewer" | "human" | "app_policy" | "session_grant" | "subagent_creation_grant" | "workspace_read_grant" | "workspace_write_grant" | "hard_policy" | "bypass";
   verdict: "allow" | "deny" | "unsure";
   /** Bounded released display context; may be unavailable or withheld. */
   reason?: string;
@@ -463,7 +473,7 @@ export class HarnessError extends Error {
 export function agentDefinitionConflict(value: unknown): {reason: "agent_definition_conflict"; agentId: string; conflictingFields: string[]} | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const v = value as Record<string, unknown>;
-  const fields = ["name","description","instructions","limits","builtin_tools","tools","model","provider","fallback_model","planning","memory","memory_scope","scheduling","approvals","auto_skip_questions","auto_approver_context","compaction","subagents","standalone_subagents","servers","tool_policy","runtime_policy"];
+  const fields = ["name","description","instructions","limits","builtin_tools","tools","model","provider","fallback_model","planning","memory","memory_scope","scheduling","approvals","auto_skip_questions","never_allow_read_write_outside_workspace","auto_approver_context","compaction","subagents","standalone_subagents","servers","tool_policy","runtime_policy"];
   if (typeof v.agent_id !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(v.agent_id) || !Array.isArray(v.conflicting_fields) || v.conflicting_fields.length === 0 || v.conflicting_fields.length > fields.length || v.conflicting_fields.some(f => typeof f !== "string" || !fields.includes(f))) return undefined;
   return {reason: "agent_definition_conflict", agentId: v.agent_id, conflictingFields: [...v.conflicting_fields] as string[]};
 }

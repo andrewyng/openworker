@@ -33,6 +33,8 @@ pub struct Profile {
     pub approval_mode: openworker_runtime::permissions::Mode,
     #[serde(default)]
     pub auto_skip_questions: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub never_allow_read_write_outside_workspace: bool,
     /// Versioned operator-installed grant, never a credential or model input.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_access: Option<String>,
@@ -88,6 +90,8 @@ impl Profile {
                     .all(|root| lead.allow_workspace_reads.contains(root))
                 && self.approval_mode == lead.approval_mode
                 && self.auto_skip_questions == lead.auto_skip_questions
+                && (!lead.never_allow_read_write_outside_workspace
+                    || self.never_allow_read_write_outside_workspace)
                 && (self.git_access.is_none() || self.git_access == lead.git_access)
                 && (self.repository_access.is_none()
                     || self.repository_access == lead.repository_access),
@@ -1289,6 +1293,21 @@ impl crate::db::Database {
 #[cfg(test)]
 mod placement_tests {
     use super::*;
+    #[test]
+    fn workspace_only_profile_defaults_to_false_and_cannot_be_loosened_by_a_child() {
+        let definition = json!({"id":"tools@1","cpu":1,"memoryMB":512,"provider":"openshell","sharing":"exclusive"});
+        let default: Profile = serde_json::from_value(definition).unwrap();
+        assert!(!default.never_allow_read_write_outside_workspace);
+        assert!(json!(default)
+            .get("neverAllowReadWriteOutsideWorkspace")
+            .is_none());
+        let mut strict = default.clone();
+        strict.never_allow_read_write_outside_workspace = true;
+        assert_eq!(json!(strict)["neverAllowReadWriteOutsideWorkspace"], true);
+        assert!(strict.require_delegatable_from(&default).is_ok());
+        assert!(default.require_delegatable_from(&strict).is_err());
+    }
+
     #[test]
     fn profile_defaults_preserve_catalog_digests_and_delegation() {
         let old = json!({"id":"tools@1","cpu":1,"memoryMB":512,"provider":"openshell","sharing":"exclusive"});

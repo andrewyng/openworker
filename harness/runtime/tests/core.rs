@@ -19,6 +19,7 @@ fn session() -> Session {
         environment: None,
         loop_environment: None,
         allow_workspace_reads: vec![],
+        allow_workspace_writes: vec![],
         managed_workspace: None,
         storage_revision: 0,
         approval_grants: vec![],

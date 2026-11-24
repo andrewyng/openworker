@@ -63,7 +63,7 @@ function approvalDecisionOf(value: unknown): import("./types.js").ApprovalDecisi
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const v = record(value);
   if (!["interaction_id", "call_id", "tool"].every(k => typeof v[k] === "string") ||
-      !["reviewer", "human", "app_policy", "session_grant", "hard_policy", "bypass"].includes(String(v.origin)) ||
+      !["reviewer", "human", "app_policy", "session_grant", "subagent_creation_grant", "workspace_read_grant", "workspace_write_grant", "hard_policy", "bypass"].includes(String(v.origin)) ||
       !["allow", "deny", "unsure"].includes(String(v.verdict))) return undefined;
   const reason = typeof v.reason === "string" && [...v.reason].length <= 512 ? v.reason : undefined;
   return {

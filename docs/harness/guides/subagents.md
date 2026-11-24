@@ -53,6 +53,33 @@ cancel a running child or close it. A completed child can accept follow-up work;
 explicitly cancelled or closed children do not automatically resume. Creation uses
 normal approval policy and does not approve subsequent child tools.
 
+An app can preapprove a limited number of creations per parent session with
+`creationGrant`. The requested tools must be in both the grant and the parent's
+delegation ceiling. When the grant is exhausted, the normal approval policy
+applies. Retrying the same successful creation uses the existing child.
+
+```typescript
+subagents: {
+  enabled: true,
+  creationGrant: {
+    maxCreations: 3,
+    tools: ["coding.read_file", "coding.write_file"],
+    workspace: { read: ["docs"], write: ["reports/"] },
+  },
+}
+```
+
+In Rust, set `SubagentOptions::creation_grant` to a `SubagentCreationGrant`.
+With `workspace.read`, first-party file reads under the listed directories
+can skip approval for children created through the grant. Use `"."` for the
+workspace root. `workspace.write` preapproves single-file writes and edits
+through the first-party Unix coding runner. Other calls, including shell
+commands, follow the configured approval policy.
+
+A child using OpenShell can request a one-time decision for a file outside
+the workspace when the LLM reviewer is enabled and the app permits outside
+file calls. See [file access outside the workspace](tools.md#file-access-outside-the-workspace).
+
 Children initially share the parent's workspace and sandbox; assign separate
 paths for concurrent edits. Service profiles must allow a shared environment.
 Defaults allow four active children and 32 retained child identities. Shared scope

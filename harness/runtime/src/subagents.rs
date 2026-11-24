@@ -29,7 +29,31 @@ pub struct Config {
     pub max_children: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<crate::budget::Limits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_grant: Option<CreationGrant>,
 }
+
+/// An app grants approval to create a bounded number of helpers in each
+/// parent session. The children's own tool calls retain normal approvals.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreationGrant {
+    pub max_creations: u16,
+    pub tools: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<WorkspaceGrant>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceGrant {
+    #[serde(default)]
+    pub read: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub write: Vec<String>,
+}
+
+pub(crate) const CREATION_GRANT: &str = "subagent_creation_grant";
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -37,6 +61,7 @@ impl Default for Config {
             max_concurrent: concurrent(),
             max_children: children(),
             limits: None,
+            creation_grant: None,
         }
     }
 }
@@ -54,6 +79,16 @@ impl Config {
                 && self.max_concurrent <= self.max_children,
             "Require 1..32 retained children and 1..maxChildren concurrent children"
         );
+        if let Some(grant) = &self.creation_grant {
+            ensure!(
+                self.enabled && (1..=self.max_children).contains(&grant.max_creations),
+                "A creation grant requires sub-agents and 1..maxChildren creations"
+            );
+            if let Some(workspace) = &grant.workspace {
+                crate::permissions::validate_child_workspace_roots(&workspace.read)?;
+                crate::permissions::validate_child_workspace_roots(&workspace.write)?;
+            }
+        }
         if let Some(limits) = &self.limits {
             limits.validate()?;
         }
@@ -134,12 +169,18 @@ use std::collections::BTreeMap;
 pub struct ChildPolicy {
     pub safety: crate::safety::Config,
     pub compliance: Option<crate::compliance::Config>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspace_reads: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspace_writes: Vec<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State {
     pub config: Config,
     #[serde(default)]
     pub requests: BTreeMap<String, Create>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    granted_creations: BTreeSet<String>,
     #[serde(default)]
     pub policies: BTreeMap<String, ChildPolicy>,
     #[serde(default)]
@@ -164,10 +205,18 @@ impl State {
             .context("Missing standalone child request")?;
         self.policies.get(id).context("Missing pinned child policy")
     }
+    fn covers_creation(&self, request: &Create) -> bool {
+        self.config.creation_grant.as_ref().is_some_and(|grant| {
+            self.granted_creations.len() < usize::from(grant.max_creations)
+                && request.tools.iter().all(|tool| grant.tools.contains(tool))
+        })
+    }
+
     pub fn new(config: Config) -> Self {
         Self {
             config,
             requests: BTreeMap::new(),
+            granted_creations: BTreeSet::new(),
             policies: BTreeMap::new(),
             parent_spans: BTreeMap::new(),
             completed: BTreeMap::new(),
@@ -237,7 +286,10 @@ pub fn prepare(tx: &mut dyn Transaction, s: &mut Session, args: &Value, now: u64
         state.active.len() < usize::from(state.config.max_concurrent),
         "Concurrent child capacity reached; wait for a child to finish"
     );
-    crate::agent_team::apply(tx, s, "type_prepare", &json!(request.definition()), now)
+    let mut result =
+        crate::agent_team::apply(tx, s, "type_prepare", &json!(request.definition()), now)?;
+    result["creation_grant"] = json!(state.covers_creation(&request));
+    Ok(result)
 }
 // Never present the previous successful output as the result of a failed follow-up.
 pub fn result(tx: &mut dyn Transaction, doc: &Document, id: &str) -> Result<Value> {
@@ -302,8 +354,22 @@ pub fn execute(
     match operation {
         CREATE => {
             let request: Create = serde_json::from_value(args.clone())?;
-            let existing = prepare(tx, s, args, now)?["existing"] == true;
-            if !existing {
+            let prepared = prepare(tx, s, args, now)?;
+            if prepared["existing"] != true {
+                let turn = s.turn.as_ref().context("Missing creation turn")?;
+                let call = turn.queue.first().context("Missing queued creation")?;
+                let granted = s
+                    .interactions
+                    .iter()
+                    .rev()
+                    .find(|interaction| interaction.turn_id == turn.id && interaction.call == *call)
+                    .is_some_and(|interaction| {
+                        interaction.origin.as_deref() == Some(CREATION_GRANT)
+                    });
+                ensure!(
+                    !granted || prepared["creation_grant"] == true,
+                    "Creation grant exhausted or outside its scope"
+                );
                 let definition = request.definition();
                 let resolved =
                     crate::agent_team::apply(tx, s, "type_resolve", &json!(definition), now)?;
@@ -324,6 +390,12 @@ pub fn execute(
                         .parent_spans
                         .insert(request.agent_id.clone(), observation.last_segment);
                 }
+                let workspace = state
+                    .config
+                    .creation_grant
+                    .as_ref()
+                    .filter(|_| granted)
+                    .and_then(|grant| grant.workspace.as_ref());
                 state.policies.insert(
                     request.agent_id.clone(),
                     ChildPolicy {
@@ -334,8 +406,17 @@ pub fn execute(
                                 .unwrap_or_default(),
                         )?,
                         compliance: s.compliance.clone(),
+                        workspace_reads: workspace
+                            .map(|scope| scope.read.clone())
+                            .unwrap_or_default(),
+                        workspace_writes: workspace
+                            .map(|scope| scope.write.clone())
+                            .unwrap_or_default(),
                     },
                 );
+                if granted {
+                    state.granted_creations.insert(request.agent_id.clone());
+                }
                 state.active.insert(request.agent_id.clone());
                 state
                     .requests

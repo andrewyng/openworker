@@ -246,7 +246,14 @@ async fn prepare(
     if let Some(m) = &team.lead.reviewer_selection {
         args["reviewer_model"] = json!(Choice::new(&m.connection, &m.model))
     }
-    let result = rt.prepare_session(args);
+    let result = rt.prepare_session(args).and_then(|mut session| {
+        if let Some(standalone) = &team.document.standalone {
+            let policy = standalone.policy_for_type(&record.binding.definition().name)?;
+            session.allow_workspace_reads = policy.workspace_reads.clone();
+            session.allow_workspace_writes = policy.workspace_writes.clone();
+        }
+        Ok(session)
+    });
     rt.shutdown().await?;
     result
 }

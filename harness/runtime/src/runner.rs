@@ -33,6 +33,22 @@ pub fn relative_path(relative: &str) -> Result<&Path> {
     }
     Ok(p)
 }
+pub(crate) fn reviewed_file_path(path: &str) -> Result<&str> {
+    let relative = path
+        .strip_prefix('/')
+        .context("Absolute file path required")?;
+    anyhow::ensure!(
+        !relative.contains(['\\', ':'])
+            && !relative.chars().any(char::is_control)
+            && relative
+                .split('/')
+                .all(|part| !matches!(part, "" | "." | "..")),
+        "Expected a single absolute file without traversal"
+    );
+    relative_path(relative)?;
+    Ok(relative)
+}
+
 pub fn path(root: &Path, relative: &str) -> Result<PathBuf> {
     let p = relative_path(relative)?;
     let mut target = root.to_owned();

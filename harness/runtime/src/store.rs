@@ -108,6 +108,8 @@ pub struct Session {
     pub loop_environment: Option<crate::environment::Binding>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allow_workspace_reads: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_workspace_writes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
     #[serde(

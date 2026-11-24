@@ -620,7 +620,11 @@ async fn finish_ready_admission(
     let mut parameters = json!({
         "coworker":runtime.coworker(), "workspace":"/sandbox", "environment_id":op.environment_id,
         "name":input.name.as_ref().unwrap_or(&op.release_id),
-        "permissions":{"mode":profile.approval_mode,"auto_skip_questions":profile.auto_skip_questions},
+        "permissions":{
+            "mode":profile.approval_mode,
+            "auto_skip_questions":profile.auto_skip_questions,
+            "never_allow_read_write_outside_workspace":profile.never_allow_read_write_outside_workspace
+        },
         "integrations":input.integrations, "compaction":configured.configuration.compaction
     });
     if let Some(reference) = &input.workspace_id {
