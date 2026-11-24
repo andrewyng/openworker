@@ -165,6 +165,8 @@ pub struct Agent {
     pub(crate) approvals: Approvals,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) auto_skip_questions: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) never_allow_read_write_outside_workspace: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) auto_approver_context: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -214,6 +216,7 @@ impl Agent {
             scheduling: false,
             approvals: Approvals::default(),
             auto_skip_questions: false,
+            never_allow_read_write_outside_workspace: false,
             auto_approver_context: None,
             compaction: None,
             subagents: vec![],
@@ -326,6 +329,11 @@ impl Agent {
     /// Enable bounded schedules driven by the SDK host while it runs.
     pub fn scheduling(mut self, enabled: bool) -> Self {
         self.scheduling = enabled;
+        self
+    }
+    /// Reject outside-workspace first-party file operations before review.
+    pub fn never_allow_read_write_outside_workspace(mut self, enabled: bool) -> Self {
+        self.never_allow_read_write_outside_workspace = enabled;
         self
     }
     /// Return a recorded "no human answer available" result instead of parking
@@ -468,7 +476,10 @@ impl Agent {
 }
 
 /// Configuration for model-created standalone children.
-pub use openworker_runtime::subagents::Config as SubagentOptions;
+pub use openworker_runtime::subagents::{
+    Config as SubagentOptions, CreationGrant as SubagentCreationGrant,
+    WorkspaceGrant as SubagentWorkspaceGrant,
+};
 
 #[cfg(test)]
 mod tool_free_tests {

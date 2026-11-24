@@ -39,6 +39,8 @@ export interface RuntimeProfile {
   allowWorkspaceReads?: string[];
   approvalMode?: "ask" | "auto-approve" | "bypass";
   autoSkipQuestions?: boolean;
+  /** Reject outside-workspace first-party file operations before review. Defaults to false. */
+  neverAllowReadWriteOutsideWorkspace?: boolean;
   /** Versioned operator-installed OpenShell Git grant; never a token. */
   gitAccess?: string;
   /** Trusted host repository broker; does not grant agent-side Git credentials. */
@@ -66,7 +68,7 @@ export interface ClusterModelProvider {
 }
 export interface AgentRelease {
   integrations?: Record<string, import("./types.js").IntegrationOptions>;
-  subagents?: { enabled: boolean; maxConcurrent?: number; maxChildren?: number; limits?: TurnLimits };
+  subagents?: import("./types.js").SubagentOptions;
   limits?: TurnLimits;
   id: string;
   instructions: string;

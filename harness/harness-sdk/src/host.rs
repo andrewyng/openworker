@@ -758,7 +758,8 @@ impl Host {
                 .as_ref()
                 .is_some_and(|t| t.id == tid && !terminal(&t.status))
             {
-                self.runtime(&s.coworker)?
+                self.runtime_for_session(&s)
+                    .await?
                     .dispatch("turn/cancel", json!({"session_id":sid,"turn_id":tid}))
                     .await?;
             }
@@ -768,11 +769,12 @@ impl Host {
             if s.closed {
                 continue;
             }
-            let rt = self.runtime(&s.coworker)?;
+            let rt = self.runtime_for_session(&s).await?;
             if let Some(parent_id) = &s.sandbox_parent {
                 let parent = self.store.lock().unwrap().metadata(parent_id)?;
                 if !parent.closed && parent.sandbox.is_none() {
-                    self.runtime(&parent.coworker)?
+                    self.runtime_for_session(&parent)
+                        .await?
                         .prepare_shared_subagent_sandbox(parent_id)
                         .await?;
                 }
@@ -861,7 +863,18 @@ impl Host {
                     }
                     let runtime_type =
                         openworker_runtime::agent_team::runtime_type(&doc, &instance)?;
-                    let child_rt = self.runtime(&runtime_type)?;
+                    let child_rt = match self.runtime(&runtime_type) {
+                        Ok(runtime) => runtime,
+                        Err(_) => {
+                            // The lead can approve and reserve a child after this tick's
+                            // initial registration refresh. The fresh snapshot above has
+                            // already validated the exact approved type.
+                            self.refresh_named_types(std::slice::from_ref(&s)).await?;
+                            self.runtime(&runtime_type).context(
+                                "Pending child runtime did not register from its approved type",
+                            )?
+                        }
+                    };
                     let Some(workspace) = self.prepare_named_workspace(&s, &doc, &instance).await?
                     else {
                         continue;
@@ -888,7 +901,12 @@ impl Host {
                             .get(&runtime_type)
                             .cloned()
                             .context("Registered team type missing")?;
-                        parameters["permissions"] = json!({"mode":definition.approvals.mode(),"auto_skip_questions":definition.auto_skip_questions});
+                        parameters["permissions"] = json!({
+                            "mode":definition.approvals.mode(),
+                            "auto_skip_questions":definition.auto_skip_questions,
+                            "never_allow_read_write_outside_workspace": definition.never_allow_read_write_outside_workspace
+                                || s.permissions.never_allow_read_write_outside_workspace
+                        });
                         if let Some(standalone) = &doc.standalone {
                             let policy = standalone
                                 .policies
@@ -926,6 +944,14 @@ impl Host {
                                 .prepare_shared_subagent_sandbox(&s.id)
                                 .await?;
                             child.sandbox_parent = Some(s.id.clone());
+                        }
+                        if let Some(policy) = doc
+                            .standalone
+                            .as_ref()
+                            .and_then(|standalone| standalone.policies.get(&instance.agent_id))
+                        {
+                            child.allow_workspace_reads = policy.workspace_reads.clone();
+                            child.allow_workspace_writes = policy.workspace_writes.clone();
                         }
                         child.id = instance.session_id.clone();
                         // Read back the immutable acknowledgement saved by the

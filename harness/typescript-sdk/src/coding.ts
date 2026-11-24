@@ -10,6 +10,7 @@ export interface CodingOptions {
   defaultModel?:Model;
   approvals?:Approvals;
   autoSkipQuestions?:boolean;
+  neverAllowReadWriteOutsideWorkspace?:boolean;
   limits?:TurnLimits;
 }
 function role(name:string,kind:"single"|"lead"|"builder"|"verifier"|"isolated_lead"|"isolated_builder"|"isolated_verifier",options:CodingOptions={}):AgentDefinition {
@@ -41,7 +42,8 @@ export function codingRelease(agent:AgentDefinition,version:string,profile:Runti
   }
   const mode=agent.approvals?.mode??"always";
   const expected=mode==="never"?"bypass":mode==="auto"||mode==="reviewer"?"auto-approve":"ask";
-  if(agent.servers || agent.toolPolicy || agent.runtimePolicy || agent.planning!==true || agent.memory || agent.memoryScope || agent.scheduling || (Array.isArray(agent.subagents) && agent.subagents.length) || mode==="only" || expected!==(profile.approvalMode??"ask") || (agent.autoSkipQuestions??false)!==(profile.autoSkipQuestions??false))throw Error("Service release must match the installed coding bundle and RuntimeProfile");
+  if(agent.servers || agent.toolPolicy || agent.runtimePolicy || agent.planning!==true || agent.memory || agent.memoryScope || agent.scheduling || (Array.isArray(agent.subagents) && agent.subagents.length) || mode==="only" || expected!==(profile.approvalMode??"ask") || (agent.autoSkipQuestions??false)!==(profile.autoSkipQuestions??false) ||
+    (agent.neverAllowReadWriteOutsideWorkspace&&!profile.neverAllowReadWriteOutsideWorkspace))throw Error("Service release must match the installed coding bundle and RuntimeProfile");
   if(!/^[a-zA-Z0-9_.-]{1,64}$/.test(version))throw Error("Invalid release version");
   return {id:`${agent.name}@${version}`,instructions:agent.instructions,tools:[...agent.tools],runtimeProfiles:[profile.id],defaultRuntimeProfile:profile.id,allowedPrincipals:profile.allowedPrincipals,
     integrations:agent.integrations,

@@ -53,6 +53,7 @@ const FIELDS: &[&str] = &[
     "scheduling",
     "approvals",
     "auto_skip_questions",
+    "never_allow_read_write_outside_workspace",
     "auto_approver_context",
     "compaction",
     "subagents",

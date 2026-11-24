@@ -1589,6 +1589,7 @@ impl Runtime {
             environment,
             loop_environment: None,
             allow_workspace_reads: vec![],
+            allow_workspace_writes: vec![],
             managed_workspace: None,
             storage_revision: 0,
             approval_grants: vec![],
@@ -2813,6 +2814,16 @@ impl Runtime {
                 if s.schema_digest.as_ref().is_some_and(|h|h!=&hash){bail!("Tool catalogs/routes changed; refusing execution");}
                 s.schema_digest=Some(hash);Ok(())
             })?;
+            // Only the model-facing guidance changes. Keep the stored tool
+            // identity stable for existing sessions and pending approvals.
+            for tool in &mut tools {
+                if tool["name"].as_str().is_some_and(|alias| {
+                    permissions::can_review_external_file(&self.bundle, &s, alias)
+                }) {
+                    let description = tool["description"].as_str().unwrap_or_default();
+                    tool["description"] = json!(format!("{description} An exact absolute path in this OpenShell sandbox is also accepted for individual review."));
+                }
+            }
             Ok::<_, anyhow::Error>((clients, tools))
         };
         tokio::select! {biased;
@@ -2970,7 +2981,7 @@ impl Runtime {
             hard_denial = Some(e.to_string());
             i.response = Some("deny".into());
             i.origin = Some("hard_policy".into());
-        } else if s.environment.is_some()
+        } else if (cfg!(unix) || s.workspace_id.is_some() || s.environment.is_some())
             && permissions::native_tool(&self.bundle, alias) == Some("read_file")
             && args["path"]
                 .as_str()
@@ -2978,9 +2989,24 @@ impl Runtime {
         {
             i.response = Some("once".into());
             i.origin = Some("workspace_read_grant".into());
+        } else if permissions::granted_write_directory(&self.bundle, &s, alias, &args).is_some() {
+            i.response = Some("once".into());
+            i.origin = Some("workspace_write_grant".into());
+        } else if alias == crate::subagents::CREATE
+            && !batch
+            && self
+                .store
+                .lock()
+                .unwrap()
+                .agent_team(sid, "subagent_prepare", &args, None)?["creation_grant"]
+                == true
+        {
+            i.response = Some("once".into());
+            i.origin = Some(crate::subagents::CREATION_GRANT.into());
         } else if let Some(grant) = s.approval_grants.iter().find(|g| {
             alias != crate::team_type_catalog::TOOL
                 && alias != crate::subagents::CREATE
+                && permissions::external_file(&self.bundle, alias, &args).is_none()
                 && s.permissions.mode != Mode::Bypass
                 && g.matches(&s, alias, &self.bundle)
         }) {
@@ -3276,8 +3302,21 @@ impl Runtime {
                     .and_then(Value::as_str)
                     .is_some_and(|p| std::path::Path::new(p).is_absolute())
                 {
-                    self.reject_unexecuted(sid,call,"invalid_tool_path","File paths must be workspace-relative. No action executed. Correct the path within the granted workspace; access restrictions still apply.",true)?;
-                    continue;
+                    let checked = permissions::external_file(&self.bundle, alias, &args)
+                        .context("This tool requires a workspace-relative path")
+                        .and_then(|path| {
+                            permissions::check_external_file(&self.bundle, &s, alias, path)
+                        });
+                    if let Err(error) = checked {
+                        self.reject_unexecuted(
+                            sid,
+                            call,
+                            "invalid_tool_path",
+                            &error.to_string(),
+                            true,
+                        )?;
+                        continue;
+                    }
                 }
                 let check_name = self.safety_tool_name(alias);
                 let safety_config = self.effective_safety(sid)?;
@@ -3573,6 +3612,19 @@ impl Runtime {
                     {
                         bail!("Approval binding mismatch");
                     }
+                    let external_file =
+                        permissions::external_file(&self.bundle, alias, &args).is_some();
+                    if external_file {
+                        ensure!(
+                            interaction.call == *call
+                                && matches!(
+                                    interaction.origin.as_deref(),
+                                    Some("reviewer" | "human")
+                                )
+                                && response == "once",
+                            "External file access requires an exact reviewer or human decision"
+                        );
+                    }
                     let backend = s.tool_backend(interaction.server.as_deref());
                     let workspace_tool = s.workspace_id.is_some() && interaction.server.is_some();
                     let tool_backend = if workspace_tool {
@@ -3668,11 +3720,28 @@ impl Runtime {
                                 self.call_native(sid, call, &binding.tool, args.clone())
                                     .await?
                             } else {
-                                let request=if workspace_tool && interaction.origin.as_deref()==Some("workspace_read_grant") {
+                                let request=if external_file {
+                                    let name = match binding.tool.as_str() {
+                                        "read_file" => "read_reviewed_file",
+                                        "write_file" => "write_reviewed_file",
+                                        "edit_file" => "edit_reviewed_file",
+                                        _ => bail!("Unexpected reviewed file operation"),
+                                    };
+                                    json!({"name":name,"arguments":args})
+                                }else if interaction.origin.as_deref()==Some("workspace_write_grant") {
+                                    ensure!(interaction.call==*call,"Workspace write approval changed");
+                                    let directory=permissions::granted_write_directory(&self.bundle,&s,alias,&args).context("Workspace write grant expired")?;
+                                    json!({"name":format!("{}_under",binding.tool),"arguments":{"directory":directory,"operation":args}})
+                                }else if workspace_tool && interaction.origin.as_deref()==Some("workspace_read_grant") {
                                     let path=args["path"].as_str().context("Workspace read path missing")?;
                                     let directory=s.allow_workspace_reads.iter().find(|root|permissions::granted_read_path(std::slice::from_ref(root),path)).context("Workspace read grant expired")?;
                                     ensure!(binding.tool=="read_file","Scoped grant tool changed");
-                                    json!({"name":"read_file_under","arguments":{"path":path,"directory":directory}})
+                                    let directory=directory.strip_suffix('/').unwrap_or(directory);
+                                    if directory == "." {
+                                        json!({"name":"read_file","arguments":args})
+                                    } else {
+                                        json!({"name":"read_file_under","arguments":{"path":path,"directory":directory}})
+                                    }
                                 }else{json!({"name":binding.tool,"arguments":args})};
                                 clients
                                     .get(&binding.server)
@@ -4234,6 +4303,13 @@ impl Runtime {
                 bail!("Only once, session or deny is supported");
             }
             ensure!((i.call["name"] != crate::team_type_catalog::TOOL && i.call["name"] != crate::subagents::CREATE) || d != "session", "Approve this exact type definition once; whole-tool session grants cannot approve definitions");
+            if let (Some(alias), Some(args)) = (i.call["name"].as_str(), i.call["arguments"].as_str()) {
+                let args: Value = serde_json::from_str(args)?;
+                if permissions::external_file(&self.bundle, alias, &args).is_some() {
+                    ensure!(d == "deny" || (d == "once" && origin == "human"),
+                        "An external file may only be approved for this exact request");
+                }
+            }
             d
         } else {
             let answer = text(p, "answer", 4000)?;

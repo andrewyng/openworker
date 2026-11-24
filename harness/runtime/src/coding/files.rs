@@ -185,54 +185,100 @@ fn files(root: &Path, args: &Value) -> Result<(Vec<PathBuf>, bool)> {
     out.sort();
     Ok((out, truncated))
 }
+pub(super) fn read(root: &Path, relative: &str, args: &Value) -> Result<Value> {
+    let content = String::from_utf8(crate::runner::read_workspace_file(
+        root,
+        relative,
+        MAX_FILE as usize,
+    )?)?;
+    let offset = args["offset"].as_u64().unwrap_or(0).min(usize::MAX as u64) as usize;
+    let limit = args["limit"].as_u64().unwrap_or(200) as usize;
+    let all: Vec<_> = content.lines().collect();
+    let mut lines = vec![];
+    let mut bytes = 0;
+    let mut clipped = false;
+    for line in all.iter().skip(offset).take(limit) {
+        let part: String = line.chars().take(4000).collect();
+        let size = serde_json::to_string(&part)?.len();
+        if bytes + size > 24000 {
+            break;
+        }
+        clipped |= part.len() < line.len();
+        bytes += size;
+        lines.push(part);
+    }
+    Ok(
+        json!({"path":args["path"],"sha256":hash(&content),"offset":offset,"lines":lines,"total_lines":all.len(),"long_lines_truncated":clipped,"truncated":offset.saturating_add(lines.len()) < all.len()}),
+    )
+}
+
+fn write_content(
+    name: &str,
+    args: &Value,
+    read: impl FnOnce() -> Result<String>,
+) -> Result<String> {
+    if name == "edit_file" {
+        let current = read()?;
+        expected(args, &current)?;
+        let old = bounded(args, "old_text", MAX_FILE as usize)?;
+        ensure!(
+            !old.is_empty() && current.matches(&old).count() == 1,
+            "old_text must match exactly once"
+        );
+        Ok(current.replacen(&old, &bounded(args, "new_text", MAX_FILE as usize)?, 1))
+    } else {
+        if args.get("expected_sha256").is_some() {
+            expected(args, &read()?)?;
+        }
+        bounded(args, "content", MAX_FILE as usize)
+    }
+}
+
+#[cfg(unix)]
+pub(super) fn scoped_write(root: &Path, op: &str, args: &Value, directory: &str) -> Result<Value> {
+    let relative = args["path"].as_str().context("Path required")?;
+    ensure!(relative != LOCK, "Reserved coding lock file");
+    let _lock = edit_lock(root)?;
+    let target = super::scoped_file::Target::open(root, relative, directory, op == "write_file")?;
+    write_target(target, op, args)
+}
+
+#[cfg(unix)]
+pub(super) fn reviewed_write(
+    workspace: &Path,
+    op: &str,
+    relative: &str,
+    args: &Value,
+) -> Result<Value> {
+    ensure!(
+        Path::new(relative)
+            .file_name()
+            .is_some_and(|name| name != LOCK),
+        "Reserved coding lock file"
+    );
+    let _lock = edit_lock(workspace)?;
+    // Approval covers a single file. Creating another directory needs independent authority.
+    let target = super::scoped_file::Target::open(Path::new("/"), relative, ".", false)?;
+    write_target(target, op, args)
+}
+
+#[cfg(unix)]
+fn write_target(target: super::scoped_file::Target, op: &str, args: &Value) -> Result<Value> {
+    let content = write_content(op, args, || target.read(MAX_FILE as usize))?;
+    ensure!(content.len() <= MAX_FILE as usize, "File exceeds 1 MiB");
+    target.write(&content, args["create_only"] == true)?;
+    Ok(json!({"path":args["path"],"bytes":content.len(),"sha256":hash(&content),"written":true}))
+}
+
 pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value> {
     match name {
-        "read_file" => {
-            let content = String::from_utf8(crate::runner::read_workspace_file(
-                root,
-                args["path"].as_str().context("Path required")?,
-                MAX_FILE as usize,
-            )?)?;
-            let offset = args["offset"].as_u64().unwrap_or(0).min(usize::MAX as u64) as usize;
-            let limit = args["limit"].as_u64().unwrap_or(200) as usize;
-            let all: Vec<_> = content.lines().collect();
-            let mut lines = vec![];
-            let mut bytes = 0;
-            let mut clipped = false;
-            for line in all.iter().skip(offset).take(limit) {
-                let part: String = line.chars().take(4000).collect();
-                let size = serde_json::to_string(&part)?.len();
-                if bytes + size > 24000 {
-                    break;
-                }
-                clipped |= part.len() < line.len();
-                bytes += size;
-                lines.push(part);
-            }
-            Ok(
-                json!({"path":args["path"],"sha256":hash(&content),"offset":offset,"lines":lines,"total_lines":all.len(),"long_lines_truncated":clipped,"truncated":offset.saturating_add(lines.len()) < all.len()}),
-            )
-        }
+        "read_file" => read(root, args["path"].as_str().context("Path required")?, args),
         "write_file" | "edit_file" => {
             let relative = args["path"].as_str().context("Path required")?;
             ensure!(relative != LOCK, "Reserved coding lock file");
             let _lock = edit_lock(root)?;
             let p = crate::runner::path(root, relative)?;
-            let content = if name == "edit_file" {
-                let current = text(&p)?;
-                expected(args, &current)?;
-                let old = bounded(args, "old_text", MAX_FILE as usize)?;
-                ensure!(
-                    !old.is_empty() && current.matches(&old).count() == 1,
-                    "old_text must match exactly once"
-                );
-                current.replacen(&old, &bounded(args, "new_text", MAX_FILE as usize)?, 1)
-            } else {
-                if args.get("expected_sha256").is_some() {
-                    expected(args, &text(&p)?)?;
-                }
-                bounded(args, "content", MAX_FILE as usize)?
-            };
+            let content = write_content(name, args, || text(&p))?;
             write(root, relative, &content, args["create_only"] == true)?;
             Ok(
                 json!({"path":relative,"bytes":content.len(),"sha256":hash(&content),"written":true}),

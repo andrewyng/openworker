@@ -19,6 +19,8 @@ pub enum Mode {
 pub struct Config {
     pub mode: Mode,
     pub auto_skip_questions: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub never_allow_read_write_outside_workspace: bool,
 }
 
 /// Roots are portable, explicit relative directories. Never match a string prefix.
@@ -38,12 +40,56 @@ fn valid_read_path(path: &str) -> bool {
         && path.split('/').all(|part| !matches!(part, "" | "." | ".."))
 }
 
+pub(crate) fn validate_child_workspace_roots(roots: &[String]) -> Result<()> {
+    anyhow::ensure!(
+        roots.len() <= 32,
+        "Too many child workspace directory grants"
+    );
+    anyhow::ensure!(
+        roots.iter().all(|root| {
+            let root = root.strip_suffix('/').unwrap_or(root);
+            root == "." || (root.len() <= 512 && valid_read_path(root))
+        }),
+        "Invalid child workspace directory"
+    );
+    Ok(())
+}
+
 pub fn granted_read_path(roots: &[String], path: &str) -> bool {
-    valid_read_path(path)
-        && roots.iter().any(|root| {
-            path.strip_prefix(root)
-                .is_some_and(|tail| tail.starts_with('/'))
-        })
+    roots
+        .iter()
+        .any(|root| under_workspace_directory(root, path))
+}
+
+pub(crate) fn under_workspace_directory(root: &str, path: &str) -> bool {
+    let root = root.strip_suffix('/').unwrap_or(root);
+    !root.is_empty()
+        && valid_read_path(path)
+        && (root == "."
+            || path
+                .strip_prefix(root)
+                .is_some_and(|tail| tail.starts_with('/')))
+}
+
+pub(crate) fn granted_write_directory<'a>(
+    bundle: &Bundle,
+    session: &'a Session,
+    alias: &str,
+    args: &Value,
+) -> Option<&'a str> {
+    if !cfg!(unix)
+        || session.workspace_id.is_some()
+        || !trusted_coding_tool(bundle, alias)
+        || !matches!(native_tool(bundle, alias), Some("write_file" | "edit_file"))
+    {
+        return None;
+    }
+    let path = args["path"].as_str()?;
+    session
+        .allow_workspace_writes
+        .iter()
+        .find(|root| under_workspace_directory(root, path))
+        .map(String::as_str)
 }
 
 /// Human-owned whole-tool grant. Arguments may vary; access floors do not.
@@ -146,6 +192,66 @@ pub fn hard_check(bundle: &Bundle, workspace: &str, alias: &str, args: &Value) -
     Ok(())
 }
 
+fn trusted_coding_tool(bundle: &Bundle, alias: &str) -> bool {
+    bundle
+        .tools
+        .bindings
+        .get(alias)
+        .and_then(|binding| bundle.tools.servers.get(&binding.server))
+        .is_some_and(|server| {
+            server.program == "$OPENWORKER"
+                && server.args == ["mcp-coding", "--workspace", "$WORKSPACE"]
+        })
+}
+
+/// Recognize a first-party file operation proposing an absolute path.
+fn reviewable_file_operation(bundle: &Bundle, alias: &str) -> Option<&'static str> {
+    if !trusted_coding_tool(bundle, alias) {
+        return None;
+    }
+    match native_tool(bundle, alias) {
+        Some("read_file") => Some("read"),
+        Some("write_file") => Some("write"),
+        Some("edit_file") => Some("edit"),
+        _ => None,
+    }
+}
+
+pub(crate) fn external_file<'a>(bundle: &Bundle, alias: &str, args: &'a Value) -> Option<&'a str> {
+    reviewable_file_operation(bundle, alias)?;
+    args["path"]
+        .as_str()
+        .filter(|path| Path::new(path).is_absolute())
+}
+
+pub(crate) fn can_review_external_file(bundle: &Bundle, session: &Session, alias: &str) -> bool {
+    cfg!(unix)
+        && !session.permissions.never_allow_read_write_outside_workspace
+        && session.permissions.mode == Mode::AutoApprove
+        && session.workspace_id.is_none()
+        && reviewable_file_operation(bundle, alias).is_some()
+        && session.tool_backend(Some(&bundle.tools.bindings[alias].server))
+            == crate::execution::Backend::Openshell
+}
+
+pub(crate) fn check_external_file(
+    bundle: &Bundle,
+    session: &Session,
+    alias: &str,
+    path: &str,
+) -> Result<()> {
+    anyhow::ensure!(
+        !session.permissions.never_allow_read_write_outside_workspace,
+        "The application restricts file access to the workspace"
+    );
+    anyhow::ensure!(
+        can_review_external_file(bundle, session, alias),
+        "External file access requires the LLM reviewer and an OpenShell sandbox"
+    );
+    crate::runner::reviewed_file_path(path)?;
+    Ok(())
+}
+
 /// Worker-local stat calls cannot inspect a remote filesystem. Validate the
 /// portable path here; the remote runner repeats filesystem checks under the
 /// provider's kernel policy. Never treat this as a remote symlink check.
@@ -155,6 +261,9 @@ pub fn hard_check_session(
     alias: &str,
     args: &Value,
 ) -> Result<()> {
+    if let Some(path) = external_file(bundle, alias, args) {
+        return check_external_file(bundle, session, alias, path);
+    }
     hard_check_execution(
         bundle,
         &session.workspace,
@@ -261,6 +370,8 @@ pub fn approval_decision(event: &crate::store::Event) -> Option<ApprovalDecision
                 "app_policy",
                 "session_grant",
                 "workspace_read_grant",
+                "workspace_write_grant",
+                crate::subagents::CREATION_GRANT,
                 "hard_policy",
                 "bypass",
             ]
@@ -430,6 +541,15 @@ pub fn review_context(s: &Session, bundle: &Bundle, call: &Value) -> Result<Stri
     let mut input = json!({"user_inputs":user_inputs,"collaborator_inputs":collaborator_inputs,
         "runtime_facts":{"workspace":s.workspace,"sandbox":backend,"enforcement":backend.enforcement(),"network":if backend==crate::execution::Backend::Off {"host-access-unrestricted-by-harness"}else if s.resource_policy.network.is_empty(){"deny-all"}else{"explicit-destinations"},"resources":s.resource_policy.context(),"category":classification.map_or_else(||classify(bundle,alias),|c|c.category),"classification":classification,"tool_policy_digest":s.tool_policy.digest,"question_dispositions":question_dispositions},
         "proposed_action":{"call_id":call["call_id"],"alias":alias,"server":remote.map(|b| &b.server),"remote_tool":remote.map(|b| &b.tool),"arguments":arguments}});
+    if let Some(path) = external_file(bundle, alias, &arguments) {
+        input["runtime_facts"]["path_scope"] =
+            json!("absolute_path_outside_workspace_relative_scope");
+        input["runtime_facts"]["external_file_action"] = json!({
+            "path": path,
+            "operation": reviewable_file_operation(bundle, alias),
+            "note": "The file request is outside the workspace-relative scope and needs a decision for this exact call."
+        });
+    }
     if let (Some(id), Some(_)) = (&s.workspace_id, remote) {
         let facts = &mut input["runtime_facts"];
         facts["workspace"] = json!(id);
@@ -569,5 +689,15 @@ mod directory_grants {
         for path in ["src/link", "src/parent/secret"] {
             assert!(crate::runner::read_workspace_file(root.path(), path, 24).is_err());
         }
+        let canonical = root.path().canonicalize().unwrap();
+        let file = canonical.join("secret");
+        let relative = crate::runner::reviewed_file_path(file.to_str().unwrap()).unwrap();
+        assert_eq!(
+            crate::runner::read_workspace_file(Path::new("/"), relative, 24).unwrap(),
+            b"private"
+        );
+        let link = canonical.join("src/link");
+        let relative = crate::runner::reviewed_file_path(link.to_str().unwrap()).unwrap();
+        assert!(crate::runner::read_workspace_file(Path::new("/"), relative, 24).is_err());
     }
 }

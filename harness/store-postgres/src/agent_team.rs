@@ -652,6 +652,9 @@ impl crate::PostgresStore {
             let profile:crate::service_catalog::Profile=serde_json::from_value(profile_entry.definition)?;
             ensure!(profile_entry.activated && release.runtime_profiles.contains(&profile_id),"Delegated RuntimeProfile unavailable");
             crate::service_catalog::allowed(&identity,&profile.allowed_principals)?;
+            child.permissions.never_allow_read_write_outside_workspace |=
+                lead_session.permissions.never_allow_read_write_outside_workspace
+                    || profile.never_allow_read_write_outside_workspace;
             Ok(identity)
             })();
             let identity=match authorization {

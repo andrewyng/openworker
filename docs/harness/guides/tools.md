@@ -122,6 +122,23 @@ For external services, keep endpoints and credentials in trusted registration
 configuration. Guardrails may inspect selected arguments/results, and authorization
 still runs before execution. See [Guardrails guide](guardrails.md).
 
+## File access outside the workspace
+
+Set `neverAllowReadWriteOutsideWorkspace: true` on a TypeScript agent or
+cluster `RuntimeProfile` to reject outside-workspace file calls before approval.
+In Rust, use `Agent::never_allow_read_write_outside_workspace(true)` or the
+matching runtime profile field. The default is `false` with and without OpenShell.
+A child inherits a stricter setting from its parent.
+
+With OpenShell and the LLM reviewer enabled, the first-party
+`coding.read_file`, `coding.write_file` and `coding.edit_file` tools can request
+an exact absolute path. The reviewer sees the path, operation and that it falls
+outside the workspace-relative scope. Approval covers one call and is subject
+to the sandbox filesystem policy. Outside writes require an existing parent
+directory. Unsandboxed built-in file tools and workspace-provider file tools
+continue to use workspace-relative paths. Shell commands use the execution
+environment's filesystem policy.
+
 ## Correlate tool activity in your UI
 
 Each application callback receives a call ID: `context.callId` in TypeScript or
