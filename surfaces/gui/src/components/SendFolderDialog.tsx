@@ -47,7 +47,8 @@ export function SendFolderDialog({ coworkerName, machine, onPick, onTemp, onCanc
   };
 
   const browse = async () => {
-    const picked = await chooseFolder();
+    setError("");
+    const picked = await chooseFolder(() => setError(t("folder_gate.picker_unavailable")));
     if (picked) await pick(picked);
   };
 
@@ -131,7 +132,7 @@ export function SendFolderDialog({ coworkerName, machine, onPick, onTemp, onCanc
             {machine ? t("onmachine.folder.use_temp", { machine: machine.name }) : t("folder_gate.use_temp")}
           </button>
         </div>
-        {error && <div className="mt-2 text-meta text-warnInk">{error}</div>}
+        {error && <div role="alert" className="mt-2 text-meta text-warnInk">{error}</div>}
         <p className="text-label text-faint mt-2.5">
           {machine
             ? t("onmachine.folder.temp_note", { machine: machine.name })

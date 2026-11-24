@@ -80,6 +80,25 @@ test("gated coworker: Choose a folder… binds the picked project and sends", as
   await expect(page.getByTestId("session-title")).toHaveAttribute("title", /picked-folder/);
 });
 
+test("an unavailable native workspace picker shows an error", async ({ page }) => {
+  await page.route("**/v1/workspaces/pick", async (route) => {
+    await route.fulfill({ json: { ok: false, error: "no native folder picker available" } });
+  });
+  await page.goto("/");
+  await newDraftAs(page, /Security Coworker/);
+
+  await page.getByTestId("folder-chip").click();
+  const menu = page.locator(".setup-menu");
+  await menu.getByRole("button", { name: "Choose a folder…" }).click();
+  await expect(menu.getByRole("alert")).toContainText("The folder picker is unavailable.");
+  await page.mouse.click(10, 10); // scrim click closes the menu
+  await page.getByPlaceholder(/Ask the coworker/).fill("hello repo");
+  await page.getByRole("button", { name: "Send" }).click();
+  const dialog = page.getByTestId("send-folder-dialog");
+  await dialog.getByRole("button", { name: "Choose a folder…" }).click();
+  await expect(dialog.getByRole("alert")).toContainText("The folder picker is unavailable.");
+});
+
 test("escape restores the draft instead of losing it", async ({ page }) => {
   await page.goto("/");
   await newDraftAs(page, /Security Coworker/);

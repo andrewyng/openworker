@@ -1072,6 +1072,7 @@
   },
   "folder_gate": {
     "open_error": "could not open that folder",
+    "picker_unavailable": "The folder picker is unavailable. If the local server runs on Linux, check that Zenity is installed.",
     "choose_folder": "Choose a project folder",
     "create_sub": "Pick a folder or enter a path. If the path doesn't exist, it will be created.",
     "choose_sub": "This coworker needs a workspace to read, edit, and run in.",
