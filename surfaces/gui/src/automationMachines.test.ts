@@ -9,6 +9,11 @@ const task = (id: string) => ({ id, title: id, instructions: "", schedule: "", w
   enabled: true, next_run: null, last_run: null, last_status: null, run_count: 0, notify_on_completion: false,
   always_allowed: [] });
 
+const run = {
+  run_id: "run-1", task_id: "task-r", session_id: "__run__run-1", started_at: 100,
+  finished_at: 110, status: "ok", result_text: null, artifacts: [], error: null, trigger: "schedule",
+};
+
 describe("automations on joined machines", () => {
   it("lists remote automations with their machine and routes their calls there", async () => {
     const urls: string[] = [];
@@ -21,7 +26,7 @@ describe("automations on joined machines", () => {
       } else if (url.includes("/v1/machines/m1/p/v1/automations/task-r/run")) {
         body = { ok: true, run_id: "run-9", session_id: "__run__run-9", workspace: "", agent: "cowork", prompt: "go" };
       } else if (url.includes("/v1/machines/m1/p/v1/automations/task-r")) {
-        body = { task: task("task-r"), runs: [{ run_id: "run-1", session_id: "__run__run-1" }] };
+        body = { task: task("task-r"), runs: [run] };
       } else if (url.includes("/v1/machines/m1/p/v1/automations")) {
         body = { tasks: [task("task-r")] };
       } else {
@@ -39,5 +44,46 @@ describe("automations on joined machines", () => {
     expect(machineOfSession("__run__run-1")).toBe("m1");
     await runAutomation("task-r");
     expect(machineOfSession("__run__run-9")).toBe("m1");
+  });
+
+  it.each([
+    { outage: "returns an error", remoteId: "task-remote-error", connected: true },
+    { outage: "is disconnected", remoteId: "task-remote-disconnected", connected: false },
+  ])("can retry discovery when an unknown remote task's machine $outage", async ({ remoteId, connected }) => {
+    const remoteTask = task(remoteId);
+    let available = false;
+    vi.stubGlobal("fetch", async (url: string) => {
+      const path = new URL(url).pathname;
+      const response = (body: object, status = 200) => new Response(JSON.stringify(body), { status });
+      if (path === "/v1/machines") {
+        return response({ machines: [{ id: "m1", name: "remote", connected: available || connected }] });
+      }
+      if (path === "/v1/machines/m1/p/v1/automations") {
+        return available ? response({ tasks: [remoteTask] }) : response({ error: "unavailable" }, 503);
+      }
+      if (path === `/v1/machines/m1/p/v1/automations/${remoteId}`) return response({ task: remoteTask, runs: [] });
+      if (path === `/v1/automations/${remoteId}`) return response({ error: "not found" });
+      return response({ tasks: [] });
+    });
+
+    await expect(getAutomation(remoteId)).rejects.toThrow();
+    available = true;
+    await expect(getAutomation(remoteId)).resolves.toMatchObject({ task: { id: remoteId, machine_id: "m1" } });
+  });
+});
+
+describe("automation detail responses", () => {
+  it.each([
+    { task: {} },
+    { task: "unknown" },
+    { task: task("some-other-task") },
+    { task: task("task-detail"), runs: {} },
+    { task: task("task-detail"), runs: [{ run_id: "wrong-shape" }] },
+  ])("rejects a malformed success response %#", async (body) => {
+    vi.stubGlobal("fetch", async (url: string) => {
+      const data = url.endsWith("/v1/automations/task-detail") ? body : {};
+      return new Response(JSON.stringify(data));
+    });
+    await expect(getAutomation("task-detail")).rejects.toThrow();
   });
 });

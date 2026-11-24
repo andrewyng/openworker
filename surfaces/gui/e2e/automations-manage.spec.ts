@@ -18,6 +18,27 @@ test("lists a scheduled task with its schedule and run count", async ({ page }) 
   await expect(card).toContainText("last running");
 });
 
+test("a failed detail stays retriable until it loads", async ({ page }) => {
+  let attempts = 0;
+  await page.route("**/v1/automations/task-1", (route) => {
+    attempts += 1;
+    if (attempts === 1) return route.abort("failed");
+    if (attempts === 2) return route.fulfill({ status: 500, json: { error: "temporary failure" } });
+    return route.fallback();
+  });
+
+  await openAutomations(page);
+  await page.locator(".sched-card", { hasText: "Daily AI News" }).click();
+  const error = page.getByRole("alert").filter({ hasText: "Could not load this automation." });
+  const retry = page.getByRole("button", { name: "Try again" });
+  await expect(error).toBeVisible();
+  await retry.click();
+  await expect(error).toBeVisible();
+  await retry.click();
+  await expect(page.getByRole("heading", { name: "Daily AI News" })).toBeVisible();
+  await expect(error).toHaveCount(0);
+});
+
 test("Run now triggers a manual run and opens its live session", async ({ page }) => {
   await openAutomations(page);
   await page.locator(".sched-card", { hasText: "Daily AI News" }).click();
