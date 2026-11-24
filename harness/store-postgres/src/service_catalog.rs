@@ -7,6 +7,7 @@ use crate::{
 use anyhow::{ensure, Result};
 use openworker_runtime::{
     environment::{Phase, Record, Sharing, Spec},
+    replay_fixture,
     store::Session,
 };
 use postgres::Transaction;
@@ -109,6 +110,9 @@ pub struct Release {
     #[serde(default)]
     pub allowed_principals: Vec<String>,
     #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_profile: Option<String>,
+    #[serde(default)]
     pub default_model: Option<openworker_runtime::connections::Choice>,
     #[serde(default)]
     pub reviewer_model: Option<openworker_runtime::connections::Choice>,
@@ -122,6 +126,13 @@ pub struct Release {
 impl Release {
     pub fn validate(&self) -> Result<()> {
         revision(&self.id)?;
+        if let Some(name_id) = &self.model_profile {
+            name(name_id)?;
+            ensure!(
+                self.default_model.is_none(),
+                SubmissionError::InvalidRequest
+            );
+        }
         if let Some(config) = &self.subagents {
             config.validate()?;
         }
@@ -166,7 +177,7 @@ fn principals(p: &[String]) -> Result<()> {
     }
     Ok(())
 }
-fn revision(s: &str) -> Result<()> {
+pub(crate) fn revision(s: &str) -> Result<()> {
     name(s)?;
     let (id, version) = s.split_once('@').ok_or(SubmissionError::InvalidRequest)?;
     ensure!(
@@ -219,6 +230,22 @@ pub struct Admission {
     pub project: String,
     #[serde(default)]
     pub name: Option<String>,
+}
+
+/// Internal data resolved by the API. This is absent from public admission DTOs.
+pub struct AdmissionPreparation {
+    pub loop_spec: Option<Spec>,
+    pub reviewed: Option<openworker_runtime::connections::Choice>,
+    pub replay_fixture: Option<replay_fixture::Fixture>,
+}
+
+pub enum ReplayPreparation {
+    Ready,
+    Pending,
+    Restore {
+        fixture: replay_fixture::Fixture,
+        verify_only: bool,
+    },
 }
 fn reserve_environment(
     tx: &mut Transaction<'_>,
@@ -329,7 +356,7 @@ pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
     CREATE TABLE IF NOT EXISTS service_deletions(environment_id TEXT PRIMARY KEY REFERENCES environments(id),request_key TEXT NOT NULL,dispatched BOOLEAN NOT NULL DEFAULT FALSE,next_check TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());
     CREATE TABLE IF NOT EXISTS service_operations(id TEXT PRIMARY KEY,request_key TEXT NOT NULL UNIQUE,input JSONB NOT NULL,principal TEXT NOT NULL,credential_id TEXT NOT NULL,release_id TEXT NOT NULL,profile_id TEXT NOT NULL,environment_id TEXT NOT NULL REFERENCES environments(id),session_id TEXT NOT NULL UNIQUE,project TEXT NOT NULL,status TEXT NOT NULL,receipt JSONB,error TEXT,next_check TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());")?;
     tx.batch_execute(
-        "ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS loop_environment_id TEXT UNIQUE REFERENCES environments(id); ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS loop_launch_claimed BOOLEAN NOT NULL DEFAULT FALSE; ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS configuration JSONB",
+        "ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS delegation_credential_id TEXT REFERENCES api_credentials(id); ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS loop_environment_id TEXT UNIQUE REFERENCES environments(id); ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS loop_launch_claimed BOOLEAN NOT NULL DEFAULT FALSE; ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS configuration JSONB",
     )?;
     tx.execute(
         "UPDATE service_operations SET configuration=$1 WHERE configuration IS NULL",
@@ -339,6 +366,11 @@ pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
         })],
     )?;
     tx.batch_execute("ALTER TABLE service_operations ALTER COLUMN configuration SET NOT NULL")?;
+    tx.batch_execute(
+        "ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS replay_fixture JSONB;
+        ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS replay_fixture_started TIMESTAMPTZ;
+        ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS replay_fixture_receipt TEXT;",
+    )?;
     Ok(())
 }
 impl PostgresStore {
@@ -399,7 +431,15 @@ impl PostgresStore {
                     || p.role.permits(Action::Configure)
                     || p.role.permits(Action::Admin);
                 if !manages {
-                    allowed(&p, &principals)?;
+                    if kind == "release" {
+                        crate::app_agents::allow_release(
+                            &mut tx,
+                            &p,
+                            &serde_json::from_value(e.definition.clone())?,
+                        )?;
+                    } else {
+                        allowed(&p, &principals)?;
+                    }
                 }
                 ensure!(
                     e.activated
@@ -440,8 +480,26 @@ impl PostgresStore {
                     let principals: Vec<String> =
                         serde_json::from_value(e.definition["allowedPrincipals"].clone())
                             .unwrap_or_default();
-                    if !manages && allowed(p, &principals).is_err() {
-                        continue;
+                    if !manages {
+                        let access = if kind == "release" {
+                            crate::app_agents::allow_release(
+                                &mut tx,
+                                p,
+                                &serde_json::from_value(e.definition.clone())?,
+                            )
+                        } else {
+                            allowed(p, &principals)
+                        };
+                        match access {
+                            Ok(()) => {}
+                            Err(err)
+                                if err.downcast_ref::<auth::Error>()
+                                    == Some(&auth::Error::Forbidden) =>
+                            {
+                                continue
+                            }
+                            Err(err) => return Err(err),
+                        }
                     }
                     if !(e.activated
                         || p.role.permits(Action::Publish)
@@ -493,8 +551,56 @@ impl PostgresStore {
         spec: Spec,
         loop_spec: Option<Spec>,
     ) -> Result<Operation> {
-        if let Some(companion) = &loop_spec {
+        self.service_admit_reviewed(key, input, release, profile, spec, loop_spec, None)
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn service_admit_reviewed(
+        &self,
+        key: &str,
+        input: Admission,
+        release: Entry,
+        profile: Entry,
+        spec: Spec,
+        loop_spec: Option<Spec>,
+        reviewed: Option<openworker_runtime::connections::Choice>,
+    ) -> Result<Operation> {
+        self.service_admit_prepared(
+            key,
+            input,
+            release,
+            profile,
+            spec,
+            AdmissionPreparation {
+                loop_spec,
+                reviewed,
+                replay_fixture: None,
+            },
+        )
+    }
+
+    pub fn service_admit_prepared(
+        &self,
+        key: &str,
+        input: Admission,
+        release: Entry,
+        profile: Entry,
+        spec: Spec,
+        mut preparation: AdmissionPreparation,
+    ) -> Result<Operation> {
+        if let Some(companion) = &preparation.loop_spec {
             companion.validate()?;
+        }
+        if let Some(fixture) = &mut preparation.replay_fixture {
+            ensure!(
+                input.project == "eval-replay"
+                    && input.environment_id.is_none()
+                    && input.workspace_id.is_none()
+                    && input.initial_message.is_some(),
+                SubmissionError::InvalidRequest
+            );
+            fixture
+                .normalize()
+                .map_err(|_| SubmissionError::InvalidRequest)?;
         }
         name(&input.project)?;
         ensure!(
@@ -513,7 +619,68 @@ impl PostgresStore {
             crate::submissions::validate_id(text, 32000)?;
         }
         let key = key.to_owned();
-        self.call(move |db| db.service_admit(key, input, release, profile, spec, loop_spec))
+        self.call(move |db| db.service_admit(key, input, release, profile, spec, preparation))
+    }
+
+    /// The first command can write. Later controllers only verify, even after
+    /// the original transport or process exits before the receipt is recorded.
+    pub fn claim_replay_fixture(&self, id: &str) -> Result<ReplayPreparation> {
+        ensure!(self.auth.is_none(), auth::Error::Forbidden);
+        let id = id.to_owned();
+        self.call(move|db|{
+            let mut tx=db.client.transaction()?;
+            let row=tx.query_one("SELECT replay_fixture,replay_fixture_receipt,
+                replay_fixture_started IS NOT NULL,
+                COALESCE(replay_fixture_started+INTERVAL '60 seconds'>clock_timestamp(),FALSE),status
+                FROM service_operations WHERE id=$1 FOR UPDATE",&[&id])?;
+            if row.get::<_,String>(4)=="complete" {return Ok(ReplayPreparation::Ready);}
+            ensure!(row.get::<_,String>(4)=="ready",SubmissionError::Conflict);
+            let Some(fixture)=row.get::<_,Option<Value>>(0) else {return Ok(ReplayPreparation::Ready)};
+            if row.get::<_,Option<String>>(1).is_some() {return Ok(ReplayPreparation::Ready);}
+            if row.get::<_,bool>(3) {return Ok(ReplayPreparation::Pending);}
+            let verify_only=row.get::<_,bool>(2);
+            if !verify_only {
+                tx.execute("UPDATE service_operations SET replay_fixture_started=clock_timestamp(),
+                    next_check=clock_timestamp()+INTERVAL '60 seconds' WHERE id=$1",&[&id])?;
+            }
+            tx.commit()?;
+            Ok(ReplayPreparation::Restore{fixture:serde_json::from_value(fixture)?,verify_only})
+        })
+    }
+
+    pub fn complete_replay_fixture(
+        &self,
+        id: &str,
+        receipt: replay_fixture::Receipt,
+    ) -> Result<()> {
+        ensure!(self.auth.is_none(), auth::Error::Forbidden);
+        let id = id.to_owned();
+        self.call(move |db| {
+            let mut tx = db.client.transaction()?;
+            let row = tx.query_one(
+                "SELECT replay_fixture,status,replay_fixture_started IS NOT NULL
+                FROM service_operations WHERE id=$1 FOR UPDATE",
+                &[&id],
+            )?;
+            let fixture: replay_fixture::Fixture = serde_json::from_value(row.get(0))?;
+            ensure!(
+                row.get::<_, bool>(2) && fixture.receipt()? == receipt,
+                SubmissionError::Conflict
+            );
+            let status: String = row.get(1);
+            ensure!(
+                matches!(status.as_str(), "ready" | "complete"),
+                SubmissionError::Conflict
+            );
+            if status == "ready" {
+                tx.execute(
+                    "UPDATE service_operations SET replay_fixture_receipt=$2 WHERE id=$1",
+                    &[&id, &receipt.digest],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
     }
     pub fn service_session_identity(&self, sid: &str) -> Result<Option<Value>> {
         let sid = sid.to_owned();
@@ -766,6 +933,7 @@ impl crate::db::Database {
         tx.commit()?;
         Ok(e)
     }
+    #[allow(clippy::too_many_arguments)]
     fn service_admit(
         &mut self,
         key: String,
@@ -773,8 +941,14 @@ impl crate::db::Database {
         release: Entry,
         profile: Entry,
         spec: Spec,
-        loop_spec: Option<Spec>,
+        preparation: AdmissionPreparation,
     ) -> Result<Operation> {
+        let AdmissionPreparation {
+            loop_spec,
+            reviewed,
+            replay_fixture,
+        } = preparation;
+        let fixture = replay_fixture.as_ref().map(|f| json!(f));
         let mut tx = self.client.transaction()?;
         let p = auth::guard(&mut tx, self.auth.as_ref(), Action::Submit, None, None)?
             .ok_or(auth::Error::Unauthorized)?;
@@ -792,14 +966,15 @@ impl crate::db::Database {
         )? {
             ensure!(
                 row.get::<_, Value>("input") == json!(input)
-                    && row.get::<_, String>("principal") == p.principal,
+                    && row.get::<_, String>("principal") == p.principal
+                    && row.get::<_, Option<Value>>("replay_fixture") == fixture,
                 SubmissionError::Conflict
             );
             let o = op(&row);
             tx.commit()?;
             return Ok(o);
         }
-        let configured = crate::service_admin::current(&mut tx)?;
+        let mut configured = crate::service_admin::current(&mut tx)?;
         ensure!(
             !configured.configuration.admissions_paused,
             SubmissionError::Busy
@@ -812,7 +987,7 @@ impl crate::db::Database {
         );
         let rel: Release = serde_json::from_value(r.definition)?;
         let prof: Profile = serde_json::from_value(f.definition)?;
-        allowed(&p, &rel.allowed_principals)?;
+        crate::app_agents::allow_release(&mut tx, &p, &rel)?;
         allowed(&p, &prof.allowed_principals)?;
         ensure!(
             rel.runtime_profiles.contains(&prof.id),
@@ -822,6 +997,42 @@ impl crate::db::Database {
             loop_spec.is_none() || !rel.subagents.as_ref().is_some_and(|c| c.enabled),
             SubmissionError::InvalidRequest
         );
+        let pinned_model = if input.model.is_none() {
+            rel.model_profile
+                .as_deref()
+                .map(|n| crate::model_registry::resolve_profile(&mut tx, n))
+                .transpose()?
+        } else {
+            None
+        };
+        if let Some(reviewed) = reviewed {
+            ensure!(
+                pinned_model.as_ref().map(|p| &p.choice) == Some(&reviewed),
+                SubmissionError::Conflict
+            );
+        }
+        if let Some(choice) = pinned_model
+            .as_ref()
+            .map(|p| &p.choice)
+            .or(input.model.as_ref())
+            .or(rel.default_model.as_ref())
+        {
+            if let Some(row) = tx.query_opt(
+                "SELECT spec,enabled FROM model_providers WHERE name=$1 FOR SHARE",
+                &[&choice.connection],
+            )? {
+                ensure!(
+                    row.get::<_, bool>(1),
+                    crate::model_registry::RegistryError::ProviderDisabled
+                );
+                let route: crate::model_registry::Provider = serde_json::from_value(row.get(0))?;
+                configured.configuration.compaction.context_window = configured
+                    .configuration
+                    .compaction
+                    .context_window
+                    .min(route.context_limit);
+            }
+        }
         if let Some(model) = &input.model {
             ensure!(
                 rel.model_overrides.contains(model) || rel.default_model.as_ref() == Some(model),
@@ -910,7 +1121,7 @@ impl crate::db::Database {
                 .map(|e| e.id)
             })
             .transpose()?;
-        let row=tx.query_one("INSERT INTO service_operations(id,request_key,input,principal,credential_id,release_id,profile_id,environment_id,session_id,project,status,configuration,loop_environment_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *",&[&operation_id,&key,&json!(input),&p.principal,&p.credential_id,&rel.id,&prof.id,&environment_id,&session_id,&input.project,&status,&json!(configured),&loop_id])?;
+        let row=tx.query_one("INSERT INTO service_operations(id,request_key,input,principal,credential_id,release_id,profile_id,environment_id,session_id,project,status,configuration,loop_environment_id,pinned_model,replay_fixture) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *",&[&operation_id,&key,&json!(input),&p.principal,&p.credential_id,&rel.id,&prof.id,&environment_id,&session_id,&input.project,&status,&json!(configured),&loop_id,&pinned_model.as_ref().map(|m|json!(m)),&fixture])?;
         auth::audit(&mut tx, Some(&p), Action::Create, None, Some(&key))?;
         let result = op(&row);
         tx.commit()?;
@@ -984,6 +1195,13 @@ impl crate::db::Database {
         }
         ensure!(o.status == "ready", SubmissionError::Conflict);
         ensure!(
+            row.get::<_, Option<Value>>("replay_fixture").is_none()
+                || row
+                    .get::<_, Option<String>>("replay_fixture_receipt")
+                    .is_some(),
+            SubmissionError::Conflict
+        );
+        ensure!(
             o.loop_environment_id.as_ref()
                 == session.loop_environment.as_ref().map(|b| &b.environment_id),
             SubmissionError::Conflict
@@ -1012,7 +1230,7 @@ impl crate::db::Database {
             serde_json::from_value(entry(&mut tx, "release", &o.release_id)?.definition)?;
         let profile: Profile =
             serde_json::from_value(entry(&mut tx, "profile", &o.profile_id)?.definition)?;
-        allowed(&p, &rel.allowed_principals)?;
+        crate::app_agents::allow_release(&mut tx, &p, &rel)?;
         allowed(&p, &profile.allowed_principals)?;
         session.id = o.session_id.clone();
         let input: Admission = serde_json::from_value(row.get("input"))?;

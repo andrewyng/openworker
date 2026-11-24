@@ -85,3 +85,13 @@ Metadata retention is independent of canonical conversation storage. Expired
 metadata is omitted from query pages; trusted maintenance can prune it. Registered
 unacknowledged export records are retained until delivered. This is not a legal
 hold, immutable archive or protection against a privileged database administrator.
+
+## Preview an external scanner policy
+
+In the cluster Management UI, open **Compliance → Policy rollouts** as an administrator. Add a rollout for an existing app ID and an installed scanner. Choose **Shadow** to run the scanner with its production-intended profile and record block verdicts as **Would have blocked**. The app can proceed past that check. Other enforced policies still apply. The cluster’s **Forbidden** setting takes precedence.
+
+Use **Review decisions** to inspect the last seven days. **Alerted** means the scanner flagged the content and returned an allow action. **Shadow check unavailable** means the check failed to return a verdict. Neither finding counts as an actual block. The catalog and evidence export record metadata, including the policy version. Session-linked decisions can be opened from the corresponding session or turn.
+
+When you are ready, edit the rollout and choose **Enforce**. The same scanner and profile now apply their verdicts on the next affected operation, including in open sessions. Unavailable enforcing checks use the normal required-check behavior for that stage. **Use cluster policy** removes the app override. The rollout uses the scanner’s configured text boundaries in both modes.
+
+The service configuration API represents these overrides as `appCheckModes`, keyed first by app ID and then integration ID. For example, `{"app_finance":{"content-scanner":"shadow"}}` sets one rollout for an installed check named `content-scanner`. Update it through the revision-checked `PUT /v1/configuration` endpoint.

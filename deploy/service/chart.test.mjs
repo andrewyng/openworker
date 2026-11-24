@@ -37,6 +37,16 @@ function deployment(out, role) {
       (s) => s.includes("kind: Deployment") && s.includes(`name: test-${role}`),
     );
 }
+test("compliance forwarding projects only the configured API credential reference",async()=>{
+  const config = {...base.config, compliance:{}, compliance_sinks:[
+    {name:"company-audit",endpoint:"https://audit.example.test/collect",credentialEnv:"OW_AUDIT_KEY"},
+  ]};
+  const rendered = await render({config,secrets:{complianceExport:"audit-only"}});
+  assert.match(deployment(rendered,"api"),/name: "OW_AUDIT_KEY"\s+valueFrom: \{secretKeyRef: \{name: "audit-only", key: "OW_AUDIT_KEY"/);
+  for (const role of ["worker","controller","platform"]) assert.doesNotMatch(deployment(rendered,role),/secretKeyRef: \{name: "audit-only"/);
+  assert.doesNotMatch(await render({}),/name: "OW_AUDIT_KEY"/);
+  await assert.rejects(()=>render({config}));
+});
 test("recordings stay opt-in and a separate connection uses an independently mounted secret",async()=>{
   const off=await render({});assert.doesNotMatch(off,/mountPath: \/run\/observability|"database_env": "OW_OBSERVABILITY_URL"/);
   const same=await render({config:{...base.config,schema:"ow_execution",observability:{}}});
@@ -265,4 +275,39 @@ test("private management UI preview terminates TLS without giving the UI server 
   assert.doesNotMatch(ui,/mountPath: \/tls/);
   assert.match(out,/name: https, port: 443, targetPort: https/);
   assert.match(out,/proxy_set_header Host \$http_host/);
+});
+
+test("only the API and worker receive the optional model registry key", async () => {
+  const out = await render({secrets: {modelRegistry: "registry-test-key"}});
+  const roles = out.split("\n---").filter(doc => doc.includes("OPENWORKER_MODEL_REGISTRY_KEY"));
+  assert.equal(roles.length, 2);
+  for (const role of ["api", "worker"]) {
+    assert(roles.some(doc => doc.includes("name: test-" + role) && doc.includes('name: "registry-test-key", key: registry-key')));
+  }
+});
+
+test("eval worker is independently sized and only mounts the execution database", async () => {
+  assert.equal(deployment(await render({}), "eval-worker"), undefined);
+  const config = { ...base.config, observability: {} };
+  const rendered = await render({
+    config,
+    secrets: { model: "model-key", observability: "recording-db", telemetry: "otlp-auth" },
+    evalWorker: { replicas: 2, resources: { limits: { memory: "320Mi" } } },
+  });
+  const worker = deployment(rendered, "eval-worker");
+  assert.match(worker, /replicas: 2/);
+  assert.match(worker, /args: \[eval-worker, --health-listen, "127\.0\.0\.1:8082"\]/);
+  assert.match(worker, /memory: 320Mi/);
+  assert.match(worker, /automountServiceAccountToken: false/);
+  assert.match(worker, /key: database-url/);
+  assert.doesNotMatch(worker, /mountPath: \/openshell|mountPath: \/models|\/run\/observability|\/run\/telemetry|registry-key|ports:/);
+  const disabled = await render({ config, evalWorker: { enabled: false } });
+  assert.equal(deployment(disabled, "eval-worker"), undefined);
+  const optedIn = deployment(await render({
+    config: { ...config, observability: { eval_model_judges: true } },
+    secrets: { model: "judge-model", modelRegistry: "model-registry", observability: "recording-db" },
+  }), "eval-worker");
+  assert.match(optedIn, /mountPath: \/models/);
+  assert.match(optedIn, /registry-key/);
+  assert.doesNotMatch(optedIn, /\/openshell|\/run\/observability|\/run\/telemetry/);
 });

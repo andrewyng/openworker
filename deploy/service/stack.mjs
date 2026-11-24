@@ -292,10 +292,13 @@ export async function compose(m, args, opts = {}) {
     `SERVICE_IMAGE=${m.imageId}\nSTATE_DIR=${m.root}\nAPI_PORT=${m.port}\n`,
     { mode: 0o600 },
   );
+  const config = JSON.parse(await readFile(join(m.root, "input", "config.json"), "utf8"));
+  const profiles = config.observability && !config.recovery_read_only ? ["--profile", "evals"] : [];
   return run(
     "docker",
     [
       "compose",
+      ...profiles,
       "--project-name",
       m.id,
       "--env-file",

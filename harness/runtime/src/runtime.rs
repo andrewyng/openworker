@@ -641,7 +641,7 @@ impl Runtime {
             // A cluster can require a configured output scanner while the provider is streaming.
             let guarded_output = (self.integrations.cluster_policy
                 && self.integrations.may_inspect_output())
-                || safety.protects(crate::safety::Phase::ModelOutput, None)
+                || safety.enforces(crate::safety::Phase::ModelOutput, None)
                 || !safety.guardrails.tool_calls.is_empty()
                 || safety
                     .hooks
@@ -1203,7 +1203,7 @@ impl Runtime {
             }
             let mut summarizer = self.session_model(&s);
             summarizer.content_withheld =
-                safety_config.protects(crate::safety::Phase::ModelOutput, None);
+                safety_config.enforces(crate::safety::Phase::ModelOutput, None);
             if let Some(model) = &cfg.summary_model {
                 summarizer.name = model.clone();
             }
@@ -2830,7 +2830,7 @@ impl Runtime {
         let session = self.store.lock().unwrap().get(sid)?;
         let protected_result = self
             .effective_safety(sid)?
-            .protects(crate::safety::Phase::ToolResult, Some(name));
+            .enforces(crate::safety::Phase::ToolResult, Some(name));
         let turn = session
             .turn
             .as_ref()
@@ -3022,7 +3022,7 @@ impl Runtime {
                                         return Err(safety::Blocked.into());
                                     }
                                     model.content_withheld = safety_config
-                                        .protects(crate::safety::Phase::ModelOutput, None);
+                                        .enforces(crate::safety::Phase::ModelOutput, None);
                                     let (reserved, auxiliary_attempt) =
                                         self.reserve_aux(sid, 4000)?;
                                     let (verdict, usage) = model
@@ -3101,7 +3101,7 @@ impl Runtime {
         data["approval_mode"] = serde_json::to_value(s.permissions.mode)?;
         let reason_withheld = self
             .effective_safety(sid)?
-            .protects(crate::safety::Phase::ModelOutput, None);
+            .enforces(crate::safety::Phase::ModelOutput, None);
         if i.response.as_deref() == Some("deny") && !reason_withheld {
             i.approval_reason = review
                 .as_ref()
@@ -3695,7 +3695,7 @@ impl Runtime {
                             let name = self.safety_tool_name(alias);
                             if self
                                 .effective_safety(sid)?
-                                .protects(crate::safety::Phase::ToolResult, Some(&name))
+                                .enforces(crate::safety::Phase::ToolResult, Some(&name))
                             {
                                 // Transport diagnostics may quote raw tool output or
                                 // secrets. Preserve uncertainty without exporting it.
@@ -4328,7 +4328,7 @@ impl Runtime {
             &s,
             "interaction_resolved",
             control_event(
-                json!({"interaction_id":iid,"state_change": match resolved_interaction.kind.as_str() {"approval"=>Some("user_approval_done"),"question"=>Some("user_response_done"),_=>None},"decision":if approval {Some(if denied {"denied"} else {"approved"})}else{None},"origin":origin,"tool":tool,"kind":resolved_interaction.kind,"response":if approval {json!(resolved_interaction.response)} else {Value::Null},"call_id":resolved_interaction.call["call_id"],"session_grant":new_grant,"requested_at_ms":resolved_interaction.requested_at_ms,"resolved_at_ms":resolved_interaction.resolved_at_ms}),
+                json!({"interaction_id":iid,"state_change": match resolved_interaction.kind.as_str() {"approval"=>Some("user_approval_done"),"question"=>Some("user_response_done"),_=>None},"decision":if approval {Some(if denied {"denied"} else {"approved"})}else{None},"origin":origin,"tool":tool,"kind":resolved_interaction.kind,"response":if approval {json!(resolved_interaction.response)} else {Value::Null},"call_id":resolved_interaction.call["call_id"],"policy_digest":if approval { Some(&resolved_interaction.policy_digest) } else { None },"session_grant":new_grant,"requested_at_ms":resolved_interaction.requested_at_ms,"resolved_at_ms":resolved_interaction.resolved_at_ms}),
                 control,
             ),
         )?;

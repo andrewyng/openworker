@@ -53,6 +53,29 @@ pub fn base_url(value: &str) -> Result<String> {
     Ok(url.as_str().trim_end_matches('/').into())
 }
 
+/// Only for a trusted operator-configured route. DNS names and link-local/public HTTP are excluded.
+pub fn private_base_url(base: &str) -> Result<String> {
+    if let Ok(valid) = base_url(base) {
+        return Ok(valid);
+    }
+    let url = reqwest::Url::parse(base)?;
+    let private = url
+        .host_str()
+        .and_then(|h| h.parse::<std::net::Ipv4Addr>().ok())
+        .is_some_and(|ip| ip.is_private());
+    anyhow::ensure!(
+        private
+            && url.scheme() == "http"
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none()
+            && base.len() <= 2048,
+        "Expected an HTTPS, loopback, or explicitly trusted RFC1918 inference endpoint"
+    );
+    Ok(url.as_str().trim_end_matches('/').into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

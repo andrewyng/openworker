@@ -124,8 +124,9 @@ pub async fn apply_scoped(
     cancel: CancellationToken,
 ) -> Result<Evaluation> {
     config.validate()?;
+    let oversized = context.text.len() > MAX_TEXT;
     ensure!(
-        context.text.len() <= MAX_TEXT,
+        !oversized || !config.enforces(context.phase, context.tool.as_deref()),
         "Text exceeds safety size limit"
     );
     let mut out = Evaluation {
@@ -183,7 +184,12 @@ pub async fn apply_scoped(
                 })
                 .await
                 {
-                    Ok(d) if d.validate().is_ok() && !matches!(&d, Decision::Allow) => d,
+                    Ok(d)
+                        if d.validate().is_ok()
+                            && !matches!(&d, Decision::Allow | Decision::Alert) =>
+                    {
+                        d
+                    }
                     _ => {
                         out.findings
                             .push(unavailable(&context, &rule.name, &rule.version));
@@ -200,7 +206,7 @@ pub async fn apply_scoped(
             },
         };
         match decision {
-            Decision::Allow => out.findings.push(finding(
+            Decision::Allow | Decision::Alert => out.findings.push(finding(
                 &context,
                 &rule.name,
                 &rule.version,
@@ -283,28 +289,29 @@ pub async fn apply_scoped(
                 .map_err(|_| anyhow::anyhow!("Sanitized tool arguments are not valid JSON"))?,
         );
     }
-    for hook in config.hooks.iter().filter(|h| {
-        h.when != HookPhase::OnEvent
-            && h.when.applies(context.phase)
-            && (h.tools.is_empty() || context.tool.as_ref().is_some_and(|t| h.tools.contains(t)))
-    }) {
+    for hook in config.matching_hooks(context.phase, context.tool.as_deref()) {
+        let shadow = config.is_shadow_hook(hook);
         let started = Instant::now();
         let executor = if config.native_hook_names.contains(&hook.name) {
             private
         } else {
             Some(registry)
         };
-        let result = match executor
-            .ok_or_else(|| anyhow::anyhow!("Integration handler registry unavailable"))
-            .and_then(|r| r.handler(&hook.handler))
-        {
-            Ok(h) => {
-                bounded(hook.timeout_ms, &cancel, async {
-                    h.call(context.clone(), cancel.clone()).await
-                })
-                .await
+        let result = if oversized {
+            Err(anyhow::anyhow!("Text exceeds safety size limit"))
+        } else {
+            match executor
+                .ok_or_else(|| anyhow::anyhow!("Integration handler registry unavailable"))
+                .and_then(|r| r.handler(&hook.handler))
+            {
+                Ok(h) => {
+                    bounded(hook.timeout_ms, &cancel, async {
+                        h.call(context.clone(), cancel.clone()).await
+                    })
+                    .await
+                }
+                Err(e) => Err(e),
             }
-            Err(e) => Err(e),
         };
         match result {
             Ok(Decision::Allow) => out.findings.push(finding(
@@ -316,6 +323,17 @@ pub async fn apply_scoped(
                 0,
                 started,
             )),
+            Ok(Decision::Alert) => {
+                out.findings.push(finding(
+                    &context,
+                    &hook.name,
+                    &hook.version,
+                    "alerted",
+                    Some("EXTERNAL_SECURITY_ALERT".into()),
+                    0,
+                    started,
+                ));
+            }
             Ok(decision @ Decision::Block { .. }) if decision.validate().is_ok() => {
                 let decision = safe_block(decision, &rules, &context);
                 let code = if let Decision::Block { code, .. } = &decision {
@@ -327,14 +345,26 @@ pub async fn apply_scoped(
                     &context,
                     &hook.name,
                     &hook.version,
-                    "blocked",
+                    if shadow { "would_block" } else { "blocked" },
                     code,
                     0,
                     started,
                 ));
+                if shadow {
+                    continue;
+                }
                 reject(&mut out, decision);
                 return Ok(out);
             }
+            _ if shadow => out.findings.push(finding(
+                &context,
+                &hook.name,
+                &hook.version,
+                "shadow_unavailable",
+                Some("GUARDRAIL_UNAVAILABLE".into()),
+                0,
+                started,
+            )),
             _ => {
                 out.findings
                     .push(unavailable(&context, &hook.name, &hook.version));

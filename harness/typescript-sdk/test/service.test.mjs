@@ -335,3 +335,34 @@ test("session-scoped resume verifies the release and private loop using the sess
   await assert.rejects(service.resume({ ...ref, agent: "other" }), /release_identity_mismatch/);
   await assert.rejects(service.resume({ ...ref, loopEnvironmentId: "other" }), /loop_identity_mismatch/);
 });
+
+test("cluster model profiles and app-owned agent revisions use scoped service routes", async (t) => {
+  const writes = [];
+  const url = await server(t, async (req, res) => {
+    if (handshake(req, res)) return;
+    headers(res);
+    if (req.method === "GET") {
+      res.end(JSON.stringify(req.url === "/v1/app-agents"
+        ? {agents:[{owner:"tester",name:"builder",releaseId:"app-catalog@2",revision:2}]}
+        : {providers:[{name:"spark",enabled:true}],profiles:[]}));
+      return;
+    }
+    let text = "";
+    for await (const chunk of req) text += chunk;
+    writes.push([req.method,req.url,req.headers["idempotency-key"],JSON.parse(text)]);
+    res.end(JSON.stringify({id:"app-catalog@2"}));
+  });
+  const s = await Harness.connect(options(url));t.after(()=>s.disconnect());
+  const provider={name:"spark",api:"chat-completions",baseUrl:"https://model.example/v1",contextLimit:8192};
+  await s.registerModelProvider(provider,"test-only-model-key",{idempotencyKey:"register"});
+  await s.setModelProfile("coding",{connection:"spark",model:"local-code"},{idempotencyKey:"default"});
+  const definition={instructions:"Build",tools:["coding.read_file"],runtimeProfiles:["project@1"],modelProfile:"coding"};
+  assert.equal((await s.publishAppAgent("builder",definition,{idempotencyKey:"revision"})).id,"app-catalog@2");
+  assert.equal((await s.appAgent("builder")).id,"app-catalog@2");
+  assert.equal((await s.getModelProvider("spark")).enabled,true);
+  assert.deepEqual(writes,[
+    ["POST","/v1/model-providers","register",{provider,apiKey:"test-only-model-key"}],
+    ["PUT","/v1/model-profiles/coding","default",{connection:"spark",model:"local-code"}],
+    ["POST","/v1/app-agents/builder","revision",definition],
+  ]);
+});

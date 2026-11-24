@@ -255,3 +255,35 @@ test("browser session expires independently of the provider credential", async (
     await new Promise((r) => upstream.close(r));
   }
 });
+
+test("eval catalog proxy bounds searches, cursors and filters to their list routes", () => {
+  assert.equal(allowed("GET", "/v1/evals/datasets?q=Page+editor+%C2%B7+Core+flows&limit=16"), true);
+  assert.equal(allowed("GET", "/v1/evals/datasets?owner=app_editor&after=evalset_123"), true);
+  assert.equal(allowed("GET", "/v1/evals/runs?dataset=evalset_123&status=queued&since=1770000000000&limit=16"), true);
+  for (const path of [
+    "/v1/evals/runs?status=completed&status=queued",
+    "/v1/evals/runs?status=processing",
+    "/v1/evals/runs?limit=51",
+    "/v1/evals/runs?after=thing%2Fother",
+    "/v1/evals/runs?since=-1",
+    "/v1/evals/datasets?status=queued",
+    "/v1/evals/datasets?q=first%0Asecond",
+    "/v1/evals/datasets/x/jobs/y?q=anything",
+  ]) {
+    assert.equal(allowed("GET", path), false, path);
+  }
+  assert.equal(allowed("POST", "/v1/evals/runs"), false);
+  assert.equal(allowed("GET", "/v1/evals/candidates?tag=guardrail%3Abuiltin.credit-card&from_ms=1770000000000"), true);
+  assert.equal(allowed("GET", "/v1/evals/evaluators?q=Release+check&after=abc"), true);
+  assert.equal(allowed("GET", "/v1/evals/batches/job_abc"), true);
+  assert.equal(allowed("POST", "/v1/evals/tags/session_abc/turn_abc"), true);
+  assert.equal(allowed("POST", "/v1/evals/batches"), true);
+  for (const path of [
+    "/v1/evals/candidates",
+    "/v1/evals/candidates?tag=foo&tag=bar",
+    "/v1/evals/candidates?tag=guardrail%3A",
+    "/v1/evals/evaluators?owner=app_other",
+    "/v1/evals/batches/job_abc?raw=true",
+    "/v1/evals/tags/session_abc/..",
+  ]) assert.equal(allowed("GET", path), false, path);
+});

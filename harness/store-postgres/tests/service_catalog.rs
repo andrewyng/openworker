@@ -743,3 +743,170 @@ fn loop_companion_is_reserved_once_and_cannot_fall_back_to_service() {
     assert!(user.claim_loop_launch(&original.id).is_err());
     assert!(!store.claim_loop_launch(&original.id).unwrap());
 }
+
+#[test]
+#[ignore = "requires disposable OW_PG_TEST_URL"]
+fn scoped_apps_share_runs_pin_model_defaults_and_rotate_without_losing_ownership() {
+    use openworker_runtime::connections::Choice;
+    use openworker_store_postgres::{app_agents::Grants, auth::Action, model_registry::Provider};
+    let (_db, store, admin, _) = setup();
+    store
+        .install_app_tool_defaults(
+            "install",
+            vec!["read_file".into(), "write_file".into(), "run_shell".into()],
+        )
+        .unwrap();
+    let issued = |principal: &str| {
+        serde_json::from_value(json!({"principal":principal,"role":"app","scope":{"kind":"owned"},"expires_at":openworker_runtime::store::now_ms()/1000+3600})).unwrap()
+    };
+    let key_a = "alpha-token-".repeat(5);
+    let key_b = "bravo-token-".repeat(5);
+    let grants = Grants {
+        model_profiles: vec!["coding".into()],
+        ..Default::default()
+    };
+    let genie = admin
+        .issue_app_token("genie-token", issued("app_genie"), &key_a, grants.clone())
+        .unwrap();
+    admin
+        .issue_app_token("other-token", issued("app_other"), &key_b, grants.clone())
+        .unwrap();
+    let a = store.authorized(&key_a).unwrap();
+    let b = store.authorized(&key_b).unwrap();
+    let provider:Provider=serde_json::from_value(json!({"name":"qwen","api":"chat-completions","baseUrl":"https://model.example/v1","contextLimit":4096})).unwrap();
+    assert!(a.provider_put(provider.clone(), vec![1; 48], "no").is_err());
+    admin
+        .provider_put(provider.clone(), vec![1; 48], "add")
+        .unwrap();
+    let one = Choice::new("qwen", "first");
+    admin
+        .model_profile_put("coding", one.clone(), "profile-one")
+        .unwrap();
+    let mut profile = profile();
+    profile["allowedPrincipals"] = json!(["app_genie", "app_other"]);
+    admin
+        .catalog_put("runtime", "profile", profile, "install")
+        .unwrap();
+    let p = admin
+        .catalog_activate("runtime.activate", "profile", "shared@1", None)
+        .unwrap();
+    let mut def = release();
+    def["modelProfile"] = json!("coding");
+    let publish = |s: &PostgresStore, k: &str, msg: &str, restricted: Vec<String>| {
+        let mut definition = def.clone();
+        definition["instructions"] = json!(msg);
+        if !restricted.is_empty() {
+            definition["tools"] = json!(restricted);
+        }
+        s.app_publish(
+            k,
+            "builder",
+            serde_json::from_value(definition).unwrap(),
+            "install",
+        )
+    };
+    assert!(publish(&a, "external", "search", vec!["web_search".into()]).is_err());
+    let first = publish(&a, "genie-first", "one", vec![]).unwrap();
+    let other = publish(&b, "other-first", "other", vec![]).unwrap();
+    assert_ne!(first.id, other.id);
+    assert!(b.catalog_get("release", &first.id).is_err());
+    assert!(b
+        .share_app_agent(&first.id, vec!["app_other".into()], "deny")
+        .is_err());
+    let request = |s: &PostgresStore, key: &str, e: &Entry| {
+        let mut input = admission();
+        input.agent = e.id.clone();
+        s.service_admit(key, input, e.clone(), p.clone(), spec())
+    };
+    let old = request(&a, "run-one", &first).unwrap();
+    assert_eq!(store.operation_model(&old.id).unwrap(), Some(one));
+    let two = Choice::new("qwen", "second");
+    admin
+        .model_profile_put("coding", two.clone(), "profile-two")
+        .unwrap();
+    let second = publish(&a, "genie-second", "two", vec![]).unwrap();
+    assert_ne!(first.id, second.id);
+    assert_eq!(a.app_agents().unwrap()["agents"][0]["releaseId"], second.id);
+    let new = request(&a, "run-two", &second).unwrap();
+    assert_eq!(store.operation_model(&new.id).unwrap(), Some(two));
+    // Replaying the first admin update must not revert the profile to its old default.
+    admin
+        .model_profile_put("coding", Choice::new("qwen", "first"), "profile-one")
+        .unwrap();
+    assert_eq!(
+        admin.current_profile_model("coding").unwrap().model,
+        "second"
+    );
+    assert_eq!(request(&a, "run-one", &first).unwrap().id, old.id);
+    assert_eq!(
+        store.operation_model(&old.id).unwrap().unwrap().model,
+        "first"
+    );
+    assert_eq!(
+        store
+            .service_operation_configuration(&new.id)
+            .unwrap()
+            .configuration
+            .compaction
+            .context_window,
+        4096
+    );
+    assert!(b.service_operation(&old.id).is_err());
+    admin
+        .share_app_agent(&second.id, vec!["app_other".into()], "share")
+        .unwrap();
+    assert_eq!(b.catalog_get("release", &second.id).unwrap().id, second.id);
+    let their_run = request(&b, "other-run", &second).unwrap();
+    for op in [&old, &new, &their_run] {
+        let env = store.clone().environment(&op.environment_id).unwrap();
+        let binding = Binding {
+            environment_id: env.id.clone(),
+            spec: env.spec.clone(),
+            remote_id: format!("uid-{}", env.id),
+            remote_name: env.id.clone(),
+            workspace_scope: "default".into(),
+            policy_hash: "policy".into(),
+            policy_version: 1,
+        };
+        store
+            .complete_environment(&env.id, env.revision, Some(binding.clone()))
+            .unwrap();
+        store
+            .service_update_operation(&op.id, "ready", None)
+            .unwrap();
+        store
+            .service_finish(&op.id, session("fixture", binding), "svc", "test")
+            .unwrap();
+    }
+    assert!(a.read_snapshot(&old.session_id).is_ok() && a.read_snapshot(&new.session_id).is_ok());
+    assert!(
+        b.read_snapshot(&old.session_id).is_err() && b.read_events(&new.session_id, 0).is_err()
+    );
+    assert!(
+        b.read_snapshot(&their_run.session_id).is_ok()
+            && a.read_snapshot(&their_run.session_id).is_err()
+    );
+    assert!(b.service_operation(&new.id).is_err());
+    let replacement = "replacement-key-".repeat(4);
+    admin
+        .rotate_app_token(
+            "rotate",
+            genie["id"].as_str().unwrap(),
+            issued("app_genie"),
+            &replacement,
+        )
+        .unwrap();
+    assert!(a.authorize(Action::Identify, None, None).is_err());
+    let renewed = store.authorized(&replacement).unwrap();
+    assert!(renewed.service_operation(&old.id).is_ok());
+    assert!(renewed.read_snapshot(&old.session_id).is_ok());
+    assert!(renewed.catalog_get("release", &other.id).is_err());
+    assert!(renewed.model_key_ciphertext("qwen").is_err());
+    admin
+        .provider_change("qwen", Some(vec![2; 48]), "new-provider-key")
+        .unwrap();
+    assert_eq!(store.model_key_ciphertext("qwen").unwrap(), vec![2; 48]);
+    admin.provider_change("qwen", None, "disable").unwrap();
+    assert!(store.model_key_ciphertext("qwen").is_err());
+    assert!(request(&renewed, "disabled", &second).is_err());
+}

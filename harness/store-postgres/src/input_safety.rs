@@ -63,7 +63,10 @@ impl db::Database {
                     identity.as_ref(),
                     auth::Action::Submit,
                     request,
-                    &format!("guardrail:{}:{}", finding.check, finding.outcome),
+                    &format!(
+                        "guardrail:{}:{}:{}",
+                        finding.check, finding.outcome, finding.version
+                    ),
                 )?;
             }
         }

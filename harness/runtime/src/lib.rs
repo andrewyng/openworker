@@ -35,6 +35,7 @@ pub mod protocol;
 pub mod provider;
 pub mod provider_adapters;
 pub mod provider_auth;
+pub mod replay_fixture;
 pub mod resource_policy;
 pub mod runner;
 pub mod runtime;

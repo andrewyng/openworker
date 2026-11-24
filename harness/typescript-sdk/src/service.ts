@@ -55,6 +55,15 @@ export function runtimeProfileGrants(profile: RuntimeProfile): {
   const named = profile.gitAccess === undefined ? [] : [`git:${profile.gitAccess}`];
   return {files: [], network: [...named], credentials: [...named], cpu: profile.cpu, memoryMB: profile.memoryMB};
 }
+interface MutationOptions { idempotencyKey?: string }
+export interface ClusterModelChoice { connection: string; model: string }
+export interface ClusterModelProvider {
+  name: string;
+  baseUrl: string;
+  api: "responses" | "chat-completions" | "anthropic";
+  contextLimit: number;
+  allowPrivateHttp?: boolean;
+}
 export interface AgentRelease {
   integrations?: Record<string, import("./types.js").IntegrationOptions>;
   subagents?: { enabled: boolean; maxConcurrent?: number; maxChildren?: number; limits?: TurnLimits };
@@ -65,6 +74,7 @@ export interface AgentRelease {
   runtimeProfiles: string[];
   defaultRuntimeProfile?: string;
   allowedPrincipals?: string[];
+  modelProfile?: string;
   defaultModel?: { connection: string; model: string; notify_on_session_state?: boolean };
   reviewerModel?: { connection: string; model: string; notify_on_session_state?: boolean };
   modelOverrides?: { connection: string; model: string; notify_on_session_state?: boolean }[];
@@ -498,6 +508,56 @@ export class Service {
       close();
     }
   }
+  listModelProviders(): Promise<{
+    providers: (ClusterModelProvider & { enabled: boolean })[];
+    profiles: {name: string; model: ClusterModelChoice}[];
+  }> {
+    return this.json("GET", "/v1/model-providers");
+  }
+
+  async getModelProvider(name: string): Promise<ClusterModelProvider & {enabled: boolean}> {
+    const provider = (await this.listModelProviders()).providers.find(p => p.name === name);
+    if (!provider) throw new ServiceError("model_provider_not_found", 404);
+    return provider;
+  }
+
+  registerModelProvider(provider: ClusterModelProvider, apiKey: string, options: MutationOptions = {}): Promise<ClusterModelProvider> {
+    return this.json("POST", "/v1/model-providers", {provider, apiKey}, options.idempotencyKey ?? randomUUID());
+  }
+
+  rotateModelProviderKey(name: string, apiKey: string, options: MutationOptions = {}): Promise<{name: string}> {
+    return this.json("POST", `/v1/model-providers/${segment(name)}/rotate`, {apiKey}, options.idempotencyKey ?? randomUUID());
+  }
+
+  disableModelProvider(name: string, options: MutationOptions = {}): Promise<{name: string; enabled: boolean}> {
+    return this.json("POST", `/v1/model-providers/${segment(name)}/disable`, {}, options.idempotencyKey ?? randomUUID());
+  }
+
+  setModelProfile(name: string, model: ClusterModelChoice, options: MutationOptions = {}): Promise<{name: string; model: ClusterModelChoice}> {
+    return this.json("PUT", `/v1/model-profiles/${segment(name)}`, model, options.idempotencyKey ?? randomUUID());
+  }
+
+  shareAppAgent(releaseId: string, sharedWith: string[], options: MutationOptions = {}): Promise<{releaseId: string; sharedWith: string[]}> {
+    return this.json("PUT", `/v1/app-agents/${segment(releaseId)}/sharing`, {sharedWith}, options.idempotencyKey ?? randomUUID());
+  }
+
+  /** Publish a private revision using this app's backend token. */
+  async publishAppAgent(name: string, definition: Omit<AgentRelease, "id" | "allowedPrincipals">, options: MutationOptions = {}): Promise<ServiceAgent> {
+    const entry = await this.json("POST", `/v1/app-agents/${segment(name)}`, definition, options.idempotencyKey ?? randomUUID());
+    return new ServiceAgent(this, entry.id);
+  }
+
+  listAppAgents(): Promise<{agents: { owner: string; name: string; revision: number; releaseId: string; sharedWith?: string[] }[]}> {
+    return this.json("GET", "/v1/app-agents");
+  }
+
+  async appAgent(name: string, owner: string = this.identity.principal): Promise<ServiceAgent> {
+    const {agents} = await this.listAppAgents();
+    const entry = agents.find(agent => agent.name === name && agent.owner === owner);
+    if (!entry) throw new ServiceError("agent_not_found", 404);
+    return new ServiceAgent(this, entry.releaseId);
+  }
+
   async agent(id: string): Promise<ServiceAgent> {
     const a = await this.json("GET", `/v1/agents/${segment(id)}`);
     if (typeof a.id !== "string" || !a.id)
@@ -931,6 +991,10 @@ export interface ServiceAgentTeamOptions {
   limits?: TurnLimits;
 }
 export class ServiceAgentTeam {
+  /** Authorize future delegations with the current credential for the same app. */
+  reauthorize(): Promise<{sessionId: string; credentialId: string}> {
+    return this.service.json("POST", `/v1/sessions/${segment(this.lead.id)}/team/reauthorize`, {});
+  }
   constructor(
     private service: Service,
     readonly lead: ServiceSession,

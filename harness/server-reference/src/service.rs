@@ -49,6 +49,33 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
     }
     let p = path.split('/').collect::<Vec<_>>();
     match (method, p.as_slice()) {
+        (
+            "GET",
+            ["", "v1", "evals", "datasets" | "runs" | "evaluators" | "candidates" | "judge-profiles"],
+        )
+        | ("GET", ["", "v1", "evals", "tags" | "batches", _])
+        | ("GET", ["", "v1", "evals", "replays"])
+        | ("GET", ["", "v1", "evals", "schedules"])
+        | ("GET", ["", "v1", "evals", "replays", _])
+        | ("GET", ["", "v1", "evals", "tags", _, _])
+        | ("GET", ["", "v1", "evals", "datasets", _])
+        | ("GET", ["", "v1", "evals", "datasets", _, "cases" | "jobs", _])
+        | ("GET", ["", "v1", "evals", "evidence", _, _]) => Some(Action::Read),
+        ("POST", ["", "v1", "evals", "cases" | "evaluators" | "batches"])
+        | ("POST", ["", "v1", "evals", "tags", _])
+        | ("POST", ["", "v1", "evals", "tags", _, _])
+        | ("POST", ["", "v1", "evals", "datasets", _, "cases", _])
+        | ("POST", ["", "v1", "evals", "datasets", _, "replays"])
+        | ("POST", ["", "v1", "evals", "schedules"])
+        | ("POST", ["", "v1", "evals", "schedules", _])
+        | ("POST", ["", "v1", "evals", "batches", _, "retry"])
+        | ("POST", ["", "v1", "evals", "datasets", _, "jobs"]) => Some(Action::Submit),
+        ("GET" | "POST", ["", "v1", "model-providers"])
+        | ("POST", ["", "v1", "model-providers", _, "rotate" | "disable"])
+        | ("PUT", ["", "v1", "model-profiles", _]) => Some(Action::Admin),
+        ("GET", ["", "v1", "app-agents"]) => Some(Action::Read),
+        ("POST", ["", "v1", "app-agents", _]) => Some(Action::Submit),
+        ("PUT", ["", "v1", "app-agents", _, "sharing"]) => Some(Action::Admin),
         ("POST", ["", "v1", "workspace-providers"])
         | ("POST", ["", "v1", "workspace-providers", _, "workspaces" | "stop" | "delete-data"]) => {
             Some(Action::Submit)
@@ -56,6 +83,11 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
         ("GET", ["", "v1", "compliance", "sessions", _, "activities" | "delivery"]) => {
             Some(Action::ComplianceRead)
         }
+        ("GET", ["", "v1", "compliance", "decisions" | "agents" | "audit" | "coverage"]) => {
+            Some(Action::ComplianceRead)
+        }
+        ("POST", ["", "v1", "compliance", "export"]) => Some(Action::EvidenceExport),
+        ("GET" | "POST", ["", "v1", "compliance", "delivery"]) => Some(Action::EvidenceForward),
         ("GET", ["", "v1", "compliance", "sessions", _, "content"]) => {
             Some(Action::ComplianceContent)
         }
@@ -81,7 +113,9 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
         ("GET", ["", "v1", "sessions", _, "team"])
         | ("GET", ["", "v1", "sessions", _, "team", "messages"]) => Some(Action::Read),
         ("POST", ["", "v1", "sessions", _, "team"])
-        | ("POST", ["", "v1", "sessions", _, "team", "commands"]) => Some(Action::Control),
+        | ("POST", ["", "v1", "sessions", _, "team", "commands" | "reauthorize"]) => {
+            Some(Action::Control)
+        }
         ("POST", ["", "v1", "sessions", _, "controls" | "close"]) => Some(Action::Control),
         ("GET", ["", "v1", "worker-pools"]) => Some(Action::Read),
         ("POST", ["", "v1", "worker-pools", _, "scale"]) => Some(Action::Admin),
@@ -93,7 +127,7 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
             Some(Action::Configure)
         }
         ("GET" | "POST", ["", "v1", "credentials"])
-        | ("POST", ["", "v1", "credentials", _, "revoke"])
+        | ("POST", ["", "v1", "credentials", _, "revoke" | "rotate"])
         | ("GET", ["", "v1", "audit"]) => Some(Action::Admin),
         ("GET", ["", "v1", "profiles" | "releases" | "environments" | "operations", _]) => {
             Some(Action::Read)
@@ -113,6 +147,76 @@ fn check(ok: bool, error: SubmissionError) -> Result<(), ApiError> {
 }
 pub(crate) fn router() -> Router<App> {
     Router::new()
+        .route("/v1/evals/datasets", get(crate::evals::datasets))
+        .route("/v1/evals/runs", get(crate::evals::runs))
+        .route("/v1/evals/datasets/:id", get(crate::evals::dataset))
+        .route(
+            "/v1/evals/datasets/:id/cases/:case",
+            get(crate::evals::case).post(crate::evals::revise_case),
+        )
+        .route("/v1/evals/datasets/:id/jobs/:job", get(crate::evals::job))
+        .route("/v1/evals/datasets/:id/jobs", post(crate::evals::enqueue))
+        .route("/v1/evals/evidence/:sid/:turn", get(crate::evals::capture))
+        .route("/v1/evals/cases", post(crate::evals::save))
+        .route(
+            "/v1/evals/tags/:sid",
+            get(crate::evals::session_tags).post(crate::evals::update_session_tag),
+        )
+        .route(
+            "/v1/evals/tags/:sid/:turn",
+            get(crate::evals::turn_tags).post(crate::evals::update_turn_tag),
+        )
+        .route(
+            "/v1/evals/evaluators",
+            get(crate::evals::evaluators).post(crate::evals::save_evaluator),
+        )
+        .route("/v1/evals/candidates", get(crate::evals::candidates))
+        .route(
+            "/v1/evals/judge-profiles",
+            get(crate::evals::judge_profiles),
+        )
+        .route("/v1/evals/batches", post(crate::evals::enqueue_tagged))
+        .route("/v1/evals/batches/:id", get(crate::evals::tagged_job))
+        .route(
+            "/v1/evals/batches/:id/retry",
+            post(crate::evals::retry_judge),
+        )
+        .route("/v1/evals/replays", get(crate::eval_replay::list))
+        .route("/v1/evals/replays/:id", get(crate::eval_replay::get))
+        .route(
+            "/v1/evals/datasets/:id/replays",
+            post(crate::eval_replay::enqueue),
+        )
+        .route(
+            "/v1/evals/schedules",
+            get(crate::evals::schedules).post(crate::evals::save_schedule),
+        )
+        .route(
+            "/v1/evals/schedules/:id",
+            post(crate::evals::schedule_state),
+        )
+        .route(
+            "/v1/model-providers",
+            get(crate::model_registry::catalog).post(crate::model_registry::register),
+        )
+        .route(
+            "/v1/model-providers/:name/rotate",
+            post(crate::model_registry::rotate),
+        )
+        .route(
+            "/v1/model-providers/:name/disable",
+            post(crate::model_registry::disable),
+        )
+        .route(
+            "/v1/model-profiles/:name",
+            axum::routing::put(crate::model_registry::profile),
+        )
+        .route("/v1/app-agents", get(crate::app_agents::list))
+        .route("/v1/app-agents/:id", post(crate::app_agents::publish))
+        .route(
+            "/v1/app-agents/:id/sharing",
+            axum::routing::put(crate::app_agents::share),
+        )
         .route("/v1/workspace-providers", post(crate::workspace_api::start))
         .route(
             "/v1/workspace-providers/:id/workspaces",
@@ -161,6 +265,30 @@ pub(crate) fn router() -> Router<App> {
         )
         .route("/v1/audit", get(crate::authorization::audit))
         .route(
+            "/v1/compliance/decisions",
+            get(crate::compliance_catalog::decisions),
+        )
+        .route(
+            "/v1/compliance/agents",
+            get(crate::compliance_catalog::agents),
+        )
+        .route(
+            "/v1/compliance/audit",
+            get(crate::compliance_catalog::audit),
+        )
+        .route(
+            "/v1/compliance/coverage",
+            get(crate::compliance_catalog::coverage),
+        )
+        .route(
+            "/v1/compliance/export",
+            post(crate::compliance_catalog::export),
+        )
+        .route(
+            "/v1/compliance/delivery",
+            get(crate::compliance_catalog::deliveries).post(crate::compliance_catalog::forward),
+        )
+        .route(
             "/v1/compliance/sessions/:sid/activities",
             get(compliance_activities),
         )
@@ -171,6 +299,14 @@ pub(crate) fn router() -> Router<App> {
         .route(
             "/v1/compliance/sessions/:sid/delivery",
             get(compliance_delivery),
+        )
+        .route(
+            "/v1/sessions/:sid/team/reauthorize",
+            post(crate::agent_teams::reauthorize),
+        )
+        .route(
+            "/v1/credentials/:id/rotate",
+            post(crate::authorization::rotate_app),
         )
         .route("/v1/agents/:id", get(agent))
         .route("/v1/worker-pools", get(pools))
@@ -234,7 +370,7 @@ fn cfg(app: &App) -> &ServiceConfig {
 }
 async fn capabilities(Extension(app): Extension<App>) -> Json<Value> {
     Json(
-        json!({"configuredIntegrations":app.runtime.integrations.configured_ids().collect::<Vec<_>>(),"integrations":app.runtime.integrations.catalog.catalog(),"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"sandboxedLoop":app.config.openshell.loop_inference.is_some(),"workspaceProviders":app.runtime.workspaces.available(),"attachments":cfg!(feature="attachments"),"compliance":cfg!(feature="compliance"),"turnLimits":true,"toolArgumentRecovery":true,"environmentProcesses":cfg!(target_os="linux"),"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":true,"standaloneSubagents":true,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
+        json!({"configuredIntegrations":app.runtime.integrations.configured_ids().collect::<Vec<_>>(),"integrations":app.runtime.integrations.catalog.catalog(),"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"appAgents":true,"modelRegistry":true,"sandboxedLoop":app.config.openshell.loop_inference.is_some(),"workspaceProviders":app.runtime.workspaces.available(),"attachments":cfg!(feature="attachments"),"compliance":cfg!(feature="compliance"),"turnLimits":true,"toolArgumentRecovery":true,"environmentProcesses":cfg!(target_os="linux"),"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":true,"standaloneSubagents":true,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
     )
 }
 async fn agent(
@@ -463,7 +599,12 @@ async fn environment_list(Extension(app): Extension<App>) -> Result<Json<Value>,
 }
 
 async fn configuration(Extension(app): Extension<App>) -> Result<Json<Value>, ApiError> {
-    Ok(Json(json!(app.store.service_configuration()?)))
+    let principal = app.store.authorize(Action::Read, None, None)?;
+    let mut revision = app.store.service_configuration()?;
+    if !principal.role.permits(Action::Admin) {
+        revision.configuration.app_check_modes.clear();
+    }
+    Ok(Json(json!(revision)))
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -477,6 +618,31 @@ async fn configure(
     Json(body): Json<Configure>,
 ) -> Result<Json<Value>, ApiError> {
     let key = key(&app, &headers, "configuration")?;
+    let configured = app
+        .runtime
+        .integrations
+        .configured_ids()
+        .collect::<std::collections::BTreeSet<_>>();
+    for id in body
+        .configuration
+        .app_check_modes
+        .values()
+        .flat_map(|checks| checks.keys())
+    {
+        if !configured.contains(id)
+            || !app
+                .runtime
+                .integrations
+                .catalog
+                .catalog()
+                .get(id)
+                .is_some_and(|entry| {
+                    entry.capability == openworker_runtime::integrations::Capability::BlockingChecks
+                })
+        {
+            return Err(ApiError(SubmissionError::InvalidRequest.into()));
+        }
+    }
     Ok(Json(json!(app.store.service_configure(
         &key,
         body.expected_revision,

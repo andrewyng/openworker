@@ -97,6 +97,7 @@ pub(crate) async fn audit(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct IssueV1 {
+    grants: Option<openworker_store_postgres::app_agents::Grants>,
     spec: Spec,
     token: String,
 }
@@ -112,5 +113,27 @@ pub(crate) async fn issue_v1(
         ));
     }
     let key = crate::service::key(&app, &headers, "credential.issue")?;
-    Ok(Json(app.store.auth_issue(&key, body.spec, &token)?))
+    Ok(Json(if let Some(g) = body.grants {
+        app.store.issue_app_token(&key, body.spec, &token, g)?
+    } else {
+        app.store.auth_issue(&key, body.spec, &token)?
+    }))
+}
+
+pub(crate) async fn rotate_app(
+    Extension(app): Extension<App>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<IssueV1>,
+) -> Result<Json<Value>, ApiError> {
+    let token = zeroize::Zeroizing::new(body.token);
+    if body.grants.is_some() {
+        return Err(ApiError(
+            openworker_store_postgres::auth::Error::Invalid.into(),
+        ));
+    }
+    let key = crate::service::key(&app, &headers, "credential.rotate")?;
+    Ok(Json(
+        app.store.rotate_app_token(&key, &id, body.spec, &token)?,
+    ))
 }

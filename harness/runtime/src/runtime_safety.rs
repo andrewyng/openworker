@@ -69,13 +69,19 @@ impl Runtime {
             return Ok(value);
         }
         // Text-only checks cannot authorize an associated uninspected image.
-        self.images.lock().unwrap().clear(sid);
         let mut value = value;
-        if let Some(object) = value.as_object_mut() {
+        if config.enforces(Phase::ToolResult, Some(&name)) {
+            self.images.lock().unwrap().clear(sid);
+            if let Some(object) = value.as_object_mut() {
+                object.remove("ephemeral_image");
+            }
+        }
+        let mut scanned = value.clone();
+        if let Some(object) = scanned.as_object_mut() {
             object.remove("ephemeral_image");
         }
         let executed = value.get("executed").cloned().unwrap_or(json!(true));
-        let original = value.to_string();
+        let original = scanned.to_string();
         match self
             .check_content(
                 sid,
@@ -126,7 +132,7 @@ impl Runtime {
                 .sample_unchecked(sid, history, tools, summary, feedback.as_deref())
                 .await?;
             let config = self.effective_safety(sid)?;
-            let protects_output = config.protects(Phase::ModelOutput, None);
+            let protects_output = config.enforces(Phase::ModelOutput, None);
             if protects_output {
                 for item in &completion.output {
                     match item["type"].as_str() {
@@ -287,6 +293,15 @@ impl Runtime {
         let configured = &self.integrations;
         configured.checks_for(admission)
     }
+    pub fn integration_checks_for_session(
+        &self,
+        sid: &str,
+        admission: &crate::integrations::Admission,
+    ) -> Result<Config> {
+        self.integrations
+            .checks_for_app(admission, || self.store.lock().unwrap().session_app(sid))
+    }
+
     fn session_integration_checks(&self, metadata: &Session) -> Result<Config> {
         let integrations = &self.integrations;
         let decisions = integrations.resolve(&metadata.integrations)?;
@@ -302,7 +317,7 @@ impl Runtime {
             drop(store);
             self.publish(event);
         }
-        integrations.checks_for(&metadata.integrations)
+        self.integration_checks_for_session(&metadata.id, &metadata.integrations)
     }
     pub(super) fn effective_safety(&self, sid: &str) -> Result<Config> {
         let s = self.store.lock().unwrap().metadata(sid)?;

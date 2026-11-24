@@ -19,25 +19,7 @@ pub const PROTOCOL: &str = "openworker.session-loop.v2";
 /// A native OpenShell provider may front a private, operator-pinned inference
 /// endpoint. Public and ordinary SDK routes keep the existing HTTPS policy.
 pub fn inference_base(base: &str) -> Result<String> {
-    if let Ok(valid) = crate::model_api::base_url(base) {
-        return Ok(valid);
-    }
-    let url = reqwest::Url::parse(base)?;
-    let private = url
-        .host_str()
-        .and_then(|h| h.parse::<std::net::Ipv4Addr>().ok())
-        .is_some_and(|ip| ip.is_private());
-    ensure!(
-        private
-            && url.scheme() == "http"
-            && url.username().is_empty()
-            && url.password().is_none()
-            && url.query().is_none()
-            && url.fragment().is_none()
-            && base.len() <= 2048,
-        "Invalid sandbox inference endpoint"
-    );
-    Ok(url.as_str().trim_end_matches('/').into())
+    crate::model_api::private_base_url(base)
 }
 
 #[derive(Serialize, Deserialize)]

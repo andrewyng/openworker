@@ -192,6 +192,7 @@ impl Scanner {
             "Scanner correlation mismatch"
         );
         match result["action"].as_str() {
+            Some("allow") if result["category"] == "malicious" => Ok(Decision::Alert),
             Some("allow") => Ok(Decision::Allow),
             Some("block") => Ok(Decision::block("EXTERNAL_SECURITY_BLOCK")),
             _ => anyhow::bail!("Unknown scanner verdict"),

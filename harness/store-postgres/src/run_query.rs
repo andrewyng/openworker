@@ -7,6 +7,7 @@ use crate::{
 use anyhow::{ensure, Result};
 use openworker_runtime::store::TurnObservation;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -81,6 +82,8 @@ pub struct Run {
     pub model: String,
     pub status: String,
     pub created_ms: i64,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub guardrail_hit: bool,
     #[serde(skip)]
     pub observation: Option<TurnObservation>,
     #[serde(skip)]
@@ -106,6 +109,7 @@ fn run(row: &postgres::Row) -> Run {
         model: row.get::<_, Option<String>>(5).unwrap_or_default(),
         status: row.get(6),
         created_ms: row.get::<_, i64>(7) / 1000,
+        guardrail_hit: false,
         observation: None,
         pending_waits: 0,
     }
@@ -171,7 +175,17 @@ impl Database {
         } else {
             None
         };
-        let runs = rows.iter().map(run).collect();
+        let mut runs: Vec<_> = rows.iter().map(run).collect();
+        if !runs.is_empty() {
+            let sessions: BTreeSet<_> = runs.iter().map(|r| r.session_id.as_str()).collect();
+            let hits = crate::guardrail_query::hit_sessions(
+                &mut tx,
+                &sessions.into_iter().collect::<Vec<_>>(),
+            )?;
+            for run in &mut runs {
+                run.guardrail_hit = hits.contains(&run.session_id);
+            }
+        }
         tx.commit()?;
         Ok(Page {
             runs,

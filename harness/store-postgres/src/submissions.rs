@@ -274,6 +274,18 @@ impl Database {
         if count >= i64::from(self.max_queued_turns) {
             return Err(SubmissionError::QueueFull.into());
         }
+        if let Some(selection) = &session.model_selection {
+            let disabled: bool = tx
+                .query_one(
+                    "SELECT EXISTS(SELECT 1 FROM model_providers WHERE name=$1 AND NOT enabled)",
+                    &[&selection.connection],
+                )?
+                .get(0);
+            ensure!(
+                !disabled,
+                crate::model_registry::RegistryError::ProviderDisabled
+            );
+        }
         let configured = crate::service_admin::current(&mut tx)?;
         ensure!(
             !configured.configuration.admissions_paused,

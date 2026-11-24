@@ -10,7 +10,12 @@ use std::{path::Path, time::Duration};
 #[ignore = "requires disposable OW_PG_TEST_URL; optional OW_PLAYWRIGHT_MODULE for browser QA"]
 async fn browser_management_boundary() {
     let temp = tempfile::tempdir().unwrap();
-    let cfg:Config=serde_json::from_value(json!({"service":{"id":"ui-test","namespace":"test","agent":"base"},"database_env":"OW_PG_TEST_URL","schema":format!("ow_ui_{}",uuid::Uuid::new_v4().simple()),"database_loopback_plaintext":true,"state_root":temp.path(),"bundle":Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/assistant"),"runner":std::env::var("OW_PROBE_RUNNER").expect("Linux ToolRunner path required"),"model":"fixture","scripted":true,"api_token_file":temp.path().join("unused-token"),"actor":"admin","openshell":{"identity":"ui-local","endpoint":"https://127.0.0.1:1","certificates":temp.path(),"workspace":"default","image":format!("runner@sha256:{}","a".repeat(64))}})).unwrap();
+    let mut cfg:Config=serde_json::from_value(json!({"service":{"id":"ui-test","namespace":"test","agent":"base"},"database_env":"OW_PG_TEST_URL","schema":format!("ow_ui_{}",uuid::Uuid::new_v4().simple()),"database_loopback_plaintext":true,"state_root":temp.path(),"bundle":Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/assistant"),"runner":std::env::var("OW_PROBE_RUNNER").expect("Linux ToolRunner path required"),"model":"fixture","scripted":true,"api_token_file":temp.path().join("unused-token"),"actor":"admin","openshell":{"identity":"ui-local","endpoint":"https://127.0.0.1:1","certificates":temp.path(),"workspace":"default","image":format!("runner@sha256:{}","a".repeat(64))}})).unwrap();
+    cfg.model_connections.push(serde_json::from_value(json!({
+        "id":"fixture","provider":"openai","identity":"management-ui-fixture",
+        "key_env":"OW_MODEL_UI_FIXTURE_KEY",
+        "endpoint":{"api":"chat-completions","baseUrl":"http://127.0.0.1:1/v1","allowPrivateHttp":true,"contextLimit":4096}
+    })).unwrap());
     let db = cfg.database().unwrap();
     PostgresStore::migrate(&db).unwrap();
     let store = PostgresStore::open(db.clone()).unwrap();

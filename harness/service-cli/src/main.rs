@@ -1,5 +1,6 @@
 // Thin service client: no agent loop, provider credentials or local tool runner.
 mod deployment;
+mod model_registry;
 mod settings;
 use anyhow::{ensure, Context, Result};
 use clap::{Parser, Subcommand};
@@ -34,6 +35,13 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Manage cluster model endpoints and named model defaults.
+    ModelProvider {
+        #[arg(long, global = true)]
+        idempotency_key: Option<String>,
+        #[command(subcommand)]
+        command: model_registry::Command,
+    },
     /// Plan/inspect cloud deployments and manage local installations without service authentication.
     Deploy {
         #[command(subcommand)]
@@ -432,6 +440,7 @@ async fn run(args: Args) -> Result<()> {
         return output(service.identity());
     }
     match args.command {
+        Command::ModelProvider{command,idempotency_key}=>model_registry::run(&service,command,key(&idempotency_key)).await?,
         Command::Whoami => output(service.identity())?,
         Command::Integrations { command } => integrations(&service,command).await?,
         Command::Capabilities => output(service.capabilities())?,

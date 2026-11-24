@@ -27,7 +27,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,targe
     mkdir /out && cp target/release/openworker-server-reference target/release/openworker /out/
 FROM source AS build
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/harness/target \
-    cargo build --locked --release -p openworker-server-reference -p openworker-service-cli -p openworker-runtime && \
+    cargo build --locked --release -p openworker-server-reference -p openworker-service-cli -p openworker-runtime \
+      --features openworker-server-reference/compliance-export && \
     mkdir /out && cp target/release/openworker-server-reference target/release/owcluster target/release/openworker /out/ && ln -s owcluster /out/ows
 FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS base
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libssl3 curl && \
@@ -47,7 +48,7 @@ FROM source AS git-broker-build
 # Opt-in trusted-side Git execution; default service/core builds stay unchanged.
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/harness/target \
     cargo build --locked --release -p openworker-server-reference -p openworker-runtime \
-      --features openworker-server-reference/trusted-git && \
+      --features openworker-server-reference/trusted-git,openworker-server-reference/compliance-export && \
     mkdir /out && cp target/release/openworker-server-reference target/release/openworker /out/
 FROM base AS git-broker-runtime
 USER root

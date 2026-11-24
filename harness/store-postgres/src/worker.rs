@@ -91,7 +91,7 @@ impl Selector {
         crate::submissions::validate_id(&self.bundle_digest, 128)?;
         crate::submissions::validate_id(&self.fallback_model, 200)?;
         anyhow::ensure!(
-            self.model_connections.len() <= 16,
+            self.model_connections.len() <= 32,
             "Too many model connection identities"
         );
         for (id, identity) in &self.model_connections {

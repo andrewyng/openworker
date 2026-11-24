@@ -63,10 +63,10 @@ async fn inspect_policy(
     let (config, pins) = if let Some(sid) = sid {
         let (session, pins, admission) = app.store.input_safety_policy(sid)?;
         (
-            app.config
-                .safety
-                .merge(&session)?
-                .merge(&app.runtime.integration_checks(&admission)?)?,
+            app.config.safety.merge(&session)?.merge(
+                &app.runtime
+                    .integration_checks_for_session(sid, &admission)?,
+            )?,
             pins,
         )
     } else {
@@ -78,10 +78,30 @@ async fn inspect_policy(
     if !config.protects(Phase::UserInput, None) {
         return Ok(text.into());
     }
-    let _permit = app
-        .safety_readers
-        .try_acquire()
-        .map_err(|_| ApiError(InputError::Unavailable.into()))?;
+    let _permit = match app.safety_readers.try_acquire() {
+        Ok(permit) => permit,
+        Err(_) if !config.enforces(Phase::UserInput, None) => {
+            let evaluation_id = openworker_runtime::id("admission-check");
+            let findings = config
+                .matching_hooks(Phase::UserInput, None)
+                .map(|hook| openworker_runtime::safety::Finding {
+                    call_id: None,
+                    tool: None,
+                    evaluation_id: evaluation_id.clone(),
+                    phase: Phase::UserInput,
+                    check: hook.name.clone(),
+                    version: hook.version.clone(),
+                    outcome: "shadow_unavailable".into(),
+                    code: Some("GUARDRAIL_UNAVAILABLE".into()),
+                    match_count: 0,
+                    duration_ms: 0,
+                })
+                .collect::<Vec<_>>();
+            app.store.record_input_safety(sid, request, &findings)?;
+            return Ok(text.into());
+        }
+        Err(_) => return Err(ApiError(InputError::Unavailable.into())),
+    };
     let result = app
         .runtime
         .inspect_ingress(sid.unwrap_or(request), &config, &pins, text)

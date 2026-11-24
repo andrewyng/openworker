@@ -17,7 +17,9 @@ use openworker_runtime::{
     runtime::Runtime,
 };
 use openworker_store_postgres::{
-    service_catalog::{Admission, Entry, Profile, Release},
+    service_catalog::{
+        Admission, AdmissionPreparation, Entry, Profile, Release, ReplayPreparation,
+    },
     PostgresStore, SubmissionError,
 };
 use serde::Deserialize;
@@ -193,6 +195,21 @@ pub(crate) async fn put_release(
     headers: HeaderMap,
     Json(r): Json<Release>,
 ) -> Result<Json<Value>, ApiError> {
+    validate_release(&app, &r)?;
+    Ok(Json(json!(app.store.catalog_put(
+        &crate::service::key(&app, &headers, "release")?,
+        "release",
+        json!(r),
+        &installation(&app.config)?
+    )?)))
+}
+pub(crate) fn validate_release(app: &App, r: &Release) -> Result<(), ApiError> {
+    crate::model_registry::refresh(app)?;
+    if let Some(name) = &r.model_profile {
+        app.runtime
+            .connections
+            .resolve(&app.store.current_profile_model(name)?)?;
+    }
     r.validate()?;
     if app.service.as_ref().is_some_and(|s| s.agent == r.id) {
         return Err(ApiError(SubmissionError::Conflict.into()));
@@ -213,12 +230,7 @@ pub(crate) async fn put_release(
     for p in &r.runtime_profiles {
         app.store.catalog_get("profile", p)?;
     }
-    Ok(Json(json!(app.store.catalog_put(
-        &crate::service::key(&app, &headers, "release")?,
-        "release",
-        json!(r),
-        &installation(&app.config)?
-    )?)))
+    Ok(())
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -282,11 +294,43 @@ pub(crate) async fn admit(
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     admit_kind(app, headers, input, "session").await
 }
+
+pub(crate) fn admission_checks(
+    app: &App,
+    release: &Release,
+    model: Option<&openworker_runtime::connections::Selection>,
+    requested: Option<&openworker_runtime::connections::Choice>,
+    preferences: &openworker_runtime::integrations::Preferences,
+    principal: Option<String>,
+) -> Result<openworker_runtime::safety::Config> {
+    let configured = &app.runtime.integrations;
+    let mut agent_prefs = release.integrations.clone();
+    let mut session_prefs = preferences.clone();
+    configured.model_preference(
+        &mut agent_prefs,
+        release.default_model.as_ref().filter(|choice| {
+            model.is_some_and(|selection| selection.connection == choice.connection)
+        }),
+    )?;
+    configured.model_preference(&mut session_prefs, requested)?;
+    let admission = configured.admit_for_model(&agent_prefs, &session_prefs, model)?;
+    configured.checks_for_app(&admission, || Ok(principal))
+}
 pub(crate) async fn admit_kind(
+    app: App,
+    headers: HeaderMap,
+    input: Admission,
+    kind: &str,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    admit_with_fixture(app, headers, input, kind, None).await
+}
+
+pub(crate) async fn admit_with_fixture(
     app: App,
     headers: HeaderMap,
     mut input: Admission,
     kind: &str,
+    replay_fixture: Option<openworker_runtime::replay_fixture::Fixture>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     if input.runtime_profile.is_some() && input.environment_id.is_some() {
         return Err(ApiError(SubmissionError::InvalidRequest.into()));
@@ -309,7 +353,7 @@ pub(crate) async fn admit_kind(
         input
             .runtime_profile
             .clone()
-            .or(r.default_runtime_profile)
+            .or_else(|| r.default_runtime_profile.clone())
             .unwrap_or_else(|| "default".into())
     };
     let profile = match app.store.catalog_get("profile", &profile_id) {
@@ -338,25 +382,35 @@ pub(crate) async fn admit_kind(
     }
     let spec = provider(&app.config, &profile)?.spec(p.sharing.clone(), Management::Harness);
     let request = crate::service::key(&app, &headers, kind)?;
+    crate::model_registry::refresh(&app)?;
+    let pinned = if input.model.is_none() {
+        r.model_profile
+            .as_deref()
+            .map(|n| app.store.current_profile_model(n))
+            .transpose()?
+    } else {
+        None
+    };
     if let Some(text) = &input.initial_message {
         let model = input
             .model
             .as_ref()
+            .or(pinned.as_ref())
             .or(r.default_model.as_ref())
             .map(|c| app.runtime.connections.resolve(c))
             .transpose()?;
-        let configured = &app.runtime.integrations;
-        let mut agent_prefs = r.integrations.clone();
-        let mut session_prefs = input.integrations.clone();
-        configured.model_preference(
-            &mut agent_prefs,
-            r.default_model
-                .as_ref()
-                .filter(|m| model.as_ref().is_some_and(|s| s.connection == m.connection)),
+        let checks = admission_checks(
+            &app,
+            &r,
+            model.as_ref(),
+            input.model.as_ref(),
+            &input.integrations,
+            Some(
+                app.store
+                    .authorize(openworker_store_postgres::auth::Action::Submit, None, None)?
+                    .principal,
+            ),
         )?;
-        configured.model_preference(&mut session_prefs, input.model.as_ref())?;
-        let pref = configured.admit_for_model(&agent_prefs, &session_prefs, model.as_ref())?;
-        let checks = app.runtime.integration_checks(&pref)?;
         input.initial_message = Some(
             crate::service_safety::inspect_with(&app, None, &request, text, Some(&checks)).await?,
         );
@@ -364,6 +418,26 @@ pub(crate) async fn admit_kind(
     let loop_spec = if p.loop_placement.is_service() {
         None
     } else {
+        // Native sandbox inference uses OpenShell's provisioned provider identity.
+        // A registry credential is held on workers and cannot substitute for that identity.
+        if let Some(choice) = input
+            .model
+            .as_ref()
+            .or(pinned.as_ref())
+            .or(r.default_model.as_ref())
+        {
+            if app
+                .store
+                .model_routes()?
+                .iter()
+                .any(|p| p.name == choice.connection)
+            {
+                return Err(ApiError(
+                    openworker_store_postgres::model_registry::RegistryError::NativeRouteRequired
+                        .into(),
+                ));
+            }
+        }
         let c = app.config.profile_config(&p)?;
         let route = c
             .openshell
@@ -374,6 +448,7 @@ pub(crate) async fn admit_kind(
             && input
                 .model
                 .as_ref()
+                .or(pinned.as_ref())
                 .or(r.default_model.as_ref())
                 .is_none_or(|m| m.connection != route.connection)
         {
@@ -384,9 +459,18 @@ pub(crate) async fn admit_kind(
             Management::Harness,
         ))
     };
-    let op = app
-        .store
-        .service_admit_with_loop(&request, input, release, profile, spec, loop_spec)?;
+    let op = app.store.service_admit_prepared(
+        &request,
+        input,
+        release,
+        profile,
+        spec,
+        AdmissionPreparation {
+            loop_spec,
+            reviewed: pinned,
+            replay_fixture,
+        },
+    )?;
     Ok((
         if op.status == "complete" {
             StatusCode::OK
@@ -441,6 +525,36 @@ async fn control_matching(config: &Config, store: &PostgresStore, installed: &st
         provider
             .inspect(env.binding.clone().context("Environment not ready")?)
             .await?;
+        match store.claim_replay_fixture(&op.id)? {
+            ReplayPreparation::Ready => {}
+            ReplayPreparation::Pending => return Ok(()),
+            ReplayPreparation::Restore {
+                fixture,
+                verify_only,
+            } => {
+                let outcome = crate::eval_replay::restore_fixture(
+                    provider.as_ref(),
+                    env.binding
+                        .clone()
+                        .context("Replay environment not ready")?,
+                    &fixture,
+                    verify_only,
+                )
+                .await;
+                match outcome {
+                    Ok(receipt) => store.complete_replay_fixture(&op.id, receipt)?,
+                    Err(_) if verify_only => {
+                        store.service_update_operation(
+                            &op.id,
+                            "failed",
+                            Some("Workspace fixture could not be verified".into()),
+                        )?;
+                        return Ok(());
+                    }
+                    Err(_) => return Ok(()), // Reconcile only by verifying the original sandbox.
+                }
+            }
+        }
         if let Some(id) = &op.loop_environment_id {
             let settings: Profile = serde_json::from_value(profile.definition.clone())?;
             let loop_provider = config.profile_config(&settings)?.openshell_provider(true)?;
@@ -512,13 +626,25 @@ async fn finish_ready_admission(
     if let Some(reference) = &input.workspace_id {
         parameters["workspace_id"] = json!(reference);
     }
-    if let Some(model) = input.model {
+    let pin = store.operation_model_pin(&op.id)?;
+    if let Some(model) = pin.as_ref().map(|p| p.choice.clone()).or(input.model) {
         parameters["model"] = json!(model);
     }
     if let Some(model) = release.reviewer_model {
         parameters["reviewer_model"] = json!(model);
     }
     let mut session = runtime.prepare_session(parameters)?;
+    if let Some(pin) = pin {
+        ensure!(
+            session
+                .model_selection
+                .as_ref()
+                .is_some_and(|m| m.identity == pin.selection.identity
+                    && m.connection == pin.choice.connection
+                    && m.model == pin.choice.model),
+            SubmissionError::Conflict
+        );
+    }
     session.allow_workspace_reads = profile.allow_workspace_reads.clone();
     if let Some(id) = &op.loop_environment_id {
         session.loop_environment = Some(
@@ -697,21 +823,7 @@ pub fn selector(
         scripted: config.scripted,
         fallback_model: config.model.clone(),
         model_provider: config.model_provider,
-        model_connections: config
-            .model_connections
-            .iter()
-            .map(|c| {
-                Ok((
-                    c.id.clone(),
-                    rt.connections
-                        .resolve(&openworker_runtime::connections::Choice::new(
-                            &c.id,
-                            "validation",
-                        ))?
-                        .identity,
-                ))
-            })
-            .collect::<Result<_>>()?,
+        model_connections: rt.connections.host_identities()?,
         environment_provider: Some(env.provider),
         environment_identity: Some(env.provider_identity),
         environment_profile: Some(env.profile_digest),
@@ -810,6 +922,8 @@ pub async fn worker_with_options(
         "legacy".into(),
         (base_selector.clone(), default_factory.clone()),
     );
+    let mut registered_routes = None;
+    let mut advertised = base_selector.clone();
     let work = Worker::new(
         db,
         base_selector.clone(),
@@ -817,7 +931,7 @@ pub async fn worker_with_options(
             slots,
             ..Default::default()
         },
-        default_factory,
+        default_factory.clone(),
     )?
     .with_catalog(catalog)
     .run_with_drain(
@@ -830,9 +944,22 @@ pub async fn worker_with_options(
         let mut type_cursor = String::new();
         while !abort.is_cancelled() {
             provider.check_gateway().await?;
+            let routes = store.model_routes()?;
+            if registered_routes.as_ref() != Some(&routes) {
+                let template = config.api_runtime("service-worker-base", store.clone())?;
+                advertised = selector(&config, &template)?;
+                template.shutdown().await?;
+                let mut catalog = cache.lock().unwrap();
+                catalog.clear();
+                catalog.insert(
+                    "legacy".into(),
+                    (advertised.clone(), default_factory.clone()),
+                );
+                registered_routes = Some(routes);
+            }
             store.advertise_worker(
                 &node,
-                base_selector.clone(),
+                advertised.clone(),
                 slots as u16,
                 drain.is_requested(),
             )?;

@@ -9,7 +9,10 @@ use serde_json::{json, Value};
 pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
     tx.batch_execute(include_str!("observers.sql"))?;
     #[cfg(feature = "compliance")]
-    tx.batch_execute(include_str!("compliance.sql"))?;
+    {
+        tx.batch_execute(include_str!("compliance.sql"))?;
+        super::compliance_catalog::migrate(tx)?;
+    }
     #[cfg(not(feature = "compliance"))]
     let _ = tx;
     Ok(())
