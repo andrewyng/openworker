@@ -165,6 +165,7 @@ pub struct Event<'a> {
     pub interaction_id: Option<&'a str>,
     pub call_id: Option<&'a str>,
     pub decision: Option<&'a str>,
+    pub agent_context: Option<&'a crate::provider_adapters::AgentContext>,
 }
 pub type Delivery<'a> = futures_util::future::BoxFuture<'a, Result<()>>;
 pub trait Observer: Send + Sync {
@@ -781,7 +782,8 @@ impl Configured {
         Ok(decisions)
     }
     pub async fn deliver(&self, admission: &Admission, sid: &str, receipt: &Value) -> Result<()> {
-        self.deliver_with_model(admission, sid, receipt, None).await
+        self.deliver_with_model(admission, sid, receipt, None, None)
+            .await
     }
     pub(crate) async fn deliver_with_model(
         &self,
@@ -789,6 +791,7 @@ impl Configured {
         sid: &str,
         receipt: &Value,
         binding: Option<(&crate::connections::Manager, &Selection)>,
+        agent_context: Option<&crate::provider_adapters::AgentContext>,
     ) -> Result<()> {
         let scoped = admission
             .model_connection
@@ -804,7 +807,7 @@ impl Configured {
         let mut inner = admission.clone();
         inner.overrides.clear();
         effective
-            .deliver_scoped(&inner, sid, receipt, binding)
+            .deliver_scoped(&inner, sid, receipt, binding, agent_context)
             .await
     }
 
@@ -814,6 +817,7 @@ impl Configured {
         sid: &str,
         receipt: &Value,
         binding: Option<(&crate::connections::Manager, &Selection)>,
+        agent_context: Option<&crate::provider_adapters::AgentContext>,
     ) -> Result<()> {
         let id = receipt["hook"]["integration"]
             .as_str()
@@ -861,6 +865,7 @@ impl Configured {
             interaction_id: facts["interaction_id"].as_str(),
             call_id: facts["call_id"].as_str(),
             decision: facts["decision"].as_str(),
+            agent_context,
         };
         match self.instances.get(id) {
             Some(Instance::Observer(observer)) => observer.notify(event).await,

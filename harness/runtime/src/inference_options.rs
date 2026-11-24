@@ -3,17 +3,62 @@ use anyhow::{ensure, Result};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 
-#[derive(Clone, Default, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct InferenceOptions {
     pub headers: BTreeMap<String, String>,
     pub query: BTreeMap<String, String>,
     pub body: Map<String, Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeouts: Option<ModelTimeouts>,
+}
+
+#[derive(Clone, Default, Deserialize, PartialEq, Serialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelTimeouts {
+    pub request_ms: Option<u64>,
+    pub generation_ms: Option<u64>,
+}
+
+impl ModelTimeouts {
+    pub fn request(&self) -> Duration {
+        Duration::from_millis(self.request_ms.unwrap_or(180_000))
+    }
+
+    pub fn generation(&self) -> Duration {
+        self.generation_ms.map_or_else(
+            || {
+                self.request()
+                    .saturating_add(Duration::from_secs(60))
+                    .max(Duration::from_secs(240))
+            },
+            Duration::from_millis,
+        )
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            (Duration::from_millis(1)..=Duration::from_secs(3600)).contains(&self.request()),
+            "Model request timeout must be between 1 and 3600000 milliseconds"
+        );
+        ensure!(
+            self.generation() >= self.request() && self.generation() <= Duration::from_secs(7200),
+            "Generation timeout must cover one request and cannot exceed 7200000 milliseconds"
+        );
+        Ok(())
+    }
 }
 
 impl InferenceOptions {
+    pub fn is_empty(&self) -> bool {
+        self.headers.is_empty()
+            && self.query.is_empty()
+            && self.body.is_empty()
+            && self.timeouts.is_none()
+    }
+
     pub fn headers(&self) -> Result<HeaderMap> {
         let mut out = HeaderMap::new();
         for (name, value) in &self.headers {
@@ -56,6 +101,9 @@ impl InferenceOptions {
             "Inference options exceed 16 KiB"
         );
         self.headers()?;
+        if let Some(timeouts) = &self.timeouts {
+            timeouts.validate()?;
+        }
         for name in self.query.keys().chain(self.body.keys()) {
             ensure!(
                 !name.is_empty()
@@ -124,6 +172,25 @@ impl InferenceOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extended_request_increases_implicit_generation_budget() {
+        let defaults = ModelTimeouts::default();
+        assert_eq!(defaults.request(), Duration::from_secs(180));
+        assert_eq!(defaults.generation(), Duration::from_secs(240));
+        let extended: ModelTimeouts =
+            serde_json::from_value(serde_json::json!({"requestMs":600000})).unwrap();
+        extended.validate().unwrap();
+        assert_eq!(extended.request(), Duration::from_secs(600));
+        assert_eq!(extended.generation(), Duration::from_secs(660));
+        assert!(ModelTimeouts {
+            generation_ms: Some(240000),
+            ..extended
+        }
+        .validate()
+        .is_err());
+    }
+
     use serde_json::json;
     #[test]
     fn extensions_preserve_owned_fields_and_encode_query_values() {

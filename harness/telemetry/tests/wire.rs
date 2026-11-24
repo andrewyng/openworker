@@ -100,6 +100,8 @@ async fn all_signals_have_valid_otlp_and_no_payload_or_metric_identifiers() {
             reasoning: Some(3),
         });
         child.purpose(ModelPurpose::Compaction);
+        child.model_request_id("request-abc123");
+        child.model_request_id("https://secret.example/token");
         child.link(TraceContext {
             trace: [1; 16],
             span: [2; 8],
@@ -177,7 +179,10 @@ async fn all_signals_have_valid_otlp_and_no_payload_or_metric_identifiers() {
         .attributes
         .iter()
         .any(|a| a.key == "openworker.turn.hash"));
+    assert!(child.attributes.iter().any(|a| a.key == "openworker.request.id"
+        && matches!(a.value.as_ref().and_then(|v|v.value.as_ref()), Some(opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(v)) if v == "request-abc123")));
     let m = format!("{metrics:?}");
+    assert!(!m.contains("request.id"));
     assert!(m.contains("openworker.model.tokens"));
     assert!(m.contains("openworker.operation.last_error_timestamp_seconds"));
     assert!(!m.contains("session.hash"));

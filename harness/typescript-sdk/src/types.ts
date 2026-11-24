@@ -47,6 +47,7 @@ export interface InferenceOptions {
   headers?: Record<string, string>;
   query?: Record<string, string>;
   body?: Record<string, Json>;
+  timeouts?: { requestMs?: number; generationMs?: number };
 }
 export interface ModelProvider {
   integrations?: Record<string, IntegrationOptions>;
@@ -377,6 +378,8 @@ export interface RunEvent {
         | { type: "assistant_delta"; attemptId: string; text: string }
         | { type: "reasoning_delta"; attemptId: string; kind: "summary" | "thinking"; text: string; blockIndex: number }
         | { type: "model_activity"; attemptId: string; elapsedMs: number }
+        | { type: "model_route"; attemptId: string; requestId?: string; routeLocus?: string; responseModel?: string }
+        | { type: "model_usage"; inputTokens: number; outputTokens: number; cachedInputTokens: number }
         | { type: "provider_error"; attemptId: string; diagnostic: ProviderDiagnostic }
         | {
             type: "tool_started";
@@ -499,7 +502,7 @@ export function providerDiagnostic(value: unknown): ProviderDiagnostic | undefin
     ...(Number.isInteger(v.http_status) && Number(v.http_status) >= 100 && Number(v.http_status) <= 599 ? { httpStatus: Number(v.http_status) } : {}),
     ...(typeof v.request_id === "string" && /^[a-zA-Z0-9_:-]{1,128}$/.test(v.request_id) && !v.request_id.startsWith("sk-") ? { requestId: v.request_id } : {}),
     ...(["responses", "chat-completions", "anthropic"].includes(String(v.api)) ? { api: v.api as ProviderDiagnostic["api"] } : {}),
-    ...(["invalid_api_key","authentication_error","permission_error","invalid_request_error","rate_limit_exceeded","rate_limit_error","insufficient_quota","context_length_exceeded","server_error","api_error","overloaded_error","misalignment_policy_violation","RESOURCE_EXHAUSTED","INVALID_ARGUMENT","UNAUTHENTICATED","PERMISSION_DENIED","http_error_body_unavailable","invalid_response","incomplete_stream","invalid_stream_json","invalid_anthropic_message","invalid_anthropic_request","invalid_chat_completion","invalid_chat_request_history","invalid_tool_call_index"].includes(String(v.code)) ? {code:String(v.code)} : {}),
+    ...(["invalid_api_key","authentication_error","permission_error","invalid_request_error","rate_limit_exceeded","rate_limit_error","insufficient_quota","context_length_exceeded","server_error","api_error","overloaded_error","misalignment_policy_violation","RESOURCE_EXHAUSTED","INVALID_ARGUMENT","UNAUTHENTICATED","PERMISSION_DENIED","http_error_body_unavailable","invalid_response","incomplete_stream","invalid_stream_json","invalid_anthropic_message","invalid_anthropic_request","invalid_chat_completion","invalid_chat_request_history","invalid_tool_call_index","adapter_invalid_receipt","adapter_outcome_unknown","connection_refused"].includes(String(v.code)) ? {code:String(v.code)} : {}),
   };
 }
 

@@ -65,8 +65,8 @@ pub use agent_team::{
 };
 pub use harness::{AgentHandle, Harness, HarnessBuilder};
 pub use session::{
-    Interruption, InterruptionKind, Response, Run, RunEvent, RunResult, RunStatus, RunStream,
-    Session, SessionInput, SessionRef, TeamRef, WorkerRef,
+    Interruption, InterruptionKind, Response, Run, RunCheckpoint, RunEvent, RunResult, RunStatus,
+    RunStream, Session, SessionInput, SessionRef, TeamRef, WorkerRef,
 };
 pub use team::{ItemSpec, ItemStatus, Team};
 

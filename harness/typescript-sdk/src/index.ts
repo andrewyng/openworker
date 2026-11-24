@@ -1145,7 +1145,7 @@ export class RunStream implements AsyncIterable<RunEvent> {
             ...(summary.type === "tool_started" && Object.hasOwn(wireSummary,"arguments") ? {arguments: wireSummary.arguments as Json} : {}),
           };
         }
-        if (summary && ["model_attempt_started", "model_attempt_finished", "assistant_delta", "reasoning_delta", "model_activity", "provider_error"].includes(summary.type)) {
+        if (summary && ["model_attempt_started", "model_attempt_finished", "assistant_delta", "reasoning_delta", "model_activity", "model_route", "model_usage", "provider_error"].includes(summary.type)) {
           const wire = record(item.summary);
           const attemptId = String(wire.attempt_id ?? "");
           switch (summary.type) {
@@ -1154,6 +1154,12 @@ export class RunStream implements AsyncIterable<RunEvent> {
             case "assistant_delta": summary = { type:summary.type, attemptId, text:String(wire.text ?? "") }; break;
             case "reasoning_delta": summary = { type:summary.type, attemptId, kind:wire.kind as "summary" | "thinking", text:String(wire.text ?? ""), blockIndex:Number(wire.block_index) }; break;
             case "model_activity": summary = { type:summary.type, attemptId, elapsedMs:Number(wire.elapsed_ms) }; break;
+            case "model_route": summary = { type:summary.type, attemptId,
+              ...(typeof wire.request_id === "string" ? {requestId:wire.request_id} : {}),
+              ...(typeof wire.route_locus === "string" ? {routeLocus:wire.route_locus} : {}),
+              ...(typeof wire.response_model === "string" ? {responseModel:wire.response_model} : {}),
+            }; break;
+            case "model_usage": summary = {type:summary.type,inputTokens:Number(wire.input_tokens),outputTokens:Number(wire.output_tokens),cachedInputTokens:Number(wire.cached_input_tokens)}; break;
             case "provider_error": {
               const diagnostic = providerDiagnostic(wire.diagnostic);
               summary = diagnostic ? { type:summary.type, attemptId, diagnostic } : null;

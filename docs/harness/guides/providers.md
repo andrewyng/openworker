@@ -213,6 +213,46 @@ await harness.setModelProvider({
     headers: { "x-routing-group": "desktop" },
     query: { "api-version": "2" },
     body: { sampling_hint: "interactive" },
+    timeouts: { requestMs: 300_000, generationMs: 360_000 },
   },
 });
 ```
+
+
+`requestMs` limits a single HTTP request, including its streamed response.
+`generationMs` limits all attempts for one model call, including retry delays.
+The defaults are 180 seconds per request and 240 seconds per model call. If you
+set only `requestMs`, the overall budget is at least one minute longer.
+
+These are harness-side limits; they are not added to the inference JSON body.
+`requestMs` accepts 1–3,600,000 ms. `generationMs` must cover a request and cannot
+exceed 7,200,000 ms. Invalid settings fail registration. The same options work on
+cluster-managed providers through `registerModelProvider` or
+`owcluster model-provider register`. Provider definitions are pinned: use a new
+provider name when changing their configuration; rotating credentials preserves it.
+
+## Native provider integrations
+
+Compiled Rust integrations receive `Endpoint::agent_context` during inference
+preparation and `integrations::Event::agent_context` during lifecycle delivery:
+
+```rust
+pub struct AgentContext {
+    pub agent_id: String,
+    pub parent_agent_id: Option<String>,
+    pub root_agent_id: String,
+}
+```
+
+These are stable instance IDs from the session and durable team roster, not
+developer-defined agent names or types. A root has no parent and its root ID is
+its own ID. A child has its immediate creator as parent and shares the root ID.
+They survive turn changes and recovery. No conversation-inheritance flag or
+child-count flag is included. Invalid ancestry fails rather than becoming a new root.
+
+The runtime supplies this context to the installed integration; the integration
+owns any translation to its provider's request fields. Ordinary providers do not
+receive additional identity fields automatically. Probes without a session and
+manually delivered events without context can have `None`; real runtime lifecycle
+delivery resolves the durable context. No app-supplied name or system prompt is
+added to identity metadata.

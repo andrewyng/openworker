@@ -353,7 +353,8 @@ test("cluster model profiles and app-owned agent revisions use scoped service ro
     res.end(JSON.stringify({id:"app-catalog@2"}));
   });
   const s = await Harness.connect(options(url));t.after(()=>s.disconnect());
-  const provider={name:"spark",api:"chat-completions",baseUrl:"https://model.example/v1",contextLimit:8192};
+  const provider={name:"spark",api:"chat-completions",baseUrl:"https://model.example/v1",contextLimit:8192,
+    inferenceOptions:{body:{deployment:"local"}},integrations:{scheduler:{}}};
   await s.registerModelProvider(provider,"test-only-model-key",{idempotencyKey:"register"});
   await s.setModelProfile("coding",{connection:"spark",model:"local-code"},{idempotencyKey:"default"});
   const definition={instructions:"Build",tools:["coding.read_file"],runtimeProfiles:["project@1"],modelProfile:"coding"};

@@ -74,6 +74,10 @@ impl Runtime {
                         let model=s.model_selection.clone();
                         let integrations=integrations.clone();
                         let admission=s.integrations.clone();
+                        let agent_context = group.first()
+                            .filter(|receipt| receipt["hook"]["integration"].is_string())
+                            .map(|_| crate::provider_adapters::AgentContext::resolve(&store, &s))
+                            .transpose();
                         let sid=s.id.clone();
                         let registry=handlers.clone();
                         let store=store.clone();
@@ -85,7 +89,10 @@ impl Runtime {
                                 if receipt["hook"]["integration"].is_string() {
                                     let result = tokio::time::timeout(
                                         std::time::Duration::from_secs(3),
-                                        integrations.deliver_with_model(&admission,&sid,&receipt,model.as_ref().map(|s|(manager.as_ref(),s))),
+                                        async {
+                                            let context = agent_context.as_ref().map_err(|_| anyhow::anyhow!("Invalid durable agent identity"))?;
+                                            integrations.deliver_with_model(&admission,&sid,&receipt,model.as_ref().map(|s|(manager.as_ref(),s)),context.as_ref()).await
+                                        },
                                     ).await;
                                     let mut db = store.lock().unwrap();
                                     if !result.is_ok_and(|delivery|delivery.is_ok()) {

@@ -51,6 +51,9 @@ pub const FIRST_OUTPUT: &str = "openworker.model.first_output.duration";
 pub const GEN_AI_OPERATION: &str = "gen_ai.operation.name";
 pub const OBSERVATION_TYPE: &str = "langfuse.observation.type";
 pub const MODEL_NAME: &str = "gen_ai.request.model";
+pub const MODEL_REQUEST_ID: &str = "openworker.request.id";
+pub const MODEL_ROUTE_LOCUS: &str = "openworker.route.locus";
+pub const RESPONSE_MODEL: &str = "gen_ai.response.model";
 pub const TOOL_NAME: &str = "gen_ai.tool.name";
 pub const SANDBOX_PROVIDER: &str = "openworker.sandbox.provider";
 pub const SANDBOX_ENFORCEMENT: &str = "openworker.sandbox.enforcement";
@@ -225,6 +228,24 @@ pub static FIELDS: &[Field] = &[
     },
     Field {
         key: MODEL_NAME,
+        kind: Kind::String,
+        capture: CaptureClass::Metadata,
+        metric_dimension: false,
+    },
+    Field {
+        key: MODEL_REQUEST_ID,
+        kind: Kind::String,
+        capture: CaptureClass::Identity,
+        metric_dimension: false,
+    },
+    Field {
+        key: MODEL_ROUTE_LOCUS,
+        kind: Kind::String,
+        capture: CaptureClass::Metadata,
+        metric_dimension: false,
+    },
+    Field {
+        key: RESPONSE_MODEL,
         kind: Kind::String,
         capture: CaptureClass::Metadata,
         metric_dimension: false,

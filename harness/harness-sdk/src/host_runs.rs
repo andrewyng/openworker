@@ -1230,6 +1230,8 @@ fn stream_item(agent: &str, e: Event, tools: Option<&openworker_runtime::bundle:
         | "assistant_delta"
         | "reasoning_delta"
         | "model_activity"
+        | "model_route"
+        | "model_usage"
         | "provider_error" => {
             let mut summary = e.data.clone();
             summary["type"] = json!(e.kind);

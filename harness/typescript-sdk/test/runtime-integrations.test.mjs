@@ -52,6 +52,9 @@ test("observer failure allows execution and a required scanner blocks a resumed 
     await delay(50);
   }
   assert.equal(events.at(-1)?.state,"session_closed");
+  for (const event of events) {
+    assert.deepEqual(event.agent_context, {agent_id:first.id,parent_agent_id:null,root_agent_id:first.id});
+  }
   assert.deepEqual(events.map(e=>e.seq), [...new Set(events.map(e=>e.seq))].sort((a,b)=>a-b));
   assert.deepEqual(events.filter(e=>e.interaction===waiting.interruptions[0].id).map(e=>e.state),
     ["waiting_user_approval","user_approval_done","waiting_tool_completion","tool_finished"]);

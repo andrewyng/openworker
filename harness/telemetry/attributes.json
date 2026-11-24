@@ -209,6 +209,27 @@
       "metric_dimension": false
     },
     {
+      "constant": "MODEL_REQUEST_ID",
+      "key": "openworker.request.id",
+      "type": "string",
+      "capture": "identity",
+      "metric_dimension": false
+    },
+    {
+      "constant": "MODEL_ROUTE_LOCUS",
+      "key": "openworker.route.locus",
+      "type": "string",
+      "capture": "metadata",
+      "metric_dimension": false
+    },
+    {
+      "constant": "RESPONSE_MODEL",
+      "key": "gen_ai.response.model",
+      "type": "string",
+      "capture": "metadata",
+      "metric_dimension": false
+    },
+    {
       "constant": "TOOL_NAME",
       "key": "gen_ai.tool.name",
       "type": "string",
