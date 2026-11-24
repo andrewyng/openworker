@@ -133,7 +133,7 @@ impl Host {
             ensure!(
                 doc.id == member.team_id
                     && instance.session_id == session.id
-                    && openworker_runtime::agent_team::runtime_type(&doc, &instance)?
+                    && openworker_runtime::agent_team::runtime_type(&doc, instance)?
                         == session.coworker,
                 "Session runtime does not match its pinned team type"
             );
