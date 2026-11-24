@@ -3,8 +3,9 @@ import {mountComplianceCatalog} from "./compliance-catalog.js";
 import {mountSessionTracing, serviceTracingAdapter} from "./tracing.js";
 import { mountObservability } from "./observability.js";
 import { captureEvalCase, mountEvals } from "./evals.js";
-import { editEvalTags } from "./eval-selection.js";
-import { mountGuardrailCatalog } from "./guardrail-view.js";
+import { editEvalTags, evalOutcome, evalSelectionLink, evalTagPath } from "./eval-selection.js";
+import { jobHref } from "./eval-lists.js";
+import { guardrailPath, guardrailRows, mountGuardrailCatalog } from "./guardrail-view.js";
 let disposeObservability = null;
 let safetyActivity = null;
 const paths = {
@@ -626,7 +627,19 @@ async function render() {
       const tracing = () => {
         disposeObservability?.();
         const view = mountSessionTracing(main, {
-          adapter: serviceTracingAdapter(request),
+          adapter: {
+            ...serviceTracingAdapter(request),
+            guardrails: (q, signal) => request(guardrailPath({ session_id: q.sessionId, turn_id: q.turnId, limit: 50 }), signal),
+            tags: (q, signal) => request(evalTagPath(q), signal),
+          },
+          renderGuardrails: guardrailRows,
+          renderEvalTags: value => (value?.tags || []).map(({ tag }) =>
+            `<a class="tr-eval-tag" href="${evalSelectionLink(tag)}">${esc(tag)}</a>`).join(""),
+          renderEvalResults: value => (value?.evaluations || []).map(({ job_id, result }) => {
+            const [kind, label] = evalOutcome(result);
+            return `<a href="${jobHref(null, job_id)}">${esc(result.evaluator.name)} · v${esc(result.evaluator.version)} <span class="ev-pill ev-${kind}"><i></i>${esc(label)}</span></a>`;
+          }).join(""),
+          evalSelectionLink,
           onOverview: overview,
           initialRun: id ? { session_id: id, turn_id: detailId } : null,
           onCapture: can.run() ? (turn, signal) => captureEvalCase(main, api, turn, signal) : undefined,

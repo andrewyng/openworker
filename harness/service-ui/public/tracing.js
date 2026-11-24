@@ -1,7 +1,4 @@
 import { esc, duration, count } from "./observability-data.js";
-import { guardrailPath, guardrailRows } from "./guardrail-view.js";
-import { evalOutcome, evalSelectionLink, evalTagPath } from "./eval-selection.js";
-import { jobHref } from "./eval-lists.js";
 const id = (s) => encodeURIComponent(s);
 const path = (q) =>
   `/v1/sessions/${id(q.sessionId)}/observability/${id(q.turnId)}`;
@@ -49,8 +46,6 @@ export function serviceTracingAdapter(request) {
       ),
     summary: (q, signal) => get(path(q) + "/summary", signal),
     children: (q, signal) => get(path(q) + "/children", signal),
-    guardrails: (q, signal) => get(guardrailPath({ session_id: q.sessionId, turn_id: q.turnId, limit: 50 }), signal),
-    tags: (q, signal) => get(evalTagPath(q), signal),
   };
 }
 const svg = (kind) => {
@@ -96,12 +91,11 @@ const reason = (e) =>
 const button = (action, text, extra = "") =>
   `<button type="button" data-tr="${action}" ${extra}>${text}</button>`;
 const scope = (r) => ({ sessionId: r.session_id, turnId: r.turn_id });
-const tags = (value) => (value?.tags || []).map(({ tag }) =>
-  `<a class="tr-eval-tag" href="${evalSelectionLink(tag)}">${esc(tag)}</a>`).join("");
 /** Session-oriented trace browser. */
 export function mountSessionTracing(
   root,
-  { adapter, initialRun = null, onOverview, onCapture, onTags } = {},
+  { adapter, initialRun = null, onOverview, onCapture, onTags,
+    renderGuardrails = () => "", renderEvalTags = () => "", renderEvalResults = () => "", evalSelectionLink } = {},
 ) {
   if (!adapter) throw Error("A tracing adapter is required");
   const safetyBySession = new Map();
@@ -126,7 +120,7 @@ export function mountSessionTracing(
     tab = "preview",
     pending = false;
   root.classList.add("ow-session-tracing");
-  root.innerHTML = `<div class="tr-heading"><div><h1>Tracing</h1><p>Follow a session, one turn at a time.</p></div><div>${onTags ? `<a class="button tr-guardrails-link" href="${evalSelectionLink()}">Evaluate tagged turns</a>` : ""}${adapter.guardrails ? '<a class="button tr-guardrails-link" href="#observability/guardrails">Guardrails</a>' : ""}${onOverview ? button("overview", "Usage overview ↗") : ""}${button("refresh", "Refresh")}</div></div><div class="tr-toolbar"><input type="search" aria-label="Search sessions" placeholder="Search session name or ID…" maxlength="200"><span class="tr-directory-state" role="status"></span></div><div class="tr-workbench"><aside class="tr-directory"><div class="tr-panehead">Sessions</div><div class="tr-results"></div><div class="tr-directory-footer"></div></aside><section class="tr-execution"><div class="tr-panehead"><span>Execution</span><div class="tr-segment" role="group" aria-label="Execution view">${button("tree", "Tree", 'aria-pressed="true"')}${button("waterfall", "Waterfall", 'aria-pressed="false"')}</div></div><div class="tr-context"></div><div class="tr-turns"></div></section><section class="tr-inspector"><div class="tr-panehead">Step details</div><div class="tr-details"></div></section></div>`;
+  root.innerHTML = `<div class="tr-heading"><div><h1>Tracing</h1><p>Follow a session, one turn at a time.</p></div><div>${onTags && evalSelectionLink ? `<a class="button tr-guardrails-link" href="${evalSelectionLink()}">Evaluate tagged turns</a>` : ""}${adapter.guardrails ? '<a class="button tr-guardrails-link" href="#observability/guardrails">Guardrails</a>' : ""}${onOverview ? button("overview", "Usage overview ↗") : ""}${button("refresh", "Refresh")}</div></div><div class="tr-toolbar"><input type="search" aria-label="Search sessions" placeholder="Search session name or ID…" maxlength="200"><span class="tr-directory-state" role="status"></span></div><div class="tr-workbench"><aside class="tr-directory"><div class="tr-panehead">Sessions</div><div class="tr-results"></div><div class="tr-directory-footer"></div></aside><section class="tr-execution"><div class="tr-panehead"><span>Execution</span><div class="tr-segment" role="group" aria-label="Execution view">${button("tree", "Tree", 'aria-pressed="true"')}${button("waterfall", "Waterfall", 'aria-pressed="false"')}</div></div><div class="tr-context"></div><div class="tr-turns"></div></section><section class="tr-inspector"><div class="tr-panehead">Step details</div><div class="tr-details"></div></section></div>`;
   const $ = (s) => root.querySelector(s);
   const query = () => $(".tr-toolbar input").value;
   function sessions() {
@@ -183,19 +177,16 @@ export function mountSessionTracing(
     $(".tr-context").innerHTML =
       crumb() +
       `<h2>${esc(session.name || session.agent || session.session_id)}</h2><div class="tr-chips"><span>${esc(session.status || "Unknown")}</span><span>${turns.length} ${turns.length === 1 ? "turn" : "turns"} loaded${nextTurns ? " · more available" : ""}</span><code>${esc(session.session_id)}</code>${findings.some((finding) => finding.hit) ? '<span class="tr-safety-tag">Guardrail hit</span>' : ""}</div>`
-      + (onTags || session.evalTags?.tags.length ? `<div class="tr-eval-tags">${tags(session.evalTags)}${onTags ? button("session-tags", "Session tags") : ""}</div>` : "")
-      + (beforeTurn.length ? `<div class="tr-safety-group"><h3>Session safety activity</h3>${guardrailRows(beforeTurn)}</div>` : "");
+      + (onTags || session.evalTags?.tags.length ? `<div class="tr-eval-tags">${renderEvalTags(session.evalTags)}${onTags ? button("session-tags", "Session tags") : ""}</div>` : "")
+      + (beforeTurn.length ? `<div class="tr-safety-group"><h3>Session safety activity</h3>${renderGuardrails(beforeTurn)}</div>` : "");
   }
   const visibleSteps = (c) =>
     (c.steps || []).filter((s) => s.operation !== "model.requested");
   function body(t, c) {
     const safety = c.findings?.length
-      ? `<div class="tr-safety-group"><h3>Guardrails</h3>${guardrailRows(c.findings, false, Boolean(onTags))}</div>` : "";
-    const tagControls = onTags || c.evalTags?.tags.length ? `<div class="tr-eval-tags">${tags(c.evalTags)}${onTags ? button("turn-tags", "Turn tags", `data-turn="${esc(t.turn_id)}"`) : ""}</div>` : "";
-    const evaluations = c.evalTags?.evaluations.map(({ job_id, result }) => {
-      const [kind, label] = evalOutcome(result);
-      return `<a href="${jobHref(null, job_id)}">${esc(result.evaluator.name)} · v${esc(result.evaluator.version)} <span class="ev-pill ev-${kind}"><i></i>${esc(label)}</span></a>`;
-    }).join("") || "";
+      ? `<div class="tr-safety-group"><h3>Guardrails</h3>${renderGuardrails(c.findings, false, Boolean(onTags))}</div>` : "";
+    const tagControls = onTags || c.evalTags?.tags.length ? `<div class="tr-eval-tags">${renderEvalTags(c.evalTags)}${onTags ? button("turn-tags", "Turn tags", `data-turn="${esc(t.turn_id)}"`) : ""}</div>` : "";
+    const evaluations = renderEvalResults(c.evalTags);
     const annotations = tagControls + (evaluations ? `<div class="tr-eval-results"><h3>Evaluation results</h3>${evaluations}</div>` : "") + safety;
     if (c.error) return annotations + `<p class="tr-error" role="status">${esc(c.error)}</p>`;
     if (c.loading)
@@ -216,7 +207,7 @@ export function mountSessionTracing(
         ? `${count(total.input.total + total.output.total)}${total.input.unknown || total.output.unknown ? " + unknown" : ""}`
         : "Not reported";
     let html = annotations + `<div class="tr-turn-metrics"><span>${esc(duration(summary?.wall_elapsed_us))} elapsed</span><span>${tokens} tokens</span><span>${ss.length} steps loaded</span>${onCapture && t.status === "completed" ? button("capture", "Add to dataset", `class="tr-capture" data-turn="${esc(t.turn_id)}"`) : ""}</div>`;
-    if (onCapture && onTags && t.status === "failed") {
+    if (onCapture && onTags && evalSelectionLink && t.status === "failed") {
       const tag = c.evalTags?.tags[0]?.tag;
       html += `<p class="tr-note">Save this failure from an evaluation result. ${tag ? "" : "Add a turn tag, then "}<a href="${evalSelectionLink(tag)}">${tag ? "Evaluate the tagged turn" : "evaluate the tagged turn"}</a>.</p>`;
     }
