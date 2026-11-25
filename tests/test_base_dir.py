@@ -95,7 +95,16 @@ def test_deployed_provider_key_adopts_a_runnable_default(tmp_path, monkeypatch):
     that arrives (by deploy, not just Settings) makes its recommended model
     the default — a working default is never stolen."""
     monkeypatch.delenv("OPENWORKER_BASE_DIR", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # "Nobody can run": no provider key in this machine's environment, for any provider
+    # (a developer's OPENROUTER_API_KEY makes a row runnable just as OPENAI_API_KEY does).
+    from coworker.providers.registry import provider_descriptors
+
+    for d in provider_descriptors():
+        if d.env_key:
+            monkeypatch.delenv(d.env_key, raising=False)
+    # No Ollama either, whatever this machine has (with one up, the unchosen default
+    # would already follow it, OPE-260).
+    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: False)
     manager = SessionManager(data_dir=tmp_path / "mgr")
     from coworker.secrets import SecretStore
 
