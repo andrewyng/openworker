@@ -1515,6 +1515,8 @@
   },
   "models": {
     "add_btn": "添加",
+    "adding": "添加中…",
+    "add_failed": "无法添加该模型。",
     "add_placeholder": "添加其他模型…",
     "default_badge": "默认",
     "default_locked": "默认模型始终显示 —— 请先将其他模型设为默认",
