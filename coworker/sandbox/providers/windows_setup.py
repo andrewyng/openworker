@@ -25,6 +25,7 @@ sessions set to use it are refused (`problem()` says why). There is no weaker mo
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -249,7 +250,7 @@ def reap_private_folders() -> list[str]:
 def _powershell(script: str, arguments: list[str], *, elevate: bool) -> subprocess.CompletedProcess:
     """Run a script file with PowerShell; `elevate` asks for administrator rights (the UAC
     prompt) and waits. Output comes back through a file, because an elevated process has
-    no pipes to us."""
+    no pipes to us. `arguments` contains parameter-name/value pairs."""
     folder = tempfile.mkdtemp(prefix="ow-setup-")
     path = os.path.join(folder, "setup.ps1")
     out = os.path.join(folder, "out.txt")
@@ -258,13 +259,28 @@ def _powershell(script: str, arguments: list[str], *, elevate: bool) -> subproce
     try:
         if not elevate:
             return subprocess.run(["powershell.exe", *inner], capture_output=True, text=True, timeout=600)
-        quoted = " ".join(f"'{a}'" for a in inner)
+        # Start-Process joins ArgumentList into a command line. Encode the invocation
+        # so paths and values retain their quoting, and redirect inside PowerShell.
+        quoted = " ".join(
+            name + " '" + value.replace("'", "''") + "'"
+            for name, value in zip(arguments[::2], arguments[1::2])
+        )
+        script_path = path.replace("'", "''")
+        output = out.replace("'", "''")
+        # A normally completed script succeeds even after a handled native failure.
+        # Only an explicit script exit makes $? false and supplies the exit code.
+        command = (
+            f"& {{ try {{ & '{script_path}' {quoted}; if ($?) {{ exit 0 }}; exit $LASTEXITCODE }} "
+            f"catch {{ Write-Output $_; exit 1 }} }} *>&1 | "
+            f"Out-File -LiteralPath '{output}' -Encoding utf8"
+        )
+        encoded = base64.b64encode(command.encode("utf-16-le")).decode("ascii")
         starter = (
             f"$p = Start-Process -FilePath powershell.exe -Verb RunAs -Wait -PassThru -WindowStyle Hidden "
-            f"-ArgumentList @({quoted}, '*>', '{out}'); exit $p.ExitCode"
+            f"-ArgumentList '-NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}'; exit $p.ExitCode"
         )
         done = subprocess.run(["powershell.exe", "-NoProfile", "-Command", starter], capture_output=True, text=True, timeout=900)
-        said = Path(out).read_text(encoding="utf-8", errors="replace") if os.path.exists(out) else ""
+        said = Path(out).read_text(encoding="utf-8-sig", errors="replace") if os.path.exists(out) else ""
         return subprocess.CompletedProcess(done.args, done.returncode, said, done.stderr)
     finally:
         import shutil
