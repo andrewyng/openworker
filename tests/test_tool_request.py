@@ -54,8 +54,15 @@ async def _run(engine) -> list:
     return [e async for e in engine.run("check this repo")]
 
 
+@pytest.fixture
+def _installable_platform(monkeypatch):
+    from coworker import toolchain
+
+    monkeypatch.setattr(toolchain, "_platform_key", lambda: "darwin_arm64")
+
+
 @pytest.mark.asyncio
-async def test_emits_tool_requested_and_reports_install(tmp_path):
+async def test_emits_tool_requested_and_reports_install(tmp_path, _installable_platform):
     async def requester(args, tool_call_id=None):
         assert args["name"] == "gitleaks"
         return {"installed": True, "path": "/tmp/gitleaks", "version": "8.30.1"}
@@ -68,7 +75,7 @@ async def test_emits_tool_requested_and_reports_install(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_declining_tells_the_agent_to_fall_back_openly(tmp_path, monkeypatch):
+async def test_declining_tells_the_agent_to_fall_back_openly(tmp_path, monkeypatch, _installable_platform):
     """A refusal must not read as 'check done'. The tool result has to push the agent
     toward a disclosed fallback, which is the whole point of the contract."""
     from coworker import toolchain
@@ -92,7 +99,7 @@ async def test_declining_tells_the_agent_to_fall_back_openly(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_decline_recheck_finds_a_copy_the_user_installed_themselves(tmp_path, monkeypatch):
+async def test_decline_recheck_finds_a_copy_the_user_installed_themselves(tmp_path, monkeypatch, _installable_platform):
     """The card says "or install it yourself and continue" — that has to be real. A user
     who brews the tool while the prompt is up and clicks Continue has PROVIDED the tool;
     the agent must be handed their copy's path, not a refusal."""
