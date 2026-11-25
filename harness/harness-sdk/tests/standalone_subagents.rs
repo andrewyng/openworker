@@ -11,6 +11,18 @@ async fn scenario(managed: bool, execution: &str, approval: u8) {
     let work = root.join("work");
     std::fs::create_dir(&work).unwrap();
     std::fs::write(work.join("proof.txt"), "CHILD_FILE_EVIDENCE").unwrap();
+    let mut child_tools = vec!["coding.read_file"];
+    let mut child_calls =
+        vec![json!({"name":"coding__read_file","arguments":{"path":"proof.txt"}})];
+    let write_path = match approval {
+        6 => Some("reports/proof.txt"),
+        7 => Some("reports-old/proof.txt"),
+        _ => None,
+    };
+    if let Some(path) = write_path {
+        child_tools.push("coding.write_file");
+        child_calls.push(json!({"name":"coding__write_file","arguments":{"path":path,"content":"reviewed report"}}));
+    }
     let executable = std::path::PathBuf::from(env!("CARGO_BIN_EXE_sdk-test-host"));
     let builder = Harness::builder()
         .state_dir(root.join("state"))
@@ -20,9 +32,10 @@ async fn scenario(managed: bool, execution: &str, approval: u8) {
         .agent(
             Agent::new("assistant")
                 .instructions("Coordinate independently.")
-                .tool("coding.read_file")
+                .tools(child_tools.iter().copied())
+                .never_allow_read_write_outside_workspace(approval == 4)
                 .approvals(if approval > 0 {
-                    if approval == 2 {
+                    if approval >= 2 {
                         Approvals::Always
                     } else {
                         Approvals::Only(Default::default())
@@ -30,7 +43,25 @@ async fn scenario(managed: bool, execution: &str, approval: u8) {
                 } else {
                     Approvals::Never
                 })
-                .allow_subagents(true),
+                .subagent_options(SubagentOptions {
+                    creation_grant: (approval >= 3).then(|| SubagentCreationGrant {
+                        max_creations: 1,
+                        tools: child_tools.iter().map(|tool| (*tool).into()).collect(),
+                        workspace: (approval >= 4).then(|| SubagentWorkspaceGrant {
+                            write: if write_path.is_some() {
+                                vec!["reports/".into()]
+                            } else {
+                                vec![]
+                            },
+                            read: vec![if approval != 5 {
+                                ".".into()
+                            } else {
+                                "other-directory".into()
+                            }],
+                        }),
+                    }),
+                    ..SubagentOptions::enabled()
+                }),
         );
     #[cfg(feature = "recording")]
     let builder = builder.recording(openworker_sdk::RecordingConfig::sqlite(
@@ -45,18 +76,19 @@ async fn scenario(managed: bool, execution: &str, approval: u8) {
         builder.embedded().await.unwrap()
     };
     let parent = h.session("assistant", &work).await.unwrap();
-    let request = json!({"agent_id":"reader","system_prompt":"Read the named evidence file.","context":plan(json!([{"name":"coding__read_file","arguments":{"path":"proof.txt"}}])),"tools":["coding.read_file"],"execution":execution});
+    let request = json!({"agent_id":"reader","system_prompt":"Read the named evidence file.","context":plan(json!(child_calls)),"tools":child_tools,"execution":execution});
     let mut steps = vec![json!({"name":"create_sub_agent","arguments":request})];
     if execution == "async" {
         steps.push(
             json!({"name":"wait_agent","arguments":{"agent_ids":["reader"],"timeout_ms":15000}}),
         );
     }
-    let mut run = tokio::time::timeout(Duration::from_secs(35), parent.run(&plan(json!(steps))))
+    let prompt = plan(json!(steps));
+    let mut run = tokio::time::timeout(Duration::from_secs(35), parent.run(&prompt))
         .await
         .unwrap()
         .unwrap();
-    if approval > 0 {
+    if matches!(approval, 1 | 2) {
         assert_eq!(run.status, RunStatus::Interrupted);
         let card = &run.interruptions[0];
         assert!(parent
@@ -72,7 +104,7 @@ async fn scenario(managed: bool, execution: &str, approval: u8) {
             .unwrap()
             .unwrap();
     }
-    if approval == 2 {
+    if matches!(approval, 2 | 3 | 5 | 7) {
         assert_eq!(
             run.status,
             RunStatus::Interrupted,
@@ -80,6 +112,9 @@ async fn scenario(managed: bool, execution: &str, approval: u8) {
         );
         let card = &run.interruptions[0];
         assert_ne!(card.session_id, parent.id());
+        if let Some(path) = write_path {
+            assert!(!work.join(path).exists());
+        }
         parent
             .respond(card, Response::Approve(ApprovalDecision::Once))
             .await
@@ -88,6 +123,24 @@ async fn scenario(managed: bool, execution: &str, approval: u8) {
             .await
             .unwrap()
             .unwrap();
+    }
+    if approval == 3 {
+        assert_eq!(run.status, RunStatus::Completed);
+        let retry = parent.run(&prompt).await.unwrap();
+        assert_eq!(retry.status, RunStatus::Completed, "{retry:?}");
+        let mut second =
+            serde_json::from_str::<Value>(prompt.strip_prefix("TEST_RESOURCE_GRANTS ").unwrap())
+                .unwrap();
+        second[0]["arguments"]["agent_id"] = json!("second-reader");
+        let second = parent.run(&plan(second)).await.unwrap();
+        assert_eq!(second.status, RunStatus::Interrupted, "{second:?}");
+        assert_eq!(second.interruptions[0].session_id, parent.id());
+    }
+    if let Some(path) = write_path {
+        assert_eq!(
+            std::fs::read_to_string(work.join(path)).unwrap(),
+            "reviewed report"
+        );
     }
     let events = h
         .client()
@@ -147,6 +200,12 @@ async fn scenario(managed: bool, execution: &str, approval: u8) {
     );
     let snapshot = h.client().snapshot(child).await.unwrap();
     assert!(snapshot["session"]["package"]["standalone_subagents"].is_null());
+    assert_eq!(
+        snapshot["session"]["permissions"]["never_allow_read_write_outside_workspace"]
+            .as_bool()
+            .unwrap_or(false),
+        approval == 4,
+    );
     assert!(events.to_string().contains("create_sub_agent"));
     h.shutdown().await.unwrap();
 }
@@ -175,4 +234,23 @@ async fn exact_child_definition_approval() {
 #[tokio::test]
 async fn child_approval_is_visible_while_sync_parent_waits() {
     scenario(false, "sync", 2).await;
+}
+
+#[tokio::test]
+async fn creation_grant_is_counted_once_and_leaves_child_approval_intact() {
+    scenario(false, "sync", 3).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn scoped_workspace_reads_skip_approval_only_inside_granted_directory() {
+    scenario(false, "sync", 4).await;
+    scenario(false, "sync", 5).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn scoped_workspace_writes_require_approval_outside_granted_directory() {
+    scenario(false, "sync", 6).await;
+    scenario(false, "sync", 7).await;
 }

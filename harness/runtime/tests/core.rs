@@ -10,11 +10,16 @@ use serde_json::{json, Value};
 
 fn session() -> Session {
     Session {
+        workspace_id: None,
+        integrations: Default::default(),
         safety_models: Default::default(),
         compliance: None,
         safety: Default::default(),
         agent_team: None,
         environment: None,
+        loop_environment: None,
+        allow_workspace_reads: vec![],
+        allow_workspace_writes: vec![],
         managed_workspace: None,
         storage_revision: 0,
         approval_grants: vec![],

@@ -593,17 +593,24 @@ impl Host {
         };
         let name = p["name"].as_str().unwrap_or(&profile.name).to_owned();
         let options = |id: &str, name: String| {
-            let mode = self.profile(id).approvals.mode();
+            let member = self.profile(id);
             let auto_skip_questions = if id == agent {
                 p.get("auto_skip_questions")
                     .and_then(Value::as_bool)
-                    .unwrap_or(self.profile(id).auto_skip_questions)
+                    .unwrap_or(member.auto_skip_questions)
             } else {
-                self.profile(id).auto_skip_questions
+                member.auto_skip_questions
             };
             let mut options = json!({"name": name, "coworker": id, "workspace": workspace,
-                   "permissions": {"mode": mode, "auto_skip_questions": auto_skip_questions},"compaction":self.config.desktop.compaction});
-            let profile = self.profile(id);
+                "permissions": {
+                    "mode": member.approvals.mode(),
+                    "auto_skip_questions": auto_skip_questions,
+                    "never_allow_read_write_outside_workspace": member.never_allow_read_write_outside_workspace
+                        || profile.never_allow_read_write_outside_workspace
+                },
+                "compaction":self.config.desktop.compaction
+            });
+            let profile = member;
             options["auto_approver_context"] = profile
                 .auto_approver_context
                 .clone()
@@ -632,6 +639,9 @@ impl Host {
             }
             // A lead's override does not silently replace each worker's default.
             if id == agent {
+                if let Some(prefs) = p.get("integrations") {
+                    options["integrations"] = prefs.clone();
+                }
                 if let Some(history) = p.get("initial_history") {
                     options["initial_history"] = history.clone();
                 }
@@ -873,7 +883,14 @@ impl Host {
             let cached = record.as_ref().and_then(|r| r.get("result")).cloned();
             let mut snaps = Vec::with_capacity(members.len());
             for (s, agent) in &members {
-                let rt = self.runtime(agent)?;
+                let rt = match self.runtime(agent) {
+                    Ok(runtime) => runtime,
+                    Err(_) => {
+                        let session = self.store.lock().unwrap().metadata(s)?;
+                        ensure!(session.coworker == *agent, "Run member runtime changed");
+                        self.runtime_for_session(&session).await?
+                    }
+                };
                 snaps.push(rt.snapshot(s)?);
             }
             let board = match &team {
@@ -1213,6 +1230,8 @@ fn stream_item(agent: &str, e: Event, tools: Option<&openworker_runtime::bundle:
         | "assistant_delta"
         | "reasoning_delta"
         | "model_activity"
+        | "model_route"
+        | "model_usage"
         | "provider_error" => {
             let mut summary = e.data.clone();
             summary["type"] = json!(e.kind);

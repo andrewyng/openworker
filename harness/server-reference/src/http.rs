@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 pub struct App {
+    pub(crate) workspace_handles: Arc<crate::workspace_api::Handles>,
     pub(crate) recording_readers: Arc<Semaphore>,
     pub(crate) safety_readers: Arc<Semaphore>,
     recovery_read_only: bool,
@@ -51,9 +52,14 @@ impl App {
                 store.verify_service(&service.id, &service.namespace)?;
             } else {
                 store.bind_service(&service.id, &service.namespace)?;
+                store.install_app_tool_defaults(
+                    &crate::management::installation(config)?,
+                    crate::app_agents::default_tools(&runtime.bundle),
+                )?;
             }
         }
         Ok(Self {
+            workspace_handles: Default::default(),
             recording_readers: Arc::new(Semaphore::new(4)),
             safety_readers: Arc::new(Semaphore::new(8)),
             config: Arc::new(config.clone()),
@@ -128,7 +134,8 @@ impl App {
 async fn authenticate(State(app): State<App>, request: Request, next: Next) -> Response {
     let recording_route =
         crate::recording_query::authority(request.method().as_str(), request.uri().path())
-            || request.uri().path().starts_with("/v1/compliance/");
+            || request.uri().path().starts_with("/v1/compliance/")
+            || request.uri().path().starts_with("/v1/evals/");
     let span = app
         .runtime
         .telemetry
@@ -272,6 +279,20 @@ impl From<anyhow::Error> for ApiError {
 }
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        if let Some(problem) = self
+            .0
+            .downcast_ref::<openworker_store_postgres::model_registry::RegistryError>()
+        {
+            use openworker_store_postgres::model_registry::RegistryError;
+            let status = match problem {
+                RegistryError::ProfileUnavailable => StatusCode::NOT_FOUND,
+                RegistryError::NativeRouteRequired => StatusCode::BAD_REQUEST,
+                RegistryError::ProviderDisabled | RegistryError::ImmutableProvider => {
+                    StatusCode::CONFLICT
+                }
+            };
+            return (status, Json(json!({"error":problem.to_string()}))).into_response();
+        }
         if self
             .0
             .is::<openworker_runtime::attachments::InspectionUnsupported>()
@@ -329,6 +350,23 @@ impl IntoResponse for ApiError {
             };
             return (status, Json(json!({"error":error.to_string()}))).into_response();
         }
+        if let Some(error) = self
+            .0
+            .downcast_ref::<openworker_runtime::workspaces::WorkspaceError>()
+        {
+            use openworker_runtime::workspaces::WorkspaceError::*;
+            let status = match error {
+                Invalid => StatusCode::BAD_REQUEST,
+                Missing | HandleExpired => StatusCode::NOT_FOUND,
+                DataMismatch | ProfileMismatch | UnsupportedSharing | Busy => StatusCode::CONFLICT,
+            };
+            return (
+                status,
+                [("x-openworker-workspace-error", error.code())],
+                Json(json!({"error":error.code()})),
+            )
+                .into_response();
+        }
         if let Some(error) = self.0.downcast_ref::<AuthError>() {
             let status = match error {
                 AuthError::Unauthorized => StatusCode::UNAUTHORIZED,
@@ -381,6 +419,10 @@ async fn create(
     Extension(app): Extension<App>,
     Json(body): Json<Create>,
 ) -> Result<Response, ApiError> {
+    if body.parameters.get("workspace_id").is_some() {
+        // Workspace grants and attachment lifecycle are handled by v1 admission.
+        return Err(ApiError(SubmissionError::InvalidRequest.into()));
+    }
     let request = SessionCreation {
         request_id: body.request_id,
         actor: app.actor,

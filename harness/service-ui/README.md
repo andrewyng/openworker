@@ -43,6 +43,9 @@ or default password. Use separate runner/publisher/administrator credentials as 
   model/purpose and tool groups, and watermarked turn timelines. Missing usage
   stays unknown; scan/group limits remain visible. See below for counting and
   process-health scope.
+- **Compliance:** filterable guardrail and approval evidence, agent activity,
+  administrator actions, and scoped export. An event links to its source trace
+  or session for users with tracing access.
 - **Agents:** visible immutable releases, definition inspection, publication,
   activation, and task submission. Release JSON selects tools already installed in
   the service. It cannot upload native binaries or arbitrary server launchers.
@@ -171,6 +174,127 @@ node harness/service-ui/preview.mjs
 
 It opens on port 58640. The production UI lives in `public/`; the mock lives in
 `mock/`. Sample records and chart values are never used as a live-data fallback.
+
+## Evals
+
+Enable cluster observability and deploy the API, eval worker and Management UI
+from the same revision. Run the normal execution store migration first.
+
+Open a completed turn in **Observability** and choose **Add to dataset**.
+Review the final assistant response, enter an expectation, and choose which
+request text to include. The saved case includes the response and a link to
+the source turn. Attachments and tool payloads stay out of the case.
+
+Open the dataset under **Evals** and choose **Run eval**. The cluster scores
+the saved responses against their expected text and records the results for
+the selected dataset version. **Cases** expands to show the captured evidence.
+**Runs** in the dataset shows its history. **Evals → Runs** shows recent jobs
+across the datasets and tagged-turn batches you have access to. Search by dataset,
+evaluator, tag, app or run ID,
+then narrow by status and date. The catalogs load one page at a time.
+Open a run to see its case results and links to the source turns. An unavailable
+final response shows up as an evaluator error.
+
+### Evaluate tagged turns
+
+Use **Session tags** or **Turn tags** in Tracing. A session tag selects its finished
+turns. A turn tag selects that specific turn, including a failed attempt that was
+later retried. **Evaluate tagged turns** filters by when the tag was applied.
+Preview the matches, select up to 100 turns, and choose a saved text evaluator.
+Saving an evaluator under the same name creates a new version.
+
+The queued job saves the chosen turn IDs, their available final responses, and the
+evaluator version. Request text, attachments and tool evidence are excluded. Later
+tag and evaluator changes leave the job reproducible. The job and its source turn
+link to each other. Evaluation results and evaluator settings are scoped to their
+app. To run an evaluation from a guardrail hit, expand the finding and choose
+**Evaluate matching turns**. A pre-admission finding with no turn remains visible
+in Guardrails.
+
+### Compliance
+
+**Decisions** reads the execution and security journals. The detail panel shows a
+policy version or digest when recorded, and distinguishes a decision from the
+observed effect. An approval without a reliable execution record displays
+**Execution unconfirmed**. Older events can lack correlation or policy details.
+**Agent overview** counts observed turns and decisions by app and release. A
+release with no recorded decisions shows that explicitly. **Admin audit** shows
+credential changes, service configuration revisions, release changes, and
+evidence export requests. Source trace detail depends on trace recording and
+requires the session's normal trace permissions.
+
+In **Settings → Access**, choose **Compliance reader** or **Compliance auditor**
+and enter exact app principals such as `app_finance`. Both roles can read scoped
+metadata. Auditors can also download it. App-scoped credentials have no access
+to raw transcripts or application execution. The existing explicit session
+scopes still work.
+
+**Export evidence** downloads the active Decisions filters as JSON Lines. Each
+record includes a schema version and stable event ID. Narrow the filters if
+the selection exceeds 2,000 records. Arguments, results, transcripts, and
+matched sensitive values are excluded. Download requests are audited.
+
+Administrators can optionally forward the filtered records to an existing
+configured audit endpoint. Add `config.compliance_sinks` with `name`, an HTTPS
+`endpoint`, and a `credentialEnv` reference, and enable `config.compliance`.
+In the Helm chart, set `secrets.complianceExport` to the name of the Kubernetes
+Secret containing each named credential. Credential values are available only
+to the API process. Source builds need the server's `compliance-export` feature.
+Use **Evidence delivery** to select a destination, queue a snapshot and check
+status. The service retries failed delivery with the same delivery ID and
+records. Receivers can deduplicate on `deliveryId`. This is a selected snapshot
+forwarding workflow. The existing opt-in session stream continues independently.
+
+### Versioned cases and replays
+
+Expand a batch result and choose **Add to dataset** to keep it as a named case.
+Review the observed output separately from the expected outcome. Choose whether
+to save the request. Editing or archiving a case creates a dataset version.
+Use **View version** to inspect or run a previous snapshot.
+
+Choose **Replay and compare releases** from a dataset version with saved requests.
+Select two activated release revisions. The service admits up to four cases
+through the normal worker pool, with a separate fresh sandbox for each side of
+each case. Both releases receive the saved plain-text request. The comparison
+shows score changes, available latency and usage, and links to both executions.
+Interrupted runs or provisioning failures appear as incomplete.
+
+Under **Replay workspace files**, add the UTF-8 files that both releases should
+start with. Use paths relative to the workspace and up to 16 files per case,
+with at most 16 KiB of combined text and 48,000 bytes of encoded data. Each dataset
+version pins its own file contents. Replay restores and verifies that snapshot
+in both fresh workspaces before admitting an agent turn. After an interrupted
+restore, replay checks the existing files and marks the run incomplete if it
+cannot verify them. Install a workspace runner built with fixture support.
+
+### Model judges and schedules
+
+To enable model judges, set `config.observability.eval_model_judges: true` on
+the Helm release and make the configured model credentials available to the
+eval worker. In **Evaluate tagged turns**, save a rubric and choose a granted
+model profile. **Preview judge** runs one selected turn. Judges receive the saved
+response and rubric, and their usage is reported separately. Per-job limits
+bound case count, input bytes and generated tokens. Quota and timeout failures
+appear as evaluator errors and can be rerun.
+
+In **Evals → Schedules**, select a dataset version or a tag, evaluator and
+lookback period. The eval worker uses the ordinary queue and advances a durable
+checkpoint through non-overlapping tag windows. Scheduled jobs use the service
+credential that created the schedule. Expiry or revocation pauses it. The page
+shows the next scheduled run, source limits, recent runs and pause/resume.
+
+Set `OW_EVALS_VOLUME=1` when running the `evals_flow` integration test with an
+isolated PostgreSQL database and the optional Playwright setup. The fixture
+adds 96 synthetic datasets and queues 1,426 jobs through the existing scorer
+for catalog and browser qualification.
+
+### Guardrail hits
+
+Open **Observability → Guardrails** to filter recorded findings by rule ID,
+outcome and time. Successful turns can have redactions. Open an affected turn
+to see its guardrail row and expand it for the rule version and match count.
+Blocks that occur before admission appear under **Session safety activity**.
+The labels are derived from committed decisions without copying the matched text.
 
 ## Complete-stack local Kubernetes qualification
 

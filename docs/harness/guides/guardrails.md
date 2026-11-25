@@ -270,3 +270,56 @@ Compliance metadata can be pruned by trusted maintenance using
 scope). Schedule it through the application's maintenance job. Query expiry does
 not itself delete bytes, and this release does not automatically schedule physical
 pruning. Canonical conversation retention remains a separate application decision.
+
+## Runtime integrations
+
+A host can include trusted Rust crates that observe agent events or check an operation before it proceeds. The catalog lists the integrations compiled into that host. A custom host calls each crate's registration function at startup. An embedded Rust app supplies that registry to `HarnessBuilder::integration_registry`. A managed host passes it to `openworker_sdk::cli::main_with_integrations`.
+
+For a host that registers an integration called `tool-check`, an app can configure it once and request it on a session.
+
+```typescript
+const harness = await Harness.start({
+  executable: hostPath,
+  stateDir,
+  integrations: { "tool-check": {} },
+});
+const agent = harness.createAgent(agentDefinition);
+const session = await agent.newSession({ integrations: { "tool-check": {} } });
+```
+
+The integration defines its own settings. An observer receives lifecycle metadata such as the session ID, sequence number and tool-call ID. An observer delivery failure leaves the agent free to continue. A blocking check receives the content for its configured boundary. A denial or an unavailable check stops the protected operation.
+
+On a cluster, the operator configures the integrations included in its API and worker binaries. Use the CLI to see the registered IDs, configured IDs and current policies.
+
+```sh
+owcluster integrations list
+owcluster integrations policy set tool-check --mode required
+```
+
+An integration entry is an object. `{}` enables it and inherits its settings. `{ enabled: false }` disables it. Resolve each integration through session, agent, selected provider, harness and cluster default, in that order. Default changes apply to new sessions. A `required` or `forbidden` policy overrides both application preferences at the next affected operation, including after recovery. Lifting the override restores the original session choice. Session snapshots expose the last applied decisions, their sources and policy revisions.
+
+### Palo Alto Networks Prisma AIRS
+
+Hosts built with the `security-adapters` feature register **Prisma AIRS** as `prisma-airs`. Configure the synchronous scan endpoint and the name of your AIRS security profile. Select which operations send content for inspection.
+
+```typescript
+const harness = await Harness.start({
+  executable: hostPath,
+  stateDir,
+  inheritEnv: ["PANW_AI_SEC_API_KEY"],
+  integrations: {
+    "prisma-airs": {
+      endpoint: process.env.PRISMA_AIRS_SCAN_URL!,
+      profileName: "agent-protection",
+      credentialEnv: "PANW_AI_SEC_API_KEY",
+      boundaries: ["beforeInput", "beforeOutput"],
+    },
+  },
+});
+const agent = harness.createAgent(agentDefinition);
+const session = await agent.newSession({ integrations: { "prisma-airs": {} } });
+```
+
+`beforeInput` and `beforeOutput` inspect user and assistant text. `beforeTool` inspects the proposed arguments. `afterTool` inspects the result before it returns to the agent. A failed or inconclusive scan stops the protected operation. A tool whose result is blocked may already have executed.
+
+For cluster deployments, supply matching host settings and credentials on the API and workers, then run `owcluster integrations policy set prisma-airs --mode required` to enforce scanning across sessions.

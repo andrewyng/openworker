@@ -83,7 +83,12 @@ pub(crate) fn validate_models(
     );
     for choice in &d.models {
         ensure!(
-            release.default_model.as_ref() == Some(choice)
+            (release.model_profile.is_some()
+                && lead
+                    .model_selection
+                    .as_ref()
+                    .is_some_and(|m| m.connection == choice.connection && m.model == choice.model))
+                || release.default_model.as_ref() == Some(choice)
                 || release.model_overrides.contains(choice),
             "Model not delegated by activated lead release"
         );

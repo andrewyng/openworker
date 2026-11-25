@@ -7,6 +7,7 @@ use crate::{
 use anyhow::{ensure, Result};
 use openworker_runtime::{
     environment::{Phase, Record, Sharing, Spec},
+    replay_fixture,
     store::Session,
 };
 use postgres::Transaction;
@@ -21,10 +22,19 @@ pub struct Profile {
     #[serde(rename = "memoryMB")]
     pub memory_mb: u32,
     pub sharing: Sharing,
+    #[serde(
+        default,
+        skip_serializing_if = "openworker_runtime::environment::LoopPlacement::is_service"
+    )]
+    pub loop_placement: openworker_runtime::environment::LoopPlacement,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_workspace_reads: Vec<String>,
     #[serde(default)]
     pub approval_mode: openworker_runtime::permissions::Mode,
     #[serde(default)]
     pub auto_skip_questions: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub never_allow_read_write_outside_workspace: bool,
     /// Versioned operator-installed grant, never a credential or model input.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_access: Option<String>,
@@ -37,6 +47,7 @@ pub struct Profile {
 impl Profile {
     pub fn validate(&self) -> Result<()> {
         revision(&self.id)?;
+        openworker_runtime::permissions::validate_read_roots(&self.allow_workspace_reads)?;
         for grant in self.git_access.iter().chain(self.repository_access.iter()) {
             revision(grant)?;
         }
@@ -72,8 +83,15 @@ impl Profile {
         ensure!(
             self.cpu <= lead.cpu
                 && self.memory_mb <= lead.memory_mb
+                && self.loop_placement == lead.loop_placement
+                && self
+                    .allow_workspace_reads
+                    .iter()
+                    .all(|root| lead.allow_workspace_reads.contains(root))
                 && self.approval_mode == lead.approval_mode
                 && self.auto_skip_questions == lead.auto_skip_questions
+                && (!lead.never_allow_read_write_outside_workspace
+                    || self.never_allow_read_write_outside_workspace)
                 && (self.git_access.is_none() || self.git_access == lead.git_access)
                 && (self.repository_access.is_none()
                     || self.repository_access == lead.repository_access),
@@ -85,6 +103,8 @@ impl Profile {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Release {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub integrations: openworker_runtime::integrations::Preferences,
     pub id: String,
     pub instructions: String,
     pub tools: Vec<String>,
@@ -93,6 +113,9 @@ pub struct Release {
     pub default_runtime_profile: Option<String>,
     #[serde(default)]
     pub allowed_principals: Vec<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_profile: Option<String>,
     #[serde(default)]
     pub default_model: Option<openworker_runtime::connections::Choice>,
     #[serde(default)]
@@ -107,6 +130,13 @@ pub struct Release {
 impl Release {
     pub fn validate(&self) -> Result<()> {
         revision(&self.id)?;
+        if let Some(name_id) = &self.model_profile {
+            name(name_id)?;
+            ensure!(
+                self.default_model.is_none(),
+                SubmissionError::InvalidRequest
+            );
+        }
         if let Some(config) = &self.subagents {
             config.validate()?;
         }
@@ -151,7 +181,7 @@ fn principals(p: &[String]) -> Result<()> {
     }
     Ok(())
 }
-fn revision(s: &str) -> Result<()> {
+pub(crate) fn revision(s: &str) -> Result<()> {
     name(s)?;
     let (id, version) = s.split_once('@').ok_or(SubmissionError::InvalidRequest)?;
     ensure!(
@@ -185,6 +215,10 @@ pub struct Entry {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Admission {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub integrations: openworker_runtime::integrations::Preferences,
     pub agent: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_message: Option<String>,
@@ -201,6 +235,53 @@ pub struct Admission {
     #[serde(default)]
     pub name: Option<String>,
 }
+
+/// Internal data resolved by the API. This is absent from public admission DTOs.
+pub struct AdmissionPreparation {
+    pub loop_spec: Option<Spec>,
+    pub reviewed: Option<openworker_runtime::connections::Choice>,
+    pub replay_fixture: Option<replay_fixture::Fixture>,
+}
+
+pub enum ReplayPreparation {
+    Ready,
+    Pending,
+    Restore {
+        fixture: replay_fixture::Fixture,
+        verify_only: bool,
+    },
+}
+fn reserve_environment(
+    tx: &mut Transaction<'_>,
+    operation_id: &str,
+    request: &str,
+    principal: &str,
+    profile: &str,
+    project: &str,
+    spec: Spec,
+) -> Result<Record> {
+    let record = Record {
+        id: openworker_runtime::id("env"),
+        request_id: request.to_owned(),
+        actor: principal.to_owned(),
+        spec,
+        phase: Phase::Provisioning,
+        binding: None,
+        revision: 1,
+    };
+    tx.execute(
+        "INSERT INTO environments(id,request_id,data) VALUES($1,$2,$3)",
+        &[&record.id, &record.request_id, &json!(record)],
+    )?;
+    tx.execute("INSERT INTO environment_events(environment_id,revision,kind,data) VALUES($1,1,'environment_requested',$2)",&[&record.id,&json!({
+                    "operationId":operation_id,"actor":principal}
+                )])?;
+    tx.execute(
+        "INSERT INTO service_environment_owners VALUES($1,$2,$3,$4)",
+        &[&record.id, &profile, &principal, &project],
+    )?;
+    Ok(record)
+}
 fn default_project() -> String {
     "default".into()
 }
@@ -213,6 +294,8 @@ pub struct Operation {
     #[serde(default)]
     pub submission_id: Option<String>,
     pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loop_environment_id: Option<String>,
     pub environment_id: String,
     pub release_id: String,
     pub profile_id: String,
@@ -230,6 +313,7 @@ fn op(row: &postgres::Row) -> Operation {
         submission_id: task.then(|| id.clone()),
         id,
         session_id: row.get("session_id"),
+        loop_environment_id: row.get("loop_environment_id"),
         environment_id: row.get("environment_id"),
         release_id: row.get("release_id"),
         profile_id: row.get("profile_id"),
@@ -276,7 +360,7 @@ pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
     CREATE TABLE IF NOT EXISTS service_deletions(environment_id TEXT PRIMARY KEY REFERENCES environments(id),request_key TEXT NOT NULL,dispatched BOOLEAN NOT NULL DEFAULT FALSE,next_check TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());
     CREATE TABLE IF NOT EXISTS service_operations(id TEXT PRIMARY KEY,request_key TEXT NOT NULL UNIQUE,input JSONB NOT NULL,principal TEXT NOT NULL,credential_id TEXT NOT NULL,release_id TEXT NOT NULL,profile_id TEXT NOT NULL,environment_id TEXT NOT NULL REFERENCES environments(id),session_id TEXT NOT NULL UNIQUE,project TEXT NOT NULL,status TEXT NOT NULL,receipt JSONB,error TEXT,next_check TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());")?;
     tx.batch_execute(
-        "ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS configuration JSONB",
+        "ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS delegation_credential_id TEXT REFERENCES api_credentials(id); ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS loop_environment_id TEXT UNIQUE REFERENCES environments(id); ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS loop_launch_claimed BOOLEAN NOT NULL DEFAULT FALSE; ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS configuration JSONB",
     )?;
     tx.execute(
         "UPDATE service_operations SET configuration=$1 WHERE configuration IS NULL",
@@ -286,6 +370,11 @@ pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
         })],
     )?;
     tx.batch_execute("ALTER TABLE service_operations ALTER COLUMN configuration SET NOT NULL")?;
+    tx.batch_execute(
+        "ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS replay_fixture JSONB;
+        ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS replay_fixture_started TIMESTAMPTZ;
+        ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS replay_fixture_receipt TEXT;",
+    )?;
     Ok(())
 }
 impl PostgresStore {
@@ -346,7 +435,15 @@ impl PostgresStore {
                     || p.role.permits(Action::Configure)
                     || p.role.permits(Action::Admin);
                 if !manages {
-                    allowed(&p, &principals)?;
+                    if kind == "release" {
+                        crate::app_agents::allow_release(
+                            &mut tx,
+                            &p,
+                            &serde_json::from_value(e.definition.clone())?,
+                        )?;
+                    } else {
+                        allowed(&p, &principals)?;
+                    }
                 }
                 ensure!(
                     e.activated
@@ -387,8 +484,26 @@ impl PostgresStore {
                     let principals: Vec<String> =
                         serde_json::from_value(e.definition["allowedPrincipals"].clone())
                             .unwrap_or_default();
-                    if !manages && allowed(p, &principals).is_err() {
-                        continue;
+                    if !manages {
+                        let access = if kind == "release" {
+                            crate::app_agents::allow_release(
+                                &mut tx,
+                                p,
+                                &serde_json::from_value(e.definition.clone())?,
+                            )
+                        } else {
+                            allowed(p, &principals)
+                        };
+                        match access {
+                            Ok(()) => {}
+                            Err(err)
+                                if err.downcast_ref::<auth::Error>()
+                                    == Some(&auth::Error::Forbidden) =>
+                            {
+                                continue
+                            }
+                            Err(err) => return Err(err),
+                        }
                     }
                     if !(e.activated
                         || p.role.permits(Action::Publish)
@@ -429,6 +544,68 @@ impl PostgresStore {
         profile: Entry,
         spec: Spec,
     ) -> Result<Operation> {
+        self.service_admit_with_loop(key, input, release, profile, spec, None)
+    }
+    pub fn service_admit_with_loop(
+        &self,
+        key: &str,
+        input: Admission,
+        release: Entry,
+        profile: Entry,
+        spec: Spec,
+        loop_spec: Option<Spec>,
+    ) -> Result<Operation> {
+        self.service_admit_reviewed(key, input, release, profile, spec, loop_spec, None)
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn service_admit_reviewed(
+        &self,
+        key: &str,
+        input: Admission,
+        release: Entry,
+        profile: Entry,
+        spec: Spec,
+        loop_spec: Option<Spec>,
+        reviewed: Option<openworker_runtime::connections::Choice>,
+    ) -> Result<Operation> {
+        self.service_admit_prepared(
+            key,
+            input,
+            release,
+            profile,
+            spec,
+            AdmissionPreparation {
+                loop_spec,
+                reviewed,
+                replay_fixture: None,
+            },
+        )
+    }
+
+    pub fn service_admit_prepared(
+        &self,
+        key: &str,
+        input: Admission,
+        release: Entry,
+        profile: Entry,
+        spec: Spec,
+        mut preparation: AdmissionPreparation,
+    ) -> Result<Operation> {
+        if let Some(companion) = &preparation.loop_spec {
+            companion.validate()?;
+        }
+        if let Some(fixture) = &mut preparation.replay_fixture {
+            ensure!(
+                input.project == "eval-replay"
+                    && input.environment_id.is_none()
+                    && input.workspace_id.is_none()
+                    && input.initial_message.is_some(),
+                SubmissionError::InvalidRequest
+            );
+            fixture
+                .normalize()
+                .map_err(|_| SubmissionError::InvalidRequest)?;
+        }
         name(&input.project)?;
         ensure!(
             !(input.runtime_profile.is_some() && input.environment_id.is_some()),
@@ -446,7 +623,68 @@ impl PostgresStore {
             crate::submissions::validate_id(text, 32000)?;
         }
         let key = key.to_owned();
-        self.call(move |db| db.service_admit(key, input, release, profile, spec))
+        self.call(move |db| db.service_admit(key, input, release, profile, spec, preparation))
+    }
+
+    /// The first command can write. Later controllers only verify, even after
+    /// the original transport or process exits before the receipt is recorded.
+    pub fn claim_replay_fixture(&self, id: &str) -> Result<ReplayPreparation> {
+        ensure!(self.auth.is_none(), auth::Error::Forbidden);
+        let id = id.to_owned();
+        self.call(move|db|{
+            let mut tx=db.client.transaction()?;
+            let row=tx.query_one("SELECT replay_fixture,replay_fixture_receipt,
+                replay_fixture_started IS NOT NULL,
+                COALESCE(replay_fixture_started+INTERVAL '60 seconds'>clock_timestamp(),FALSE),status
+                FROM service_operations WHERE id=$1 FOR UPDATE",&[&id])?;
+            if row.get::<_,String>(4)=="complete" {return Ok(ReplayPreparation::Ready);}
+            ensure!(row.get::<_,String>(4)=="ready",SubmissionError::Conflict);
+            let Some(fixture)=row.get::<_,Option<Value>>(0) else {return Ok(ReplayPreparation::Ready)};
+            if row.get::<_,Option<String>>(1).is_some() {return Ok(ReplayPreparation::Ready);}
+            if row.get::<_,bool>(3) {return Ok(ReplayPreparation::Pending);}
+            let verify_only=row.get::<_,bool>(2);
+            if !verify_only {
+                tx.execute("UPDATE service_operations SET replay_fixture_started=clock_timestamp(),
+                    next_check=clock_timestamp()+INTERVAL '60 seconds' WHERE id=$1",&[&id])?;
+            }
+            tx.commit()?;
+            Ok(ReplayPreparation::Restore{fixture:serde_json::from_value(fixture)?,verify_only})
+        })
+    }
+
+    pub fn complete_replay_fixture(
+        &self,
+        id: &str,
+        receipt: replay_fixture::Receipt,
+    ) -> Result<()> {
+        ensure!(self.auth.is_none(), auth::Error::Forbidden);
+        let id = id.to_owned();
+        self.call(move |db| {
+            let mut tx = db.client.transaction()?;
+            let row = tx.query_one(
+                "SELECT replay_fixture,status,replay_fixture_started IS NOT NULL
+                FROM service_operations WHERE id=$1 FOR UPDATE",
+                &[&id],
+            )?;
+            let fixture: replay_fixture::Fixture = serde_json::from_value(row.get(0))?;
+            ensure!(
+                row.get::<_, bool>(2) && fixture.receipt()? == receipt,
+                SubmissionError::Conflict
+            );
+            let status: String = row.get(1);
+            ensure!(
+                matches!(status.as_str(), "ready" | "complete"),
+                SubmissionError::Conflict
+            );
+            if status == "ready" {
+                tx.execute(
+                    "UPDATE service_operations SET replay_fixture_receipt=$2 WHERE id=$1",
+                    &[&id, &receipt.digest],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
     }
     pub fn service_session_identity(&self, sid: &str) -> Result<Option<Value>> {
         let sid = sid.to_owned();
@@ -499,7 +737,7 @@ impl PostgresStore {
         ensure!(self.auth.is_none(), "Controller requires private store");
         let installed = installed.to_owned();
         self.call(move|db|{let mut tx=db.client.transaction()?;
-            let row=tx.query_opt("SELECT d.environment_id,d.request_key,d.dispatched,o.profile_id,e.data FROM service_deletions d JOIN environments e ON e.id=d.environment_id JOIN service_environment_owners o ON o.environment_id=d.environment_id WHERE e.data->>'phase'='deleting' AND d.next_check<=clock_timestamp() AND (EXISTS(SELECT 1 FROM service_operations a JOIN service_catalog c ON c.kind='release' AND c.id=a.release_id WHERE a.environment_id=d.environment_id AND c.data->>'installation'=$1) OR EXISTS(SELECT 1 FROM service_team_environments a JOIN service_catalog c ON c.kind='release' AND c.id=a.data->>'source_release' WHERE a.environment_id=d.environment_id AND c.data->>'installation'=$1)) ORDER BY d.next_check,d.environment_id LIMIT 1 FOR UPDATE OF d SKIP LOCKED",&[&installed])?;
+            let row=tx.query_opt("SELECT d.environment_id,d.request_key,d.dispatched,o.profile_id,e.data FROM service_deletions d JOIN environments e ON e.id=d.environment_id JOIN service_environment_owners o ON o.environment_id=d.environment_id WHERE e.data->>'phase'='deleting' AND d.next_check<=clock_timestamp() AND (EXISTS(SELECT 1 FROM service_operations a JOIN service_catalog c ON c.kind='release' AND c.id=a.release_id WHERE (a.environment_id=d.environment_id OR a.loop_environment_id=d.environment_id) AND c.data->>'installation'=$1) OR EXISTS(SELECT 1 FROM service_team_environments a JOIN service_catalog c ON c.kind='release' AND c.id=a.data->>'source_release' WHERE a.environment_id=d.environment_id AND c.data->>'installation'=$1)) ORDER BY d.next_check,d.environment_id LIMIT 1 FOR UPDATE OF d SKIP LOCKED",&[&installed])?;
             let Some(row)=row else {return Ok(None)};
             let id:String=row.get(0);let key:String=row.get(1);let dispatched:bool=row.get(2);let profile:String=row.get(3);let record=serde_json::from_value(row.get(4))?;
             tx.execute("UPDATE service_deletions SET dispatched=TRUE,next_check=clock_timestamp()+interval '180 seconds' WHERE environment_id=$1",&[&id])?;
@@ -539,6 +777,12 @@ impl PostgresStore {
             db.client.execute("UPDATE service_operations SET status=$2,error=$3,next_check=clock_timestamp()+interval '2 seconds' WHERE id=$1 AND status<>'complete'",&[&id,&status,&error])?;
             Ok(())}
         )
+    }
+    /// Claim creation once. Replayed admissions inspect the originally named sandbox.
+    pub fn claim_loop_launch(&self, operation: &str) -> Result<bool> {
+        ensure!(self.auth.is_none(), auth::Error::Forbidden);
+        let op = operation.to_owned();
+        self.call(move|db| Ok(db.client.execute("UPDATE service_operations SET loop_launch_claimed=TRUE WHERE id=$1 AND status='ready' AND loop_environment_id IS NOT NULL AND NOT loop_launch_claimed",&[&op])?==1))
     }
     pub fn service_input(&self, id: &str) -> Result<Admission> {
         ensure!(self.auth.is_none(), auth::Error::Forbidden);
@@ -693,6 +937,7 @@ impl crate::db::Database {
         tx.commit()?;
         Ok(e)
     }
+    #[allow(clippy::too_many_arguments)]
     fn service_admit(
         &mut self,
         key: String,
@@ -700,7 +945,14 @@ impl crate::db::Database {
         release: Entry,
         profile: Entry,
         spec: Spec,
+        preparation: AdmissionPreparation,
     ) -> Result<Operation> {
+        let AdmissionPreparation {
+            loop_spec,
+            reviewed,
+            replay_fixture,
+        } = preparation;
+        let fixture = replay_fixture.as_ref().map(|f| json!(f));
         let mut tx = self.client.transaction()?;
         let p = auth::guard(&mut tx, self.auth.as_ref(), Action::Submit, None, None)?
             .ok_or(auth::Error::Unauthorized)?;
@@ -718,14 +970,15 @@ impl crate::db::Database {
         )? {
             ensure!(
                 row.get::<_, Value>("input") == json!(input)
-                    && row.get::<_, String>("principal") == p.principal,
+                    && row.get::<_, String>("principal") == p.principal
+                    && row.get::<_, Option<Value>>("replay_fixture") == fixture,
                 SubmissionError::Conflict
             );
             let o = op(&row);
             tx.commit()?;
             return Ok(o);
         }
-        let configured = crate::service_admin::current(&mut tx)?;
+        let mut configured = crate::service_admin::current(&mut tx)?;
         ensure!(
             !configured.configuration.admissions_paused,
             SubmissionError::Busy
@@ -738,12 +991,52 @@ impl crate::db::Database {
         );
         let rel: Release = serde_json::from_value(r.definition)?;
         let prof: Profile = serde_json::from_value(f.definition)?;
-        allowed(&p, &rel.allowed_principals)?;
+        crate::app_agents::allow_release(&mut tx, &p, &rel)?;
         allowed(&p, &prof.allowed_principals)?;
         ensure!(
             rel.runtime_profiles.contains(&prof.id),
             auth::Error::Forbidden
         );
+        ensure!(
+            loop_spec.is_none() || !rel.subagents.as_ref().is_some_and(|c| c.enabled),
+            SubmissionError::InvalidRequest
+        );
+        let pinned_model = if input.model.is_none() {
+            rel.model_profile
+                .as_deref()
+                .map(|n| crate::model_registry::resolve_profile(&mut tx, n))
+                .transpose()?
+        } else {
+            None
+        };
+        if let Some(reviewed) = reviewed {
+            ensure!(
+                pinned_model.as_ref().map(|p| &p.choice) == Some(&reviewed),
+                SubmissionError::Conflict
+            );
+        }
+        if let Some(choice) = pinned_model
+            .as_ref()
+            .map(|p| &p.choice)
+            .or(input.model.as_ref())
+            .or(rel.default_model.as_ref())
+        {
+            if let Some(row) = tx.query_opt(
+                "SELECT spec,enabled FROM model_providers WHERE name=$1 FOR SHARE",
+                &[&choice.connection],
+            )? {
+                ensure!(
+                    row.get::<_, bool>(1),
+                    crate::model_registry::RegistryError::ProviderDisabled
+                );
+                let route: crate::model_registry::Provider = serde_json::from_value(row.get(0))?;
+                configured.configuration.compaction.context_window = configured
+                    .configuration
+                    .compaction
+                    .context_window
+                    .min(route.context_limit);
+            }
+        }
         if let Some(model) = &input.model {
             ensure!(
                 rel.model_overrides.contains(model) || rel.default_model.as_ref() == Some(model),
@@ -766,12 +1059,17 @@ impl crate::db::Database {
             pending < configured.configuration.max_pending_operations,
             SubmissionError::QueueFull
         );
-        if input.environment_id.is_none() {
+        ensure!(
+            prof.loop_placement.is_service() == loop_spec.is_none(),
+            SubmissionError::InvalidRequest
+        );
+        let requested = i64::from(input.environment_id.is_none()) + i64::from(loop_spec.is_some());
+        if requested > 0 {
             let owned:i64=tx.query_one("SELECT count(*) FROM service_environment_owners o JOIN environments e ON e.id=o.environment_id WHERE o.principal=$1 AND e.data->>'phase'<>'deleted'",&[&p.principal])?.get(0);
             let total:i64=tx.query_one("SELECT count(*) FROM service_environment_owners o JOIN environments e ON e.id=o.environment_id WHERE e.data->>'phase'<>'deleted'",&[])?.get(0);
             ensure!(
-                owned < configured.configuration.max_environments_per_principal
-                    && total < configured.configuration.max_environments,
+                owned + requested <= configured.configuration.max_environments_per_principal
+                    && total + requested <= configured.configuration.max_environments,
                 SubmissionError::QueueFull
             );
         }
@@ -802,29 +1100,32 @@ impl crate::db::Database {
             );
             (eid.clone(), "ready")
         } else {
-            let record = Record {
-                id: openworker_runtime::id("env"),
-                request_id: operation_id.clone(),
-                actor: p.principal.clone(),
+            let record = reserve_environment(
+                &mut tx,
+                &operation_id,
+                &operation_id,
+                &p.principal,
+                &prof.id,
+                &input.project,
                 spec,
-                phase: Phase::Provisioning,
-                binding: None,
-                revision: 1,
-            };
-            tx.execute(
-                "INSERT INTO environments(id,request_id,data) VALUES($1,$2,$3)",
-                &[&record.id, &record.request_id, &json!(record)],
-            )?;
-            tx.execute("INSERT INTO environment_events(environment_id,revision,kind,data) VALUES($1,1,'environment_requested',$2)",&[&record.id,&json!({
-                    "operationId":operation_id,"actor":p.principal}
-                )])?;
-            tx.execute(
-                "INSERT INTO service_environment_owners VALUES($1,$2,$3,$4)",
-                &[&record.id, &prof.id, &p.principal, &input.project],
             )?;
             (record.id, "queued")
         };
-        let row=tx.query_one("INSERT INTO service_operations(id,request_key,input,principal,credential_id,release_id,profile_id,environment_id,session_id,project,status,configuration) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *",&[&operation_id,&key,&json!(input),&p.principal,&p.credential_id,&rel.id,&prof.id,&environment_id,&session_id,&input.project,&status,&json!(configured)])?;
+        let loop_id = loop_spec
+            .map(|spec| {
+                reserve_environment(
+                    &mut tx,
+                    &operation_id,
+                    &format!("loop-{operation_id}"),
+                    &p.principal,
+                    &prof.id,
+                    &input.project,
+                    spec,
+                )
+                .map(|e| e.id)
+            })
+            .transpose()?;
+        let row=tx.query_one("INSERT INTO service_operations(id,request_key,input,principal,credential_id,release_id,profile_id,environment_id,session_id,project,status,configuration,loop_environment_id,pinned_model,replay_fixture) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *",&[&operation_id,&key,&json!(input),&p.principal,&p.credential_id,&rel.id,&prof.id,&environment_id,&session_id,&input.project,&status,&json!(configured),&loop_id,&pinned_model.as_ref().map(|m|json!(m)),&fixture])?;
         auth::audit(&mut tx, Some(&p), Action::Create, None, Some(&key))?;
         let result = op(&row);
         tx.commit()?;
@@ -897,6 +1198,18 @@ impl crate::db::Database {
             return Ok(());
         }
         ensure!(o.status == "ready", SubmissionError::Conflict);
+        ensure!(
+            row.get::<_, Option<Value>>("replay_fixture").is_none()
+                || row
+                    .get::<_, Option<String>>("replay_fixture_receipt")
+                    .is_some(),
+            SubmissionError::Conflict
+        );
+        ensure!(
+            o.loop_environment_id.as_ref()
+                == session.loop_environment.as_ref().map(|b| &b.environment_id),
+            SubmissionError::Conflict
+        );
         let credential: String = row.get("credential_id");
         let cred = tx
             .query_opt(
@@ -921,7 +1234,7 @@ impl crate::db::Database {
             serde_json::from_value(entry(&mut tx, "release", &o.release_id)?.definition)?;
         let profile: Profile =
             serde_json::from_value(entry(&mut tx, "profile", &o.profile_id)?.definition)?;
-        allowed(&p, &rel.allowed_principals)?;
+        crate::app_agents::allow_release(&mut tx, &p, &rel)?;
         allowed(&p, &profile.allowed_principals)?;
         session.id = o.session_id.clone();
         let input: Admission = serde_json::from_value(row.get("input"))?;
@@ -958,14 +1271,54 @@ impl crate::db::Database {
                 Some(&request.submission_id),
             )?;
         }
-        let receipt = json!({
+        let mut receipt = json!({
             "serviceId":service_id,"namespace":namespace,"sessionId":o.session_id,"agent":o.release_id,"releaseId":o.release_id,"runtimeProfile":o.profile_id,"environmentId":o.environment_id,"operationId":o.id,"runId":o.run_id,"submissionId":o.submission_id}
         );
+        if let Some(loop_id) = &o.loop_environment_id {
+            receipt["loopPlacement"] = json!("sandbox");
+            receipt["loopEnvironmentId"] = json!(loop_id);
+        }
+        if let Some(reference) = &input.workspace_id {
+            receipt["workspaceId"] = json!(reference);
+        }
         tx.execute(
             "UPDATE service_operations SET status='complete',receipt=$2,error=NULL WHERE id=$1",
             &[&id, &receipt],
         )?;
         tx.commit()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::*;
+    #[test]
+    fn workspace_only_profile_defaults_to_false_and_cannot_be_loosened_by_a_child() {
+        let definition = json!({"id":"tools@1","cpu":1,"memoryMB":512,"provider":"openshell","sharing":"exclusive"});
+        let default: Profile = serde_json::from_value(definition).unwrap();
+        assert!(!default.never_allow_read_write_outside_workspace);
+        assert!(json!(default)
+            .get("neverAllowReadWriteOutsideWorkspace")
+            .is_none());
+        let mut strict = default.clone();
+        strict.never_allow_read_write_outside_workspace = true;
+        assert_eq!(json!(strict)["neverAllowReadWriteOutsideWorkspace"], true);
+        assert!(strict.require_delegatable_from(&default).is_ok());
+        assert!(default.require_delegatable_from(&strict).is_err());
+    }
+
+    #[test]
+    fn profile_defaults_preserve_catalog_digests_and_delegation() {
+        let old = json!({"id":"tools@1","cpu":1,"memoryMB":512,"provider":"openshell","sharing":"exclusive"});
+        let service: Profile = serde_json::from_value(old.clone()).unwrap();
+        assert!(service.loop_placement.is_service());
+        assert!(json!(service).get("loopPlacement").is_none());
+        let mut wire = old;
+        wire["loopPlacement"] = json!("sandbox");
+        let isolated: Profile = serde_json::from_value(wire.clone()).unwrap();
+        assert!(service.require_delegatable_from(&isolated).is_err());
+        wire["loopPlacement"] = json!("typo");
+        assert!(serde_json::from_value::<Profile>(wire).is_err());
     }
 }

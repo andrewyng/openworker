@@ -271,8 +271,11 @@ fn check_interaction(
             && (matches!(
                 interaction.origin.as_deref(),
                 Some("human" | "reviewer" | "bypass")
-            ) || (interaction.response.as_deref() == Some("deny")
-                && interaction.origin.as_deref() == Some("hard_policy"))),
+            ) || (interaction.call["name"] == crate::subagents::CREATE
+                && interaction.origin.as_deref() == Some(crate::subagents::CREATION_GRANT)
+                && interaction.response.as_deref() == Some("once"))
+                || (interaction.response.as_deref() == Some("deny")
+                    && interaction.origin.as_deref() == Some("hard_policy"))),
         "Invalid type approval provenance"
     );
     Ok(())

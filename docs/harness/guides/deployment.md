@@ -3,8 +3,10 @@
 Start inside your app, then choose a shared service when you need one.
 
 Desktop packaging and a Node container on Railway use the managed SDK runtime.
-The `ows` CLI installs and operates a separate OpenWorker service cluster; it is
+The `owcluster` CLI installs and operates a separate OpenWorker service cluster; it is
 not needed to deploy every SDK app.
+
+On a shared cluster, each app can use its own token, agent revisions and a named model profile. See [cluster app setup](cluster-apps.md).
 
 ## Choose a platform
 
@@ -35,8 +37,7 @@ also be selected through the Rust SDK. Database choice does not remove team/sess
 capabilities. Bind an execution environment explicitly when agents must share it;
 sharing does not resolve conflicting file edits or ports automatically.
 
-OpenShell runs tool execution in a sandbox while the current harness remains in
-the trusted service domain. RuntimeProfiles select the provider and allowed
+OpenShell runs workspace tools in a sandbox. The runtime profile can also place the model loop in its own sandbox. The service owns session history and approvals. RuntimeProfiles select the provider and allowed
 resources. A profile is configuration; a provisioned environment is an instance.
 
 Start with the [local service setup](../../../deploy/service/README.md) and

@@ -123,3 +123,5 @@ generates internal values/installer files; replace the documented placeholders
 before use. `local-docker` and `remote-k8s` are explicit roadmap modes, not
 qualified installers. New cloud configs omit budget; optional estimated-cost
 ceilings use `up --plan-only --max-estimated-cost-usd`.
+
+See [cluster model providers and app access](../../docs/harness/guides/cluster-apps.md) for `owcluster model-provider` commands.

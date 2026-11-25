@@ -1,0 +1,94 @@
+{{- if not (has .Values.data.accessMode (list "ReadWriteOnce" "ReadWriteOncePod" "ReadWriteMany")) }}{{ fail "unsupported data.accessMode" }}{{ end }}
+{{- if and (eq .Values.data.accessMode "ReadWriteOnce") (empty .Values.placement.pinNode) }}{{ fail "set placement.pinNode for ReadWriteOnce data" }}{{ end }}
+{{- if and .Values.placement.spreadSharedData (or .Values.placement.pinNode .Values.data.singleMount (ne .Values.data.accessMode "ReadWriteMany")) }}{{ fail "spreadSharedData requires shared ReadWriteMany data and unpinned workspaces" }}{{ end }}
+{{- if lt (int .Values.idleSeconds) 0 }}{{ fail "idleSeconds must be nonnegative" }}{{ end }}
+{{- if not .Values.metadata.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: controller-state
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ required "set metadata.storageClass or metadata.existingClaim" .Values.metadata.storageClass | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.metadata.size | quote }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: ow-workspaces}
+  template:
+    metadata:
+      labels: {app: ow-workspaces}
+    spec:
+      serviceAccountName: controller
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 5
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: controller
+          image: {{ required "set images.controller" .Values.images.controller | quote }}
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8443}]
+          readinessProbe:
+            httpGet: {path: /health, port: 8443, scheme: HTTPS}
+            periodSeconds: 2
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          env:
+            - {name: WORKLOAD_NAMESPACE, value: {{ .Values.workloadNamespace | quote }}}
+            - {name: WORKSPACE_IMAGE_PROFILES, value: {{ .Values.imageProfiles | toJson | quote }}}
+            - {name: PREVIEW_DOMAIN, value: {{ .Values.preview.domain | quote }}}
+            - {name: RUNNER_IMAGE, value: {{ required "set images.runner" .Values.images.runner | quote }}}
+            - {name: STORAGE_CLASS, value: {{ required "set data.storageClass" .Values.data.storageClass | quote }}}
+            - {name: DATA_MODE, value: {{ .Values.data.accessMode | quote }}}
+            - {name: DATA_SIZE, value: {{ .Values.data.size | quote }}}
+            - {name: ALLOW_SHARED_COMPUTE, value: {{ not .Values.data.singleMount | quote }}}
+            - {name: IDLE_SECONDS, value: {{ .Values.idleSeconds | quote }}}
+            - {name: PIN_NODE, value: {{ .Values.placement.pinNode | quote }}}
+            - {name: SPREAD_SHARED_DATA, value: {{ .Values.placement.spreadSharedData | quote }}}
+            - name: WORKSPACE_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.secrets.auth | quote }}, key: token}
+          volumeMounts:
+            - {name: state, mountPath: /state}
+            - {name: tls, mountPath: /tls, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: state
+          persistentVolumeClaim: {claimName: {{ default "controller-state" .Values.metadata.existingClaim | quote }}}
+        - name: tls
+          secret: {secretName: {{ .Values.secrets.tls | quote }}, defaultMode: 288}
+        - name: tmp
+          emptyDir: {sizeLimit: 16Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workspaces
+  namespace: {{ .Release.Namespace }}
+spec:
+  type: ClusterIP
+  selector: {app: ow-workspaces}
+  ports: [{port: 443, targetPort: 8443}]

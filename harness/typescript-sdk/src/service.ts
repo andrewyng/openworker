@@ -1,3 +1,4 @@
+import { validateIntegrationOptions } from "./integration-options.js";
 import {stageInput,type UserInput} from "./attachments.js";
 import {HarnessError} from "./types.js";
 import { ServiceObservability } from "./observability.js";
@@ -32,8 +33,14 @@ export interface RuntimeProfile {
   memoryMB: number;
   sharing: "exclusive" | "shared";
   allowedPrincipals?: string[];
+  /** Cluster worker by default. Sandbox placement requires a compatible OpenShell installation. */
+  loopPlacement?: "service" | "sandbox";
+  /** Workspace-relative directories for trusted first-party file reads. */
+  allowWorkspaceReads?: string[];
   approvalMode?: "ask" | "auto-approve" | "bypass";
   autoSkipQuestions?: boolean;
+  /** Reject outside-workspace first-party file operations before review. Defaults to false. */
+  neverAllowReadWriteOutsideWorkspace?: boolean;
   /** Versioned operator-installed OpenShell Git grant; never a token. */
   gitAccess?: string;
   /** Trusted host repository broker; does not grant agent-side Git credentials. */
@@ -50,8 +57,20 @@ export function runtimeProfileGrants(profile: RuntimeProfile): {
   const named = profile.gitAccess === undefined ? [] : [`git:${profile.gitAccess}`];
   return {files: [], network: [...named], credentials: [...named], cpu: profile.cpu, memoryMB: profile.memoryMB};
 }
+interface MutationOptions { idempotencyKey?: string }
+export interface ClusterModelChoice { connection: string; model: string }
+export interface ClusterModelProvider {
+  name: string;
+  baseUrl: string;
+  api: "responses" | "chat-completions" | "anthropic";
+  contextLimit: number;
+  allowPrivateHttp?: boolean;
+  inferenceOptions?: import("./types.js").InferenceOptions;
+  integrations?: Record<string, import("./types.js").IntegrationOptions>;
+}
 export interface AgentRelease {
-  subagents?: { enabled: boolean; maxConcurrent?: number; maxChildren?: number; limits?: TurnLimits };
+  integrations?: Record<string, import("./types.js").IntegrationOptions>;
+  subagents?: import("./types.js").SubagentOptions;
   limits?: TurnLimits;
   id: string;
   instructions: string;
@@ -59,9 +78,10 @@ export interface AgentRelease {
   runtimeProfiles: string[];
   defaultRuntimeProfile?: string;
   allowedPrincipals?: string[];
-  defaultModel?: { connection: string; model: string };
-  reviewerModel?: { connection: string; model: string };
-  modelOverrides?: { connection: string; model: string }[];
+  modelProfile?: string;
+  defaultModel?: { connection: string; model: string; notify_on_session_state?: boolean };
+  reviewerModel?: { connection: string; model: string; notify_on_session_state?: boolean };
+  modelOverrides?: { connection: string; model: string; notify_on_session_state?: boolean }[];
 }
 export interface ServiceCatalogEntry {
   id: string;
@@ -86,17 +106,22 @@ export interface ServiceOperation {
   error: string | null;
 }
 export interface ServiceSessionOptions {
+  workspaceId?: string;
+  integrations?: Record<string, import("./types.js").IntegrationOptions>;
   limits?: TurnLimits;
   environmentId?: string;
   runtimeProfile?: string;
   project?: string;
-  model?: { connection: string; model: string };
+  model?: { connection: string; model: string; notify_on_session_state?: boolean };
   name?: string;
   idempotencyKey?: string;
   signal?: AbortSignal;
   waitTimeoutMs?: number;
 }
 export interface ServiceSessionRef {
+  loopPlacement?: "service" | "sandbox";
+  loopEnvironmentId?: string;
+  workspaceId?: string;
   serviceId: string;
   namespace: string;
   sessionId: string;
@@ -224,7 +249,68 @@ export async function* serviceFrames(
     reader.releaseLock();
   }
 }
+const workspaceErrors = new Set([
+  "invalid_workspace_request", "workspace_not_found", "workspace_handle_expired",
+  "workspace_data_mismatch", "workspace_profile_mismatch", "workspace_in_use", "workspace_shared_mount_unsupported",
+]);
+export interface WorkspacePreview { port: number; url: string; accessToken: string }
+export interface WorkspaceRef { workspaceId: string; dataId: string; previews?: WorkspacePreview[] }
+export interface WorkspaceRequest { key: string; dataId?: string; options?: Record<string, Json> }
+export interface WorkspaceProviderOptions { name: string; options?: Record<string, Json> }
+
+export class ServiceWorkspaceProvider {
+  private constructor(private readonly service: Service, private handle: string,
+                      private readonly restart: () => Promise<string>) {}
+  get id(): string { return this.handle; }
+
+  static async start(service: Service, input: WorkspaceProviderOptions): Promise<ServiceWorkspaceProvider> {
+    if (service.capabilities.features?.workspaceProviders !== true)
+      throw new ServiceError("unsupported_workspace_providers", 0);
+    // Startup options can contain credentials. Keep the private copy in memory.
+    const settings = structuredClone(input);
+    const start = async () => {
+      const result = await service.json("POST", "/v1/workspace-providers", settings);
+      if (typeof result?.id !== "string") throw new ServiceError("invalid_workspace_provider", 0);
+      return result.id as string;
+    };
+    return new ServiceWorkspaceProvider(service, await start(), start);
+  }
+
+  private async call(operation: string, body: unknown): Promise<any> {
+    const invoke = () => this.service.json("POST", "/v1/workspace-providers/" + segment(this.handle) + "/" + operation, body);
+    try { return await invoke(); }
+    catch (error) {
+      // Only retry when the server confirms the handle was absent before
+      // dispatch. Connection loss alone gives no such assurance.
+      if (!(error instanceof ServiceError) || error.code !== "workspace_handle_expired") throw error;
+      this.handle = await this.restart();
+      return invoke();
+    }
+  }
+  async stopWorkspace(workspaceId: string): Promise<void> {
+    await this.call("stop", { workspaceId });
+  }
+  async deleteData(dataId: string): Promise<void> {
+    await this.call("delete-data", { dataId });
+  }
+  async getOrCreate(request: WorkspaceRequest): Promise<WorkspaceRef> {
+    const ref = await this.call("workspaces", request);
+    if (typeof ref?.workspaceId !== "string" || typeof ref?.dataId !== "string" ||
+        (request.dataId !== undefined && ref.dataId !== request.dataId))
+      throw new ServiceError("invalid_workspace_reference", 0);
+    if (ref.previews !== undefined && (!Array.isArray(ref.previews) || ref.previews.length > 15 ||
+        ref.previews.some((slot: WorkspacePreview, i: number) => !slot || slot.port !== 5100 + i ||
+          typeof slot.url !== "string" || !slot.url.startsWith("https://") ||
+          typeof slot.accessToken !== "string" || !slot.accessToken))) {
+      throw new ServiceError("invalid_workspace_reference", 0);
+    }
+    return { workspaceId: ref.workspaceId, dataId: ref.dataId, ...(ref.previews && { previews: ref.previews }) };
+  }
+}
 export class Service {
+  readonly workspaces = {
+    startProvider: (input: WorkspaceProviderOptions) => ServiceWorkspaceProvider.start(this, input),
+  };
   get observability():ServiceObservability {return new ServiceObservability(path=>this.json("GET",path));}
   private closed = false;
   private requests = new Set<AbortController>();
@@ -334,6 +420,11 @@ export class Service {
         }
         if (!response.ok) {
           await response.body?.cancel();
+          const workspaceError = response.headers.get("x-openworker-workspace-error");
+          if (path.startsWith("/v1/workspace-providers") &&
+              response.headers.get("x-openworker-service-id") === this.capabilities.serviceId &&
+              workspaceError && workspaceErrors.has(workspaceError))
+            throw new ServiceError(workspaceError, response.status, key);
           throw new ServiceError(
             response.status === 401
               ? "unauthorized"
@@ -421,6 +512,57 @@ export class Service {
       close();
     }
   }
+  listModelProviders(): Promise<{
+    providers: (ClusterModelProvider & { enabled: boolean })[];
+    profiles: {name: string; model: ClusterModelChoice}[];
+  }> {
+    return this.json("GET", "/v1/model-providers");
+  }
+
+  async getModelProvider(name: string): Promise<ClusterModelProvider & {enabled: boolean}> {
+    const provider = (await this.listModelProviders()).providers.find(p => p.name === name);
+    if (!provider) throw new ServiceError("model_provider_not_found", 404);
+    return provider;
+  }
+
+  registerModelProvider(provider: ClusterModelProvider, apiKey: string, options: MutationOptions = {}): Promise<ClusterModelProvider> {
+    validateIntegrationOptions(provider.integrations);
+    return this.json("POST", "/v1/model-providers", {provider, apiKey}, options.idempotencyKey ?? randomUUID());
+  }
+
+  rotateModelProviderKey(name: string, apiKey: string, options: MutationOptions = {}): Promise<{name: string}> {
+    return this.json("POST", `/v1/model-providers/${segment(name)}/rotate`, {apiKey}, options.idempotencyKey ?? randomUUID());
+  }
+
+  disableModelProvider(name: string, options: MutationOptions = {}): Promise<{name: string; enabled: boolean}> {
+    return this.json("POST", `/v1/model-providers/${segment(name)}/disable`, {}, options.idempotencyKey ?? randomUUID());
+  }
+
+  setModelProfile(name: string, model: ClusterModelChoice, options: MutationOptions = {}): Promise<{name: string; model: ClusterModelChoice}> {
+    return this.json("PUT", `/v1/model-profiles/${segment(name)}`, model, options.idempotencyKey ?? randomUUID());
+  }
+
+  shareAppAgent(releaseId: string, sharedWith: string[], options: MutationOptions = {}): Promise<{releaseId: string; sharedWith: string[]}> {
+    return this.json("PUT", `/v1/app-agents/${segment(releaseId)}/sharing`, {sharedWith}, options.idempotencyKey ?? randomUUID());
+  }
+
+  /** Publish a private revision using this app's backend token. */
+  async publishAppAgent(name: string, definition: Omit<AgentRelease, "id" | "allowedPrincipals">, options: MutationOptions = {}): Promise<ServiceAgent> {
+    const entry = await this.json("POST", `/v1/app-agents/${segment(name)}`, definition, options.idempotencyKey ?? randomUUID());
+    return new ServiceAgent(this, entry.id);
+  }
+
+  listAppAgents(): Promise<{agents: { owner: string; name: string; revision: number; releaseId: string; sharedWith?: string[] }[]}> {
+    return this.json("GET", "/v1/app-agents");
+  }
+
+  async appAgent(name: string, owner: string = this.identity.principal): Promise<ServiceAgent> {
+    const {agents} = await this.listAppAgents();
+    const entry = agents.find(agent => agent.name === name && agent.owner === owner);
+    if (!entry) throw new ServiceError("agent_not_found", 404);
+    return new ServiceAgent(this, entry.releaseId);
+  }
+
   async agent(id: string): Promise<ServiceAgent> {
     const a = await this.json("GET", `/v1/agents/${segment(id)}`);
     if (typeof a.id !== "string" || !a.id)
@@ -433,7 +575,8 @@ export class Service {
       ref.namespace !== this.options.namespace
     )
       throw new ServiceError("reference_identity_mismatch", 0);
-    if ((await this.agent(ref.agent)).id !== ref.agent)
+    // A session-scoped observer can read the pinned session identity without catalog access.
+    if (typeof ref.agent !== "string" || !ref.agent)
       throw new ServiceError("reference_identity_mismatch", 0);
     const session = new ServiceSession(this, structuredClone(ref));
     const snapshot = await session.snapshot();
@@ -444,6 +587,11 @@ export class Service {
       snapshot.service?.runtimeProfile !== ref.runtimeProfile
     )
       throw new ServiceError("profile_identity_mismatch", 0);
+    if ((ref.loopPlacement && snapshot.session?.loopPlacement !== ref.loopPlacement) ||
+        (ref.loopEnvironmentId && snapshot.session?.loopEnvironmentId !== ref.loopEnvironmentId))
+      throw new ServiceError("loop_identity_mismatch", 0);
+    if ((snapshot.session?.workspaceId ?? undefined) !== (ref.workspaceId ?? undefined))
+      throw new ServiceError("workspace_identity_mismatch", 0);
     if (snapshot.session?.environment?.environment_id !== ref.environmentId)
       throw new ServiceError("environment_identity_mismatch", 0);
     return session;
@@ -619,12 +767,15 @@ export class ServiceAgent {
   async newSession(
     options: Omit<ServiceSessionOptions, "limits"> = {},
   ): Promise<ServiceSession> {
+    validateIntegrationOptions(options.integrations);
     if (
       Object.keys(options).some(
         (k) =>
           ![
+            "workspaceId",
             "environmentId",
             "runtimeProfile",
+            "integrations",
             "name",
             "project",
             "model",
@@ -663,6 +814,7 @@ export class ServiceAgent {
       r?.namespace !== this.service.capabilities.namespace ||
       r?.agent !== this.id ||
       typeof r?.environmentId !== "string" ||
+      (options.workspaceId && r.workspaceId !== options.workspaceId) ||
       (options.environmentId && r.environmentId !== options.environmentId) ||
       typeof r?.sessionId !== "string"
     )
@@ -680,6 +832,9 @@ export class ServiceSession {
   }
   get environmentId() {
     return this.ref.environmentId;
+  }
+  async close(options: { idempotencyKey?: string } = {}): Promise<void> {
+    await this.service.json("POST", `/v1/sessions/${segment(this.id)}/close`, {}, options.idempotencyKey ?? randomUUID());
   }
   async createTeam(
     options: ServiceAgentTeamOptions,
@@ -841,6 +996,10 @@ export interface ServiceAgentTeamOptions {
   limits?: TurnLimits;
 }
 export class ServiceAgentTeam {
+  /** Authorize future delegations with the current credential for the same app. */
+  reauthorize(): Promise<{sessionId: string; credentialId: string}> {
+    return this.service.json("POST", `/v1/sessions/${segment(this.lead.id)}/team/reauthorize`, {});
+  }
   constructor(
     private service: Service,
     readonly lead: ServiceSession,

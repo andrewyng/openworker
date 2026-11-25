@@ -10,6 +10,10 @@ use serde_json::{json, Value};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct Configuration {
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub integration_policies: openworker_runtime::integrations::Policies,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub app_check_modes: openworker_runtime::integrations::AppCheckModes,
     pub admissions_paused: bool,
     pub max_pending_operations: i64,
     pub max_environments: i64,
@@ -20,6 +24,8 @@ pub struct Configuration {
 impl Default for Configuration {
     fn default() -> Self {
         Self {
+            integration_policies: Default::default(),
+            app_check_modes: Default::default(),
             admissions_paused: false,
             max_pending_operations: 128,
             max_environments: 64,
@@ -38,6 +44,28 @@ impl Configuration {
                 && (1..=100).contains(&self.max_queued_turns),
             SubmissionError::InvalidRequest
         );
+        ensure!(
+            self.integration_policies.len() <= 64,
+            SubmissionError::InvalidRequest
+        );
+        for id in self.integration_policies.keys() {
+            openworker_runtime::integrations::validate_id(id)
+                .map_err(|_| SubmissionError::InvalidRequest)?;
+        }
+        ensure!(
+            self.app_check_modes.len() <= 128,
+            SubmissionError::InvalidRequest
+        );
+        for (app, modes) in &self.app_check_modes {
+            ensure!(
+                auth::is_app_principal(app) && !modes.is_empty() && modes.len() <= 16,
+                SubmissionError::InvalidRequest
+            );
+            for id in modes.keys() {
+                openworker_runtime::integrations::validate_id(id)
+                    .map_err(|_| SubmissionError::InvalidRequest)?;
+            }
+        }
         self.compaction.validate()?;
         Ok(())
     }
@@ -96,10 +124,19 @@ impl PostgresStore {
             let payload=json!({"configuration":configuration,"expectedRevision":expected,"actor":p.as_ref().map(|p|&p.principal)});
             if let Some(r)=tx.query_opt("SELECT payload,result FROM service_management_receipts WHERE id=$1",&[&key])?{ensure!(r.get::<_,Value>(0)==payload,SubmissionError::Conflict);return Ok(serde_json::from_value(r.get(1))?);}
             ensure!(row.get::<_,i64>(0)==expected,SubmissionError::Conflict);
+            if !configuration.app_check_modes.is_empty() {
+                let apps: Vec<_> = configuration.app_check_modes.keys().cloned().collect();
+                let known = tx.query(
+                    "SELECT DISTINCT spec->>'principal' FROM api_credentials
+                     WHERE spec->>'role'='app' AND spec->>'principal'=ANY($1)",
+                    &[&apps],
+                )?;
+                ensure!(known.len() == apps.len(), SubmissionError::InvalidRequest);
+            }
             let result=Revision{revision:expected+1,configuration};
             tx.execute("UPDATE service_configuration SET revision=$1,data=$2 WHERE singleton",&[&result.revision,&json!(result.configuration)])?;
             tx.execute("INSERT INTO service_management_receipts VALUES($1,$2,$3)",&[&key,&payload,&json!(result)])?;
-            auth::audit_target(&mut tx,p.as_ref(),Action::Configure,&key,"configuration")?;tx.commit()?;Ok(result)
+            auth::audit_target(&mut tx,p.as_ref(),Action::Configure,&key,&format!("configuration@{}",result.revision))?;tx.commit()?;Ok(result)
         })
     }
     pub fn service_operation_configuration(&self, id: &str) -> Result<Revision> {

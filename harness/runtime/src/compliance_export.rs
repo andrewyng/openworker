@@ -50,6 +50,33 @@ impl Sink {
     }
 }
 #[cfg(feature = "compliance-export")]
+pub fn delivery_client() -> Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()?)
+}
+
+#[cfg(feature = "compliance-export")]
+pub async fn deliver(client: &reqwest::Client, sink: &Sink, payload: serde_json::Value) -> bool {
+    let Some(secret) = std::env::var(&sink.credential_env)
+        .ok()
+        .filter(|key| !key.is_empty() && key.len() <= 8192)
+        .map(zeroize::Zeroizing::new)
+    else {
+        return false;
+    };
+    client
+        .post(&sink.endpoint)
+        .bearer_auth(secret.as_str())
+        .json(&payload)
+        .send()
+        .await
+        .is_ok_and(|response| response.status().is_success())
+}
+
+#[cfg(feature = "compliance-export")]
 pub fn start(
     store: crate::store::SharedStore,
     sinks: Vec<Sink>,
@@ -66,11 +93,7 @@ pub fn start(
     if sinks.is_empty() {
         return Ok(());
     }
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .no_proxy()
-        .timeout(Duration::from_secs(20))
-        .build()?;
+    let client = delivery_client()?;
     tokio::spawn(async move {
         let mut after = String::new();
         loop {
@@ -96,19 +119,9 @@ pub fn start(
                         .unwrap()
                         .claim_compliance_export(&s.id, &sink.name, &binding, &token);
                     let Ok(Some(batch)) = batch else { continue };
-                    let secret = std::env::var(&sink.credential_env)
-                        .ok()
-                        .filter(|k| !k.is_empty() && k.len() <= 8192)
-                        .map(zeroize::Zeroizing::new);
-                    let success = if let Some(secret) = secret {
-                        // Stable per-event IDs survive batches, retries and worker
-                        // takeover. Receiver acknowledgement is only HTTP success;
-                        // a lost acknowledgement retries delivery, never execution.
-                        let request=client.post(&sink.endpoint).bearer_auth(secret.as_str()).json(&json!({"schemaVersion":1,"sink":sink.name,"sessionId":s.id,"activities":batch.activities})).send();
-                        tokio::select! {_=stop.cancelled()=>return,result=request=>result.is_ok_and(|r|r.status().is_success())}
-                    } else {
-                        false
-                    };
+                    // A lost acknowledgement retries delivery, never execution.
+                    let payload = json!({"schemaVersion":1,"sink":sink.name,"sessionId":s.id,"activities":batch.activities});
+                    let success = tokio::select! {_=stop.cancelled()=>return,result=deliver(&client,sink,payload)=>result};
                     let _ = store
                         .lock()
                         .unwrap()

@@ -43,6 +43,23 @@ impl HarnessBuilder {
         self.desktop.safety = config;
         self
     }
+    pub fn integration(mut self, id: impl Into<String>, settings: serde_json::Value) -> Self {
+        self.desktop.integrations.insert(id.into(), settings);
+        self
+    }
+    pub fn integration_policy(
+        mut self,
+        id: impl Into<String>,
+        mode: crate::integrations::Mode,
+    ) -> Self {
+        self.desktop.integration_policies.insert(id.into(), mode);
+        self
+    }
+    /// Custom crates execute in the embedded host. Managed hosts register their own compiled crates.
+    pub fn integration_registry(mut self, registry: crate::integrations::Registry) -> Self {
+        self.desktop.integration_registry = registry;
+        self
+    }
     pub fn model_provider(mut self, provider: crate::ModelProvider) -> Self {
         self.providers.push(provider);
         self
@@ -219,6 +236,11 @@ impl HarnessBuilder {
 
     /// Run the engine in an SDK-owned child process with bounded restarts.
     pub async fn managed(self, program: PathBuf, restart: RestartPolicy) -> Result<Harness> {
+        if !self.desktop.integration_registry.catalog().is_empty() {
+            return Err(Error::Setup(
+                "Register custom integration crates in the managed host executable".into(),
+            ));
+        }
         let host = self.prepare(true)?;
         let client = HarnessClient::managed_host(
             HostProcessConfig {

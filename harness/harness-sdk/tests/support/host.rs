@@ -1,4 +1,5 @@
 // Development-only conformance host. Never ship this fixture to partners.
+mod integrations;
 mod tool;
 fn main() {
     // Explicit test database setup for cross-language conformance clients.
@@ -14,5 +15,8 @@ fn main() {
         println!("not a protocol frame");
         return;
     }
-    openworker_sdk::cli::main_with_registry(tool::registry());
+    openworker_sdk::cli::main_with_integrations(
+        tool::registry(),
+        integrations::registry().unwrap(),
+    );
 }

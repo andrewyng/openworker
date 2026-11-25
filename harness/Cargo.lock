@@ -1968,6 +1968,7 @@ version = "0.1.0-beta.5"
 dependencies = [
  "anyhow",
  "openworker-guardrails",
+ "openworker-runtime",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -1997,6 +1998,7 @@ dependencies = [
  "openworker-tools",
  "postgres",
  "reqwest 0.12.28",
+ "ring",
  "serde",
  "serde_json",
  "tempfile",
@@ -2035,6 +2037,7 @@ dependencies = [
  "anyhow",
  "native-tls",
  "openworker-artifacts",
+ "openworker-observability",
  "openworker-runtime",
  "openworker-tools",
  "postgres",

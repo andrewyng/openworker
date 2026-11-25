@@ -101,6 +101,8 @@ export function hostConfig(options: ResolvedHarnessOptions): object {
   return {
     state_dir: options.stateDir,
     desktop: {
+      integrations: options.integrations,
+      integration_policies: options.integrationPolicies,
       compliance: options.compliance ?? (options.complianceSinks?.length ? {} : undefined),
       compliance_sinks: options.complianceSinks ?? [],
       inherit_env: options.inheritEnv ?? [],
@@ -156,6 +158,7 @@ export function hostConfig(options: ResolvedHarnessOptions): object {
   };
 }
 export function agentWire(a: Agent, depth = 0): object {
+  if (a.approvals?.allowWorkspaceReads?.length) throw new Error("Directory approval grants require a cluster runtime profile");
   if (depth > 1)
     throw new HarnessError(
       "InvalidInput",
@@ -167,6 +170,7 @@ export function agentWire(a: Agent, depth = 0): object {
     name: a.name,
     description: a.description,
     instructions: a.instructions,
+    integrations: a.integrations,
     limits: a.limits,
     builtin_tools: a.builtinTools,
     tools: a.tools,
@@ -178,6 +182,7 @@ export function agentWire(a: Agent, depth = 0): object {
     memory_scope: a.memoryScope,
     scheduling: a.scheduling,
     auto_skip_questions: a.autoSkipQuestions,
+    never_allow_read_write_outside_workspace: a.neverAllowReadWriteOutsideWorkspace,
     auto_approver_context: a.autoApproverContext,
     compaction: a.compaction === undefined ? undefined : { additional_instructions: a.compaction.additionalInstructions },
     approvals:

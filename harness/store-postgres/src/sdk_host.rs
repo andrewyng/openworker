@@ -72,3 +72,21 @@ impl Database {
         Ok(restored)
     }
 }
+
+impl crate::PostgresStore {
+    /// Session-local policy on the database connection that holds the exclusive SDK host lock.
+    pub fn configure_sdk_observer_capture(
+        &self,
+        policies: &openworker_runtime::integrations::Policies,
+    ) -> Result<()> {
+        ensure!(self.auth.is_none(), crate::auth::Error::Forbidden);
+        let modes = serde_json::to_string(policies)?;
+        self.call(move |db| {
+            db.client.query_one(
+                "SELECT set_config('openworker.integration_policies',$1,false)",
+                &[&modes],
+            )?;
+            Ok(())
+        })
+    }
+}

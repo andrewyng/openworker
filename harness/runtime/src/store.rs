@@ -103,6 +103,20 @@ pub fn now_ms() -> u64 {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Session {
+    /// Private execution binding selected only by service admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_environment: Option<crate::environment::Binding>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_workspace_reads: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_workspace_writes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::integrations::Admission::is_empty"
+    )]
+    pub integrations: crate::integrations::Admission,
     #[serde(default)]
     pub safety_models: std::collections::BTreeMap<String, crate::connections::Selection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -223,6 +237,11 @@ pub struct Event {
 /// the runtime safe for shared workers. `recover` may only touch sessions owned
 /// exclusively by this store instance. No automatic replay of tool effects.
 pub trait StateStore: Send {
+    /// Stable, store-assigned app owner for cluster policies.
+    fn session_app(&self, _sid: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+
     fn supports_input_attachments(&self) -> bool {
         false
     }
@@ -517,6 +536,12 @@ impl Store {
     /// The identical transactional adapter, with no session data written to disk.
     pub fn memory() -> Result<Self> {
         Self::initialize(Connection::open_in_memory()?, None)
+    }
+    pub fn configure_observer_capture(
+        &self,
+        policies: crate::integrations::Policies,
+    ) -> Result<()> {
+        sqlite_observers::install_hook_selector(&self.db, policies)
     }
     fn initialize(db: Connection, lock: Option<std::fs::File>) -> Result<Self> {
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;

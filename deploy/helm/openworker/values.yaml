@@ -31,6 +31,7 @@ secrets:
   probe: ""
   objectStore: ""
   objectStoreCA: ""
+  modelRegistry: "" # optional Secret with registry-key (base64-encoded 32-byte key)
   model: ""
 # Non-secret reference-server configuration. Paths follow the README contract.
 config: {}

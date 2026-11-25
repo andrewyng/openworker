@@ -174,6 +174,15 @@ Do not resend the user message to continue after approval: retain the submission
 and consumed cursors. Use `session.cancel()` for Stop. Closing an observer does not
 cancel execution or justify automatic approval. Persist the session reference
 and stream checkpoint for crash recovery, then reconcile pending interactions.
+In Rust, persist `Run::checkpoint()` or `RunStream::checkpoint()` after handling an event and use
+`session.resume_streamed_from(&checkpoint)` after reconnecting. A checkpoint
+records the last delivered journal position for each session. Events after the
+last saved checkpoint can be replayed.
+
+Rust's `RunEvent::ModelUsage` reports provider totals for a completed model call.
+If a provider omits usage, the SDK emits no usage event. Use the session and
+journal event IDs to avoid double-counting on replay.
+
 For a non-streaming flow, `session.runWith(input, handler)` invokes a real app
 handler for interruptions; `{ defer: true }` leaves the decision pending.
 
@@ -207,3 +216,16 @@ tool response includes a safe explanation when available, plus the instruction
 not to retry or evade the decision. Human and hard-policy denials use generic
 explanations, without copying private policy errors. Older journals may lack the
 metadata needed to identify a human decision or call; the SDK does not guess it.
+
+## Provider route metadata
+
+A provider integration can report a request ID and validated route through the
+`model_route` journal event after a successful attempt. TypeScript exposes the
+`model_route` summary (`requestId`, `routeLocus`, `responseModel`); Rust exposes
+`RunEvent::ModelRoute`. These fields are optional and contain bounded identifiers,
+not prompts or raw provider payloads. An integration that reports nothing emits
+no route event. Failed or incomplete receipts do not produce a successful route.
+
+Tracing exports the same request ID as `openworker.request.id` even with content
+capture off. Route and effective-model attributes require metadata capture.
+Correlation IDs never become metric dimensions.

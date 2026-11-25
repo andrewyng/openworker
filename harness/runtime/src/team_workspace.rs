@@ -625,6 +625,10 @@ pub async fn serve(root: &Path) -> Result<()> {
             if v["method"] == "initialize" {
                 return Ok(json!({"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"openworker-workspaces","version":"1"}}));
             }
+            if matches!(v["method"].as_str(),Some("eval/restore-fixture"|"eval/verify-fixture")) {
+                let fixture = serde_json::from_value(v["params"].clone())?;
+                return Ok(serde_json::to_value(crate::replay_fixture::restore(&root, fixture,v["method"]=="eval/verify-fixture")?)?);
+            }
             if v["method"] == "workspace/verify" {
                 let receipt: Receipt = serde_json::from_value(v["params"].clone())?;
                 receipt.validate_scope(&root, &receipt.path)?;

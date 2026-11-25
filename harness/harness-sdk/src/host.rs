@@ -162,6 +162,7 @@ pub(crate) struct Host {
     pub provider_callbacks: Arc<crate::provider_callbacks::Bridge>,
     pub safety_callbacks: Arc<crate::safety_callbacks::Bridge>,
     catalog: catalog::Catalog,
+    integrations: Arc<crate::integrations::Configured>,
     connections: Arc<openworker_runtime::connections::Manager>,
     instrumentation: openworker_telemetry::Telemetry,
     postgres: Option<PostgresStore>,
@@ -341,6 +342,9 @@ impl Host {
         } else {
             None
         };
+        if let Some(store) = &sqlite {
+            store.configure_observer_capture(config.desktop.integration_policies.clone())?;
+        }
         let catalog = catalog::Catalog::open(&config.state_dir)?;
         let callbacks = crate::callbacks::Bridge::new();
         let provider_callbacks = crate::provider_callbacks::Bridge::new(callbacks.events.clone());
@@ -368,9 +372,23 @@ impl Host {
         for descriptor in catalog.tools()? {
             registry.register(callbacks.proxy(descriptor))?;
         }
-        let connections = Arc::new(openworker_runtime::connections::Manager::open(
-            &config.state_dir,
-        )?);
+        let policies = config.desktop.integration_policies.clone();
+        let policy = Arc::new(move || {
+            Ok(crate::integrations::PolicyRevision {
+                revision: 0,
+                policies: policies.clone(),
+                ..Default::default()
+            })
+        });
+        let integration_registry = &config.desktop.integration_registry;
+        #[cfg(feature = "security-adapters")]
+        let integration_registry =
+            openworker_security_adapters::with_prisma_airs(integration_registry.clone())?;
+        let integrations =
+            Arc::new(integration_registry.configure(&config.desktop.integrations, policy)?);
+        let mut connections = openworker_runtime::connections::Manager::open(&config.state_dir)?;
+        connections.set_integrations(integrations.clone())?;
+        let connections = Arc::new(connections);
         let mut definitions = catalog::merge(&config.agents, catalog.load()?)?;
         let flat = crate::agents::compile::flatten(&definitions)?;
         ensure!(
@@ -411,7 +429,9 @@ impl Host {
         // This SDK host owns its schema's execution. Distributed server worker
         // scheduling remains a separate host mode, not a property of SQL syntax.
         let mut restored = if let Some(db) = &pg {
-            db.claim_sdk_host(ids.iter().cloned().collect())?
+            let restored = db.claim_sdk_host(ids.iter().cloned().collect())?;
+            db.configure_sdk_observer_capture(&config.desktop.integration_policies)?;
+            restored
         } else {
             vec![]
         };
@@ -501,9 +521,9 @@ impl Host {
                 config.desktop.safety.clone(),
                 safety_callbacks.registry.clone(),
             )?;
-            Arc::get_mut(&mut rt)
-                .context("Runtime published before provider binding")?
-                .connections = connections.clone();
+            let bindings = Arc::get_mut(&mut rt).context("Runtime shared during setup")?;
+            bindings.integrations = integrations.clone();
+            bindings.connections = connections.clone();
             profiles.insert(bundle.id, rt);
             if let Some(db) = &pg {
                 for s in store.lock().unwrap().list_metadata()? {
@@ -542,6 +562,7 @@ impl Host {
             provider_callbacks,
             safety_callbacks,
             catalog,
+            integrations,
             connections,
             instrumentation: telemetry,
             postgres: pg,
@@ -625,6 +646,9 @@ impl Host {
             p.is_object() && p.as_object().unwrap().len() == 1 && p.get("agent").is_some(),
             "Expected an agent definition"
         );
+        if let Some(entries) = p["agent"].get("integrations") {
+            crate::integrations::validate_entries(entries)?;
+        }
         let agent: crate::agents::Agent = serde_json::from_value(p["agent"].clone())?;
         let flat = crate::agents::compile::flatten(std::slice::from_ref(&agent))?;
         ensure!(
@@ -655,6 +679,7 @@ impl Host {
         let tools = self.tools.read().unwrap().clone();
         let store = self.store.clone();
         let telemetry = self.instrumentation.clone();
+        let integrations = self.integrations.clone();
         let connections = self.connections.clone();
         let safety_handlers = self.safety_callbacks.registry.clone();
         let definition = agent.clone();
@@ -689,9 +714,9 @@ impl Host {
                     config.desktop.safety.clone(),
                     safety_handlers.clone(),
                 )?;
-                Arc::get_mut(&mut runtime)
-                    .context("Runtime published before provider binding")?
-                    .connections = connections.clone();
+                let bindings = Arc::get_mut(&mut runtime).context("Runtime shared during setup")?;
+                bindings.integrations = integrations.clone();
+                bindings.connections = connections.clone();
                 profiles.insert(bundle.id, runtime);
             }
             Ok((profiles, agents))
@@ -733,7 +758,8 @@ impl Host {
                 .as_ref()
                 .is_some_and(|t| t.id == tid && !terminal(&t.status))
             {
-                self.runtime(&s.coworker)?
+                self.runtime_for_session(&s)
+                    .await?
                     .dispatch("turn/cancel", json!({"session_id":sid,"turn_id":tid}))
                     .await?;
             }
@@ -743,11 +769,12 @@ impl Host {
             if s.closed {
                 continue;
             }
-            let rt = self.runtime(&s.coworker)?;
+            let rt = self.runtime_for_session(&s).await?;
             if let Some(parent_id) = &s.sandbox_parent {
                 let parent = self.store.lock().unwrap().metadata(parent_id)?;
                 if !parent.closed && parent.sandbox.is_none() {
-                    self.runtime(&parent.coworker)?
+                    self.runtime_for_session(&parent)
+                        .await?
                         .prepare_shared_subagent_sandbox(parent_id)
                         .await?;
                 }
@@ -836,7 +863,18 @@ impl Host {
                     }
                     let runtime_type =
                         openworker_runtime::agent_team::runtime_type(&doc, &instance)?;
-                    let child_rt = self.runtime(&runtime_type)?;
+                    let child_rt = match self.runtime(&runtime_type) {
+                        Ok(runtime) => runtime,
+                        Err(_) => {
+                            // The lead can approve and reserve a child after this tick's
+                            // initial registration refresh. The fresh snapshot above has
+                            // already validated the exact approved type.
+                            self.refresh_named_types(std::slice::from_ref(&s)).await?;
+                            self.runtime(&runtime_type).context(
+                                "Pending child runtime did not register from its approved type",
+                            )?
+                        }
+                    };
                     let Some(workspace) = self.prepare_named_workspace(&s, &doc, &instance).await?
                     else {
                         continue;
@@ -863,7 +901,12 @@ impl Host {
                             .get(&runtime_type)
                             .cloned()
                             .context("Registered team type missing")?;
-                        parameters["permissions"] = json!({"mode":definition.approvals.mode(),"auto_skip_questions":definition.auto_skip_questions});
+                        parameters["permissions"] = json!({
+                            "mode":definition.approvals.mode(),
+                            "auto_skip_questions":definition.auto_skip_questions,
+                            "never_allow_read_write_outside_workspace": definition.never_allow_read_write_outside_workspace
+                                || s.permissions.never_allow_read_write_outside_workspace
+                        });
                         if let Some(standalone) = &doc.standalone {
                             let policy = standalone
                                 .policies
@@ -901,6 +944,14 @@ impl Host {
                                 .prepare_shared_subagent_sandbox(&s.id)
                                 .await?;
                             child.sandbox_parent = Some(s.id.clone());
+                        }
+                        if let Some(policy) = doc
+                            .standalone
+                            .as_ref()
+                            .and_then(|standalone| standalone.policies.get(&instance.agent_id))
+                        {
+                            child.allow_workspace_reads = policy.workspace_reads.clone();
+                            child.allow_workspace_writes = policy.workspace_writes.clone();
                         }
                         child.id = instance.session_id.clone();
                         // Read back the immutable acknowledgement saved by the
@@ -1133,6 +1184,10 @@ impl Host {
                 c.insert("turn_limits".into(), json!(true));
                 c.insert("turn_context".into(), json!(true));
                 c.insert("application_guidance".into(), json!(true));
+                c.insert(
+                    "integrations".into(),
+                    json!(self.integrations.catalog.catalog()),
+                );
                 c.insert(
                     "attachments".into(),
                     json!(

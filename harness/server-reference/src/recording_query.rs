@@ -14,6 +14,7 @@ use openworker_observability::{
 };
 use openworker_store_postgres::{
     auth::Action,
+    guardrail_query,
     run_query::{self, Run},
 };
 use serde::{Deserialize, Serialize};
@@ -41,15 +42,18 @@ pub(crate) fn authority(method: &str, path: &str) -> bool {
         .unwrap_or_else(|| path.into());
     matches!(
         path.split('/').collect::<Vec<_>>().as_slice(),
-        ["", "observability", "runs" | "summary" | "health"]
-            | [
-                "",
-                "sessions",
-                _,
-                "observability",
-                _,
-                "timeline" | "summary" | "children" | "subtree-summary"
-            ]
+        [
+            "",
+            "observability",
+            "runs" | "summary" | "health" | "guardrails"
+        ] | [
+            "",
+            "sessions",
+            _,
+            "observability",
+            _,
+            "timeline" | "summary" | "children" | "subtree-summary"
+        ]
     )
 }
 pub(crate) fn action(method: &str, path: &str) -> Option<Action> {
@@ -66,6 +70,10 @@ pub(crate) fn router(prefix: &str) -> Router<App> {
         .route(&format!("{prefix}/observability/health"), get(health))
         .route(&format!("{prefix}/observability/runs"), get(search))
         .route(&format!("{prefix}/observability/summary"), get(grouped))
+        .route(
+            &format!("{prefix}/observability/guardrails"),
+            get(guardrails),
+        )
         .route(
             &format!("{prefix}/sessions/:sid/observability/:turn/timeline"),
             get(timeline),
@@ -94,6 +102,49 @@ async fn health(Extension(app): Extension<App>) -> Result<Json<Value>, ApiError>
         "exporter":app.runtime.telemetry.snapshot()
     })))
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Guardrails {
+    session_id: Option<String>,
+    turn_id: Option<String>,
+    rule: Option<String>,
+    outcome: Option<guardrail_query::Outcome>,
+    from_ms: Option<i64>,
+    limit: Option<u16>,
+    after: Option<String>,
+}
+
+async fn guardrails(
+    Extension(app): Extension<App>,
+    Query(q): Query<Guardrails>,
+) -> Result<Json<Value>, ApiError> {
+    let after = q
+        .after
+        .as_deref()
+        .map(|value| {
+            if value.len() > 512 {
+                return Err(Error::Invalid);
+            }
+            let bytes = URL_SAFE_NO_PAD.decode(value).map_err(|_| Error::Invalid)?;
+            serde_json::from_slice::<guardrail_query::Cursor>(&bytes).map_err(|_| Error::Invalid)
+        })
+        .transpose()
+        .map_err(|error| ApiError(error.into()))?;
+    let page = app.store.guardrail_findings(guardrail_query::Search {
+        session_id: q.session_id,
+        turn_id: q.turn_id,
+        rule: q.rule,
+        outcome: q.outcome,
+        from_ms: q.from_ms,
+        limit: q.limit,
+        after,
+    })?;
+    let next = page
+        .next
+        .map(|cursor| URL_SAFE_NO_PAD.encode(serde_json::to_vec(&cursor).expect("typed cursor")));
+    Ok(Json(json!({"findings":page.findings,"next_cursor":next})))
+}
+
 #[derive(Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Search {

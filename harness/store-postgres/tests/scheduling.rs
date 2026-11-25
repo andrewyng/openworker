@@ -125,12 +125,14 @@ fn managed_agent_and_reviewer_identities_must_both_match() {
         owner.claim(id).unwrap();
         let mut session = owner.get(id).unwrap();
         session.model_selection = Some(openworker_runtime::connections::Selection {
+            notify_on_session_state: false,
             provider: openworker_runtime::provider::Kind::Anthropic,
             connection: "anthropic".into(),
             model: "claude-test".into(),
             identity: "agent-identity".into(),
         });
         session.reviewer_selection = Some(openworker_runtime::connections::Selection {
+            notify_on_session_state: false,
             provider: openworker_runtime::provider::Kind::Openai,
             connection: "reviewer".into(),
             model: "openai-test".into(),

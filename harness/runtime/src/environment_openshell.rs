@@ -303,6 +303,24 @@ impl OpenShell {
             .await?;
         response.sandbox.context("Gateway sandbox absent")
     }
+    pub(crate) async fn open_loop(
+        &self,
+        binding: &Binding,
+        launch_id: &str,
+    ) -> Result<crate::sandbox::ExecStream> {
+        anyhow::ensure!(
+            binding.spec.provider == "openshell-loop" && binding.spec.sharing == Sharing::Exclusive,
+            "Expected dedicated loop sandbox"
+        );
+        self.inspect(binding.clone()).await?;
+        crate::sandbox::ExecStream::connect_attachment(
+            &self.config,
+            &binding.remote_name,
+            vec!["/opt/openworker/openworker".into(), "sandbox-loop".into()],
+            launch_id,
+        )
+        .await
+    }
     fn observed(&self, object: Sandbox, spec: Spec, environment_id: String) -> Result<Binding> {
         let meta = object.metadata.context("Remote object metadata missing")?;
         let desired = object.spec.context("Remote spec missing")?;

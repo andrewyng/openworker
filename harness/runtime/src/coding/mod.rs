@@ -6,6 +6,8 @@ pub mod manager;
 pub mod openshell_git;
 mod patch;
 mod processes;
+#[cfg(unix)]
+mod scoped_file;
 mod web;
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
@@ -68,11 +70,40 @@ impl CodingTools {
             receipt.validate_scope(&receipt.project_root, root)?;
             receipt.verify()?;
         }
+        let reviewed = match name {
+            "read_reviewed_file" => Some("read_file"),
+            #[cfg(unix)]
+            "write_reviewed_file" => Some("write_file"),
+            #[cfg(unix)]
+            "edit_reviewed_file" => Some("edit_file"),
+            _ => None,
+        };
+        let name = reviewed.unwrap_or(name);
+        #[cfg(unix)]
+        if matches!(name, "write_file_under" | "edit_file_under") {
+            let op = name.strip_suffix("_under").unwrap();
+            let directory = args["directory"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("Missing write scope"))?;
+            return files::scoped_write(root, op, &args["operation"], directory);
+        }
         let descriptor = schemas()
             .into_iter()
             .find(|s| s["name"] == name)
             .ok_or_else(|| anyhow::anyhow!("Unknown coding tool"))?;
         crate::runtime::validate_arguments(&descriptor["inputSchema"], args)?;
+        if reviewed.is_some() {
+            let path = crate::runner::reviewed_file_path(
+                args["path"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("Path required"))?,
+            )?;
+            if name == "read_file" {
+                return files::read(Path::new("/"), path, args);
+            }
+            #[cfg(unix)]
+            return files::reviewed_write(root, name, path, args);
+        }
         match name {
             "apply_patch" => patch::apply(root, args),
             "git_status" | "git_diff" | "git_log" => {

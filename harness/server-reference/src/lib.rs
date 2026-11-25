@@ -6,12 +6,18 @@ use openworker_store_postgres::{Config as DbConfig, PostgresStore, Tls};
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 mod agent_teams;
+mod app_agents;
 mod artifacts;
 mod authorization;
+pub mod compliance_catalog;
+mod eval_judge;
+pub mod eval_replay;
+pub mod evals;
 pub mod git_access;
 pub mod http;
 pub mod kubernetes;
 pub mod management;
+mod model_registry;
 pub mod operations;
 pub mod readiness;
 pub mod recording;
@@ -27,9 +33,27 @@ mod service_team_sources;
 mod service_team_submissions;
 mod service_team_types;
 mod service_team_workspaces;
+mod workspace_api;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(skip)]
+    pub workspace_registry: openworker_runtime::workspaces::Registry,
+    #[serde(default, alias = "workspace_services")]
+    pub kubernetes_workspaces: std::collections::BTreeMap<
+        String,
+        openworker_runtime::workspaces::http::WorkspaceServiceConfig,
+    >,
+    /// Principals permitted to use each deployment-owned workspace service.
+    #[serde(default)]
+    pub workspace_grants: std::collections::BTreeMap<String, Vec<String>>,
+    #[cfg(feature = "workspace-reference")]
+    #[serde(default)]
+    pub reference_workspaces: std::collections::BTreeMap<String, PathBuf>,
+    #[serde(default)]
+    pub integrations: openworker_runtime::integrations::Settings,
+    #[serde(skip)]
+    pub integration_registry: openworker_runtime::integrations::Registry,
     #[serde(default)]
     pub security_scanners: Vec<serde_json::Value>,
     #[serde(skip)]
@@ -92,6 +116,8 @@ pub struct Config {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelConnection {
+    #[serde(default)]
+    pub endpoint: Option<openworker_runtime::connections::HostEndpoint>,
     pub id: String,
     pub provider: openworker_runtime::provider::Kind,
     /// Stable deployment-owned non-secret identity, identical on API and workers.
@@ -170,9 +196,23 @@ impl ArtifactConfig {
         }
     }
 }
+#[derive(Clone, serde::Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LoopInference {
+    pub api: openworker_runtime::model_api::Api,
+    pub base_url: String,
+    /// Immutable operator binding for the sandbox-side native model endpoint.
+    pub provider: Option<openworker_runtime::coding::openshell_git::ProviderPin>,
+    pub connection: String,
+}
+
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OpenShellConfig {
+    #[serde(default)]
+    pub loop_inference: Option<LoopInference>,
+    #[serde(skip)]
+    pub selected_loop: bool,
     /// Operator-owned pins/scopes. Definitions can select names only.
     #[serde(default)]
     pub git_grants: std::collections::BTreeMap<String, git_access::Grant>,
@@ -205,10 +245,22 @@ impl Config {
     }
     #[cfg(not(windows))]
     pub fn provider(&self) -> Result<Arc<openworker_runtime::environment_openshell::OpenShell>> {
+        self.openshell_provider(false)
+    }
+    #[cfg(not(windows))]
+    pub fn openshell_provider(
+        &self,
+        for_loop: bool,
+    ) -> Result<Arc<openworker_runtime::environment_openshell::OpenShell>> {
         self.require_execution()?;
         let c = &self.openshell;
         let mut provider = openworker_runtime::environment_openshell::OpenShell::new(
-            "openshell-k8s".into(),
+            if for_loop {
+                "openshell-loop"
+            } else {
+                "openshell-k8s"
+            }
+            .into(),
             c.identity.clone(),
             openworker_runtime::sandbox::ExecConnectionConfig {
                 endpoint: c.endpoint.clone(),
@@ -219,7 +271,25 @@ impl Config {
             c.image.clone(),
         )?
         .with_resources(c.cpu.unwrap_or(1), c.memory_mb.unwrap_or(512))?;
-        if let Some(grant) = self.git_grant()? {
+        if for_loop {
+            let route = c
+                .loop_inference
+                .as_ref()
+                .context("Sandbox loop execution is not installed")?;
+            openworker_runtime::loop_channel::inference_base(&route.base_url)?;
+            anyhow::ensure!(
+                openworker_runtime::bundle::safe_name(&route.connection),
+                "Invalid sandbox inference connection"
+            );
+            if let Some(pin) = &route.provider {
+                provider = provider.with_credential_provider(pin.clone())?;
+            } else {
+                anyhow::ensure!(
+                    self.scripted,
+                    "A pinned sandbox inference provider is required"
+                );
+            }
+        } else if let Some(grant) = self.git_grant()? {
             provider = provider
                 .with_credential_provider(grant.provider.clone())?
                 .with_git_scope(grant.scope.clone())?;
@@ -254,10 +324,63 @@ impl Config {
             None,
             None,
             self.tool_registry(Some(&store))?,
-            Some(Box::new(store)),
+            Some(Box::new(store.clone())),
             telemetry,
         )?;
         self.install_security_scanners()?;
+        let service_mode = self.service.is_some();
+        let policy_store = store.clone();
+        let policy = Arc::new(move || {
+            if !service_mode {
+                return Ok(Default::default());
+            }
+            let current = policy_store.service_configuration()?;
+            Ok(openworker_runtime::integrations::PolicyRevision {
+                revision: current.revision,
+                policies: current.configuration.integration_policies,
+                app_check_modes: current.configuration.app_check_modes,
+            })
+        });
+        let integration_registry = &self.integration_registry;
+        #[cfg(feature = "security-adapters")]
+        let integration_registry =
+            openworker_security_adapters::with_prisma_airs(integration_registry.clone())?;
+        let mut configured = integration_registry.configure(&self.integrations, policy)?;
+        configured.cluster_policy = service_mode;
+        let runtime = Arc::get_mut(&mut rt).context("Runtime shared during startup")?;
+        if self.openshell.selected_loop {
+            let route = self
+                .openshell
+                .loop_inference
+                .as_ref()
+                .context("Sandbox inference route missing")?;
+            runtime.sandbox_loop = Some(openworker_runtime::loop_channel::Driver::new(
+                self.openshell_provider(true)?,
+                route.api,
+                route.base_url.clone(),
+                route.connection.clone(),
+            ));
+        }
+        runtime.workspaces = self.workspace_registry.clone();
+        for (name, config) in &self.kubernetes_workspaces {
+            runtime.workspaces.register(
+                name,
+                Arc::new(
+                    openworker_runtime::workspaces::http::WorkspaceServiceProvider::new(config)?,
+                ),
+            )?;
+        }
+        #[cfg(feature = "workspace-reference")]
+        for (name, db) in &self.reference_workspaces {
+            runtime.workspaces.register(
+                name,
+                Arc::new(openworker_runtime::workspaces::reference::ReferenceProvider::open(db)?),
+            )?;
+        }
+        runtime.integrations = Arc::new(configured);
+        Arc::get_mut(&mut runtime.connections)
+            .context("Connections shared during setup")?
+            .set_integrations(runtime.integrations.clone())?;
         Runtime::configure_safety(&mut rt, self.safety.clone(), self.safety_handlers.clone())?;
         Runtime::configure_compliance(&mut rt, self.compliance.clone())?;
         if !self.recovery_read_only {
@@ -278,22 +401,30 @@ impl Config {
                     "Invalid or duplicate model connection"
                 );
                 let guard_connection=self.safety.guardrails.user_input.iter().any(|r|matches!(&r.detector,openworker_runtime::safety::Detector::Model{model,..} if model.connection==connection.id));
-                if load_credentials || guard_connection {
-                    let key = std::env::var(&connection.key_env)
-                        .context("Configured model credential environment variable missing")?;
-                    rt.connections.register_host(
-                        &connection.id,
-                        connection.provider,
-                        &connection.identity,
-                        key.into(),
-                    )?;
+                let key = if load_credentials || guard_connection {
+                    Some(
+                        std::env::var(&connection.key_env)
+                            .context("Configured model credential environment variable missing")?
+                            .into(),
+                    )
                 } else {
-                    rt.connections.register_host_reference(
-                        &connection.id,
-                        connection.provider,
-                        &connection.identity,
-                    )?;
-                }
+                    None
+                };
+                rt.connections.register_host_endpoint(
+                    &connection.id,
+                    connection.provider,
+                    &connection.identity,
+                    key,
+                    connection.endpoint.clone(),
+                )?;
+            }
+            for route in store.model_routes()? {
+                model_registry::check_static(self, &route.name)?;
+                model_registry::install(
+                    &rt.connections,
+                    &route,
+                    load_credentials.then(|| store.clone()),
+                )?;
             }
             let mut registry = openworker_runtime::environment::Registry::default();
             let provider = self.provider()?;

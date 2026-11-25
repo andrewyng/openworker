@@ -4,11 +4,13 @@ import type {AgentRelease,RuntimeProfile,ServiceAgentTeamOptions} from "./servic
 import {codingPresets} from "./coding-presets.js";
 export const CODING_PRESET_VERSION=codingPresets.version;
 export interface CodingOptions {
+  integrations?: AgentDefinition["integrations"];
   instructions?:string;
   tools?:string[];
   defaultModel?:Model;
   approvals?:Approvals;
   autoSkipQuestions?:boolean;
+  neverAllowReadWriteOutsideWorkspace?:boolean;
   limits?:TurnLimits;
 }
 function role(name:string,kind:"single"|"lead"|"builder"|"verifier"|"isolated_lead"|"isolated_builder"|"isolated_verifier",options:CodingOptions={}):AgentDefinition {
@@ -32,12 +34,20 @@ export function sharedCodingTeam(prefix:string,workspace:{repository:string;base
 }
 /** Service policy belongs to the activated RuntimeProfile, not local SDK flags. */
 export function codingRelease(agent:AgentDefinition,version:string,profile:RuntimeProfile):AgentRelease {
+  if (agent.approvals?.allowWorkspaceReads !== undefined) {
+    const installed = new Set(profile.allowWorkspaceReads ?? []);
+    const requested = new Set(agent.approvals.allowWorkspaceReads);
+    if (requested.size !== installed.size || [...requested].some(root => !installed.has(root)))
+      throw Error("Directory approval grants must match the installed RuntimeProfile");
+  }
   const mode=agent.approvals?.mode??"always";
   const expected=mode==="never"?"bypass":mode==="auto"||mode==="reviewer"?"auto-approve":"ask";
-  if(agent.servers || agent.toolPolicy || agent.runtimePolicy || agent.planning!==true || agent.memory || agent.memoryScope || agent.scheduling || (Array.isArray(agent.subagents) && agent.subagents.length) || mode==="only" || expected!==(profile.approvalMode??"ask") || (agent.autoSkipQuestions??false)!==(profile.autoSkipQuestions??false))throw Error("Service release must match the installed coding bundle and RuntimeProfile");
+  if(agent.servers || agent.toolPolicy || agent.runtimePolicy || agent.planning!==true || agent.memory || agent.memoryScope || agent.scheduling || (Array.isArray(agent.subagents) && agent.subagents.length) || mode==="only" || expected!==(profile.approvalMode??"ask") || (agent.autoSkipQuestions??false)!==(profile.autoSkipQuestions??false) ||
+    (agent.neverAllowReadWriteOutsideWorkspace&&!profile.neverAllowReadWriteOutsideWorkspace))throw Error("Service release must match the installed coding bundle and RuntimeProfile");
   if(!/^[a-zA-Z0-9_.-]{1,64}$/.test(version))throw Error("Invalid release version");
   return {id:`${agent.name}@${version}`,instructions:agent.instructions,tools:[...agent.tools],runtimeProfiles:[profile.id],defaultRuntimeProfile:profile.id,allowedPrincipals:profile.allowedPrincipals,
-    defaultModel:agent.defaultModel?{connection:agent.defaultModel.provider,model:agent.defaultModel.name}:undefined,
+    integrations:agent.integrations,
+    defaultModel:agent.defaultModel?{connection:agent.defaultModel.provider,model:agent.defaultModel.name,...(agent.defaultModel.notifyOnSessionState===undefined ? {} : {notify_on_session_state:agent.defaultModel.notifyOnSessionState})}:undefined,
     reviewerModel:agent.approvals?.mode==="auto"?{connection:agent.approvals.reviewerModel.provider,model:agent.approvals.reviewerModel.name}:undefined,limits:agent.limits,subagents:agent.subagents && !Array.isArray(agent.subagents)?agent.subagents:undefined};
 }
 export function codingServiceTeam(preset:SharedCodingPreset,version:string):ServiceAgentTeamOptions {

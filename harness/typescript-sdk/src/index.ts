@@ -1,3 +1,4 @@
+import { validateIntegrationOptions } from "./integration-options.js";
 import {Attachment,attachmentArgument,stageInput,userInput,type UserInput} from "./attachments.js";
 export { Attachment } from "./attachments.js";
 export type { UserInput, InputContent, AttachmentSource } from "./attachments.js";
@@ -62,7 +63,7 @@ function approvalDecisionOf(value: unknown): import("./types.js").ApprovalDecisi
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const v = record(value);
   if (!["interaction_id", "call_id", "tool"].every(k => typeof v[k] === "string") ||
-      !["reviewer", "human", "app_policy", "session_grant", "hard_policy", "bypass"].includes(String(v.origin)) ||
+      !["reviewer", "human", "app_policy", "session_grant", "subagent_creation_grant", "workspace_read_grant", "workspace_write_grant", "hard_policy", "bypass"].includes(String(v.origin)) ||
       !["allow", "deny", "unsure"].includes(String(v.verdict))) return undefined;
   const reason = typeof v.reason === "string" && [...v.reason].length <= 512 ? v.reason : undefined;
   return {
@@ -328,6 +329,7 @@ export class Harness {
     }
   }
   static async start(options: HarnessOptions = {}): Promise<Harness> {
+    validateIntegrationOptions(options.integrations);
     const pending:{ref:{name:string;version:string};callback:SafetyHandler}[]=[];
     const safety=await normalizeSafety(options,async(ref,callback)=>{pending.push({ref,callback});});
     const {guardrails:_guards,hooks:_hooks,blockedOutputOptions:_blocked,...launchOptions}=options;
@@ -392,6 +394,7 @@ export class Harness {
     });
   }
   async setModelProvider(provider: ModelProvider): Promise<void> {
+    validateIntegrationOptions(provider.integrations);
     const credentials = provider.credentials;
     if (provider.auth && credentials)
       throw new HarnessError(
@@ -420,6 +423,8 @@ export class Harness {
       throw new HarnessError("InvalidInput", "Provider key is unavailable");
     await this.request("provider/set", {
       name: provider.name,
+      inference_options: provider.inferenceOptions,
+      integrations: provider.integrations,
       api: provider.api,
       base_url: provider.baseUrl,
       stream_usage: provider.streamUsage,
@@ -535,6 +540,7 @@ export class Harness {
   }
   /** Creates a reusable handle. Await ready() or newSession() to confirm registration. */
   createAgent(definition: AgentDefinition): AgentHandle {
+    validateIntegrationOptions(definition.integrations);
     return new AgentHandle(this, structuredClone(definition));
   }
   async listAgents(): Promise<string[]> {
@@ -585,6 +591,9 @@ export class Harness {
     return team;
   }
   async session(agent: string, options: SessionOptions = {}): Promise<Session> {
+    validateIntegrationOptions(options.integrations);
+    if (options.integrations !== undefined && !this.capabilities.integrations)
+      throw new HarnessError("Setup", "Update the host to configure session integrations");
     if ((options.autoApproverContext !== undefined || options.compaction !== undefined) && this.capabilities.application_guidance !== true)
       throw new HarnessError("Setup", "Update the host to configure application guidance");
     if (options.initialHistory !== undefined && this.capabilities.initial_history !== true)
@@ -612,12 +621,14 @@ export class Harness {
         auto_skip_questions: options.autoSkipQuestions,
         auto_approver_context: options.autoApproverContext,
         compaction: options.compaction === undefined ? undefined : { additional_instructions: options.compaction.additionalInstructions },
+        integrations: options.integrations,
         initial_history: options.initialHistory,
         name: options.name,
         ...(options.model
           ? {
               model: {
                 connection: options.model.provider,
+                notify_on_session_state: options.model.notifyOnSessionState,
                 model: options.model.name,
               },
             }
@@ -702,6 +713,7 @@ export class AgentHandle {
           ? {
               model: {
                 connection: defaultModel.provider,
+                notify_on_session_state: defaultModel.notifyOnSessionState,
                 model: defaultModel.name,
               },
             }
@@ -1133,7 +1145,7 @@ export class RunStream implements AsyncIterable<RunEvent> {
             ...(summary.type === "tool_started" && Object.hasOwn(wireSummary,"arguments") ? {arguments: wireSummary.arguments as Json} : {}),
           };
         }
-        if (summary && ["model_attempt_started", "model_attempt_finished", "assistant_delta", "reasoning_delta", "model_activity", "provider_error"].includes(summary.type)) {
+        if (summary && ["model_attempt_started", "model_attempt_finished", "assistant_delta", "reasoning_delta", "model_activity", "model_route", "model_usage", "provider_error"].includes(summary.type)) {
           const wire = record(item.summary);
           const attemptId = String(wire.attempt_id ?? "");
           switch (summary.type) {
@@ -1142,6 +1154,12 @@ export class RunStream implements AsyncIterable<RunEvent> {
             case "assistant_delta": summary = { type:summary.type, attemptId, text:String(wire.text ?? "") }; break;
             case "reasoning_delta": summary = { type:summary.type, attemptId, kind:wire.kind as "summary" | "thinking", text:String(wire.text ?? ""), blockIndex:Number(wire.block_index) }; break;
             case "model_activity": summary = { type:summary.type, attemptId, elapsedMs:Number(wire.elapsed_ms) }; break;
+            case "model_route": summary = { type:summary.type, attemptId,
+              ...(typeof wire.request_id === "string" ? {requestId:wire.request_id} : {}),
+              ...(typeof wire.route_locus === "string" ? {routeLocus:wire.route_locus} : {}),
+              ...(typeof wire.response_model === "string" ? {responseModel:wire.response_model} : {}),
+            }; break;
+            case "model_usage": summary = {type:summary.type,inputTokens:Number(wire.input_tokens),outputTokens:Number(wire.output_tokens),cachedInputTokens:Number(wire.cached_input_tokens)}; break;
             case "provider_error": {
               const diagnostic = providerDiagnostic(wire.diagnostic);
               summary = diagnostic ? { type:summary.type, attemptId, diagnostic } : null;

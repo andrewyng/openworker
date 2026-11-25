@@ -344,6 +344,7 @@ impl crate::runtime::Runtime {
         let policy = self
             .safety_defaults
             .merge(&session.safety)?
+            .merge(&self.integration_checks_for_session(sid, &session.integrations)?)?
             .merge(&safety.cloned().unwrap_or_default())?;
         let mut checked = vec![];
         let mut total = 0usize;
@@ -412,8 +413,8 @@ impl crate::runtime::Runtime {
                             attachment_id.clone()
                         }
                     } else {
-                        if policy.protects(crate::safety::Phase::UserInput, None)
-                            || policy.protects(crate::safety::Phase::ModelInput, None)
+                        if policy.enforces(crate::safety::Phase::UserInput, None)
+                            || policy.enforces(crate::safety::Phase::ModelInput, None)
                         {
                             return Err(InspectionUnsupported.into());
                         }

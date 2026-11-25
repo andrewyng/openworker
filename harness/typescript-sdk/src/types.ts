@@ -1,3 +1,7 @@
+export interface IntegrationOptions {
+  enabled?: boolean;
+  [option: string]: Json | undefined;
+}
 import type { SafetyOptions } from "./safety.js";
 export type Json =
   null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -39,7 +43,16 @@ export interface ProviderAuth {
     signal: AbortSignal;
   }) => Promise<AccessToken>;
 }
+export interface InferenceOptions {
+  headers?: Record<string, string>;
+  query?: Record<string, string>;
+  body?: Record<string, Json>;
+  timeouts?: { requestMs?: number; generationMs?: number };
+}
 export interface ModelProvider {
+  integrations?: Record<string, IntegrationOptions>;
+  inferenceOptions?: InferenceOptions;
+
   name: string;
   api: "responses" | "chat-completions" | "anthropic";
   baseUrl?: string;
@@ -99,10 +112,10 @@ export interface ApplicationTools {
   tools: Record<string, ApplicationTool>;
 }
 export type ConnectionState = "ready" | "recovering" | "closed" | "unavailable";
-export type Approvals =
+export type Approvals = { allowWorkspaceReads?: string[] } & (
   | { mode: "auto"; reviewerModel: Model }
   | { mode: "always" | "reviewer" | "never" }
-  | { mode: "only"; tools: string[] };
+  | { mode: "only"; tools: string[] });
 
 /** Definitions are fixed at host startup. Tools are qualified registered names. */
 export interface TurnLimits {
@@ -125,12 +138,13 @@ export interface ApplicationGuidance {
 export interface Agent extends ApplicationGuidance {
   builtinTools?: { askUser?: boolean; readHistory?: boolean };
   limits?: TurnLimits;
+  integrations?: Record<string, IntegrationOptions>;
   id: string;
   name?: string;
   description?: string;
   instructions: string;
   tools: string[];
-  model?: { connection: string; model: string };
+  model?: { connection: string; model: string; notify_on_session_state?: boolean };
   provider?: Provider;
   fallbackModel?: string;
   planning?: boolean;
@@ -141,8 +155,10 @@ export interface Agent extends ApplicationGuidance {
   approvals?: Approvals;
   /** Skip structured ask_user calls without changing tool approvals. */
   autoSkipQuestions?: boolean;
+  /** Reject outside-workspace first-party file operations before review. Defaults to false. */
+  neverAllowReadWriteOutsideWorkspace?: boolean;
   /** Existing arrays configure board workers; an object enables standalone children. */
-  subagents?: Agent[] | { enabled: boolean; maxConcurrent?: number; maxChildren?: number; limits?: TurnLimits };
+  subagents?: Agent[] | SubagentOptions;
   servers?: string;
   toolPolicy?: string;
   runtimePolicy?: string;
@@ -153,12 +169,22 @@ export interface AgentDefinition extends Omit<Agent, "id" | "name" | "model"> {
   defaultModel?: Model;
 }
 export interface Model {
+  notifyOnSessionState?: boolean;
   provider: string;
   name: string;
 }
 export interface ComplianceOptions { retentionDays?: number; maxPendingEvents?:number }
 export interface ComplianceQuery { after?: number; limit?: number; kind?: string; outcome?: string }
+export interface SubagentOptions {
+  enabled: boolean;
+  maxConcurrent?: number;
+  maxChildren?: number;
+  limits?: TurnLimits;
+  creationGrant?: { maxCreations: number; tools: string[]; workspace?: { read?: string[]; write?: string[] } };
+}
+
 export interface SessionOptions extends SafetyOptions, ApplicationGuidance {
+  integrations?: Record<string, IntegrationOptions>;
   /** Completed portable transcript only. Imported calls never execute. */
   initialHistory?: HistoryItem[];
   compliance?: ComplianceOptions;
@@ -195,7 +221,10 @@ export interface Telemetry {
   };
 }
 export interface ComplianceSink { name:string; endpoint:string; credentialEnv:string; allowLoopbackHttp?:boolean }
+export type IntegrationPolicy = "on-by-default" | "off-by-default" | "required" | "forbidden";
 export interface HarnessOptions extends SafetyOptions {
+  integrations?: Record<string, IntegrationOptions>;
+  integrationPolicies?: Record<string, IntegrationPolicy>;
   complianceSinks?:ComplianceSink[];
   compliance?: ComplianceOptions;
   /** App-owned immutable coworker bundles; same host policy as dynamically defined agents. */
@@ -326,7 +355,7 @@ export interface ApprovalDecision {
   interactionId: string;
   callId: string;
   tool: string;
-  origin: "reviewer" | "human" | "app_policy" | "session_grant" | "hard_policy" | "bypass";
+  origin: "reviewer" | "human" | "app_policy" | "session_grant" | "subagent_creation_grant" | "workspace_read_grant" | "workspace_write_grant" | "hard_policy" | "bypass";
   verdict: "allow" | "deny" | "unsure";
   /** Bounded released display context; may be unavailable or withheld. */
   reason?: string;
@@ -349,6 +378,8 @@ export interface RunEvent {
         | { type: "assistant_delta"; attemptId: string; text: string }
         | { type: "reasoning_delta"; attemptId: string; kind: "summary" | "thinking"; text: string; blockIndex: number }
         | { type: "model_activity"; attemptId: string; elapsedMs: number }
+        | { type: "model_route"; attemptId: string; requestId?: string; routeLocus?: string; responseModel?: string }
+        | { type: "model_usage"; inputTokens: number; outputTokens: number; cachedInputTokens: number }
         | { type: "provider_error"; attemptId: string; diagnostic: ProviderDiagnostic }
         | {
             type: "tool_started";
@@ -445,7 +476,7 @@ export class HarnessError extends Error {
 export function agentDefinitionConflict(value: unknown): {reason: "agent_definition_conflict"; agentId: string; conflictingFields: string[]} | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const v = value as Record<string, unknown>;
-  const fields = ["name","description","instructions","limits","builtin_tools","tools","model","provider","fallback_model","planning","memory","memory_scope","scheduling","approvals","auto_skip_questions","auto_approver_context","compaction","subagents","standalone_subagents","servers","tool_policy","runtime_policy"];
+  const fields = ["name","description","instructions","limits","builtin_tools","tools","model","provider","fallback_model","planning","memory","memory_scope","scheduling","approvals","auto_skip_questions","never_allow_read_write_outside_workspace","auto_approver_context","compaction","subagents","standalone_subagents","servers","tool_policy","runtime_policy"];
   if (typeof v.agent_id !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(v.agent_id) || !Array.isArray(v.conflicting_fields) || v.conflicting_fields.length === 0 || v.conflicting_fields.length > fields.length || v.conflicting_fields.some(f => typeof f !== "string" || !fields.includes(f))) return undefined;
   return {reason: "agent_definition_conflict", agentId: v.agent_id, conflictingFields: [...v.conflicting_fields] as string[]};
 }
@@ -471,7 +502,7 @@ export function providerDiagnostic(value: unknown): ProviderDiagnostic | undefin
     ...(Number.isInteger(v.http_status) && Number(v.http_status) >= 100 && Number(v.http_status) <= 599 ? { httpStatus: Number(v.http_status) } : {}),
     ...(typeof v.request_id === "string" && /^[a-zA-Z0-9_:-]{1,128}$/.test(v.request_id) && !v.request_id.startsWith("sk-") ? { requestId: v.request_id } : {}),
     ...(["responses", "chat-completions", "anthropic"].includes(String(v.api)) ? { api: v.api as ProviderDiagnostic["api"] } : {}),
-    ...(["invalid_api_key","authentication_error","permission_error","invalid_request_error","rate_limit_exceeded","rate_limit_error","insufficient_quota","context_length_exceeded","server_error","api_error","overloaded_error","misalignment_policy_violation","RESOURCE_EXHAUSTED","INVALID_ARGUMENT","UNAUTHENTICATED","PERMISSION_DENIED","http_error_body_unavailable","invalid_response","incomplete_stream","invalid_stream_json","invalid_anthropic_message","invalid_anthropic_request","invalid_chat_completion","invalid_chat_request_history","invalid_tool_call_index"].includes(String(v.code)) ? {code:String(v.code)} : {}),
+    ...(["invalid_api_key","authentication_error","permission_error","invalid_request_error","rate_limit_exceeded","rate_limit_error","insufficient_quota","context_length_exceeded","server_error","api_error","overloaded_error","misalignment_policy_violation","RESOURCE_EXHAUSTED","INVALID_ARGUMENT","UNAUTHENTICATED","PERMISSION_DENIED","http_error_body_unavailable","invalid_response","incomplete_stream","invalid_stream_json","invalid_anthropic_message","invalid_anthropic_request","invalid_chat_completion","invalid_chat_request_history","invalid_tool_call_index","adapter_invalid_receipt","adapter_outcome_unknown","connection_refused"].includes(String(v.code)) ? {code:String(v.code)} : {}),
   };
 }
 

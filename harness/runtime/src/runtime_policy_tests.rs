@@ -8,12 +8,41 @@ async fn fixture(
     alias: &str,
     args: Value,
 ) -> (tempfile::TempDir, Arc<Runtime>, String, Value) {
+    fixture_with_runner(mode, skip, model, alias, args, false).await
+}
+
+async fn fixture_with_runner(
+    mode: Mode,
+    skip: bool,
+    model: Model,
+    alias: &str,
+    args: Value,
+    coding: bool,
+) -> (tempfile::TempDir, Arc<Runtime>, String, Value) {
     let tmp = tempfile::tempdir().unwrap();
     let runner = tmp.path().join("runner");
     std::fs::write(&runner, b"\x7fELFtest-only-no-execution").unwrap();
     let workspace = tmp.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
-    let bundle = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/assistant");
+    let example_bundle = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/assistant");
+    let bundle = if coding {
+        let bundle = tmp.path().join("bundle");
+        std::fs::create_dir_all(bundle.join("coworker")).unwrap();
+        std::fs::copy(
+            example_bundle.join("coworker/manifest.md"),
+            bundle.join("coworker/manifest.md"),
+        )
+        .unwrap();
+        let tools = std::fs::read_to_string(example_bundle.join("tools.json")).unwrap();
+        std::fs::write(
+            bundle.join("tools.json"),
+            tools.replace("mcp-example", "mcp-coding"),
+        )
+        .unwrap();
+        bundle
+    } else {
+        example_bundle
+    };
     let rt = Runtime::open(&tmp.path().join("state"), &bundle, &runner, model).unwrap();
     let created = rt
         .dispatch(
@@ -91,6 +120,7 @@ async fn queued_model_readiness_requires_the_pinned_credential_without_calling_p
     s.model_selection = Some(
         rt.connections
             .resolve(&crate::connections::Choice {
+                notify_on_session_state: None,
                 connection: "test".into(),
                 model: "fixture".into(),
             })
@@ -248,6 +278,7 @@ async fn managed_agent_without_reviewer_does_not_reuse_agent_model() {
     .await;
     rt.update(&sid, "configured_test", json!({}), |s| {
         s.model_selection = Some(crate::connections::Selection {
+            notify_on_session_state: false,
             provider: crate::provider::Kind::Openai,
             connection: "test".into(),
             model: "agent-only".into(),
@@ -823,4 +854,153 @@ async fn protected_reviewer_reason_is_not_released_or_saved_as_denial_context() 
     assert!(!serde_json::to_string(&events)
         .unwrap()
         .contains("PRIVATE_REASON"));
+}
+
+#[tokio::test]
+async fn cancellation_during_or_after_parked_job_cleanup_always_settles() {
+    for cleanup_first in [false, true] {
+        let (tmp, rt, sid, call) = fixture(
+            Mode::Ask,
+            false,
+            Model::new("fixture".into(), true),
+            "write_file",
+            json!({"path":"proof.txt","content":"must not execute"}),
+        )
+        .await;
+        let interaction = rt.authorize_call(&sid, &call).await.unwrap();
+        assert!(interaction.response.is_none());
+        rt.update(&sid, "parked", json!({}), |s| {
+            s.turn.as_mut().unwrap().status = "waiting".into();
+            Ok(())
+        })
+        .unwrap();
+        let turn_id = rt
+            .store
+            .lock()
+            .unwrap()
+            .metadata(&sid)
+            .unwrap()
+            .turn
+            .unwrap()
+            .id;
+        // The driver already returned its waiting outcome; its cleanup job is still registered.
+        let token = CancellationToken::new();
+        rt.jobs.lock().unwrap().insert(sid.clone(), token.clone());
+        if cleanup_first {
+            rt.finish_job(&sid, &token).await.unwrap();
+        }
+        rt.cancel_turn(&sid, &turn_id, None).await.unwrap();
+        if !cleanup_first {
+            assert_eq!(
+                rt.store
+                    .lock()
+                    .unwrap()
+                    .metadata(&sid)
+                    .unwrap()
+                    .turn
+                    .unwrap()
+                    .status,
+                "cancelling"
+            );
+            rt.finish_job(&sid, &token).await.unwrap();
+        }
+        assert!(!rt.jobs.lock().unwrap().contains_key(&sid));
+        let saved = rt.store.lock().unwrap().get(&sid).unwrap();
+        assert_eq!(saved.turn.unwrap().status, "cancelled");
+        let saved_interaction = saved
+            .interactions
+            .iter()
+            .find(|i| i.id == interaction.id)
+            .unwrap();
+        assert!(saved_interaction.response.is_none());
+        assert!(saved_interaction.resolved_at_ms.is_some());
+        assert!(!tmp.path().join("workspace/proof.txt").exists());
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn external_file_access_uses_exact_review_and_the_workspace_only_flag_wins() {
+    use std::sync::Mutex;
+    for (alias, operation) in [("read_file", "read"), ("write_file", "write")] {
+        let expected = Arc::new(Mutex::new(None));
+        let captured = expected.clone();
+        let mut model = Model::new("fixture".into(), true);
+        model.review_hook = Some(Arc::new(move |input| {
+            let captured = captured.clone();
+            Box::pin(async move {
+                *captured.lock().unwrap() = Some(serde_json::from_str::<Value>(&input).unwrap());
+                Ok(r#"{"verdict":"allow","reason":"Specific file requested"}"#.into())
+            })
+        }));
+        let mut args = json!({"path":"/scratch/requested.txt"});
+        if operation == "write" {
+            args["content"] = json!("fixture");
+        }
+        let (_tmp, rt, sid, call) =
+            fixture_with_runner(Mode::AutoApprove, false, model, alias, args.clone(), true).await;
+        let mut session = rt.store.lock().unwrap().metadata(&sid).unwrap();
+        assert!(!session.permissions.never_allow_read_write_outside_workspace);
+        let server = rt.bundle.tools.bindings[alias].server.clone();
+        session
+            .resource_policy
+            .servers
+            .insert(server.clone(), crate::resource_policy::Placement::Host);
+        assert!(permissions::hard_check_session(&rt.bundle, &session, alias, &args).is_err());
+        session
+            .resource_policy
+            .servers
+            .insert(server, crate::resource_policy::Placement::Sandbox);
+        for mode in [Mode::Ask, Mode::Bypass] {
+            session.permissions.mode = mode;
+            assert!(permissions::hard_check_session(&rt.bundle, &session, alias, &args).is_err());
+        }
+        session.permissions.mode = Mode::AutoApprove;
+        for path in [
+            "/",
+            "//scratch/requested.txt",
+            "/scratch/../secret",
+            "/scratch/./secret",
+        ] {
+            assert!(permissions::hard_check_session(
+                &rt.bundle,
+                &session,
+                alias,
+                &json!({"path":path})
+            )
+            .is_err());
+        }
+
+        let allowed = rt.authorize_call(&sid, &call).await.unwrap();
+        assert_eq!(allowed.origin.as_deref(), Some("reviewer"));
+        assert_eq!(allowed.response.as_deref(), Some("once"));
+        let review = expected.lock().unwrap().take().unwrap();
+        assert_eq!(
+            review["runtime_facts"]["external_file_action"]["operation"],
+            operation
+        );
+        assert_eq!(
+            review["runtime_facts"]["external_file_action"]["path"],
+            args["path"]
+        );
+        assert_eq!(review["proposed_action"]["arguments"], args);
+
+        rt.update(&sid, "test_workspace_boundary", json!({}), |s| {
+            s.permissions.never_allow_read_write_outside_workspace = true;
+            Ok(())
+        })
+        .unwrap();
+        let denied = rt.authorize_call(&sid, &call).await.unwrap();
+        assert_eq!(denied.origin.as_deref(), Some("hard_policy"));
+        assert_eq!(denied.response.as_deref(), Some("deny"));
+        assert!(expected.lock().unwrap().is_none());
+        let strict = rt.store.lock().unwrap().metadata(&sid).unwrap();
+        assert!(permissions::hard_check_session(
+            &rt.bundle,
+            &strict,
+            alias,
+            &json!({"path":"local.txt"})
+        )
+        .is_ok());
+    }
 }

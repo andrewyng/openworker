@@ -27,7 +27,9 @@ async fn uploads_cross_api_replicas_are_scoped_and_recoverable() {
     let id = uuid::Uuid::new_v4().simple().to_string();
     let key = format!("OW_ATTACH_DB_{}", id.to_uppercase());
     std::env::set_var(&key, std::env::var("OW_PG_TEST_URL").unwrap());
-    let config:Config=serde_json::from_value(json!({"database_env":key,"schema":format!("ow_att_{}",&id[..20]),"database_loopback_plaintext":true,"state_root":root.path().join("state"),"bundle":"unused","runner":"unused","model":"fixture","scripted":true,"api_token_file":"unused","actor":"admin","openshell":{"identity":"fixture","endpoint":"https://127.0.0.1:1","certificates":"unused","workspace":"unused","image":"unused"},"service":{"id":"attachment-test","namespace":"test","agent":"test","legacy_compatibility":true}})).unwrap();
+    let bundle = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/assistant");
+    let runner = std::env::current_exe().unwrap();
+    let config:Config=serde_json::from_value(json!({"database_env":key,"schema":format!("ow_att_{}",&id[..20]),"database_loopback_plaintext":true,"state_root":root.path().join("state"),"bundle":bundle,"runner":runner,"model":"fixture","scripted":true,"api_token_file":"unused","actor":"admin","openshell":{"identity":"fixture","endpoint":"https://127.0.0.1:1","certificates":"unused","workspace":"unused","image":"unused"},"service":{"id":"attachment-test","namespace":"test","agent":"test","legacy_compatibility":true}})).unwrap();
     let db = config.database().unwrap();
     PostgresStore::migrate(&db).unwrap();
     let mut store = PostgresStore::open(db.clone()).unwrap();
@@ -83,8 +85,6 @@ async fn uploads_cross_api_replicas_are_scoped_and_recoverable() {
             )
             .unwrap();
     }
-    let bundle = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/assistant");
-    let runner = std::env::current_exe().unwrap();
     let runtime = Runtime::open_with_store(
         &root.path().join("runtime"),
         &bundle,

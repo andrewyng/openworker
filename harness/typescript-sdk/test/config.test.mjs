@@ -101,3 +101,12 @@ test("application guidance maps to the private wire without changing compaction 
   const global=hostConfig({executable:"/harness",stateDir:"/state",compaction:{additionalInstructions:"global",triggerAtContextFraction:0.7,contextWindow:160000}});
   assert.deepEqual(global.desktop.compaction,{additional_instructions:"global",threshold_pct:0.7,context_window:160000});
 });
+
+test("workspace-only file access is an optional agent setting", () => {
+  const base = {id:"helper", instructions:"Check files", tools:["coding.read_file"]};
+  assert.equal(agentWire(base).never_allow_read_write_outside_workspace, undefined);
+  for (const setting of [true, false]) {
+    assert.equal(agentWire({...base, neverAllowReadWriteOutsideWorkspace:setting})
+      .never_allow_read_write_outside_workspace, setting);
+  }
+});

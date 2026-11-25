@@ -34,8 +34,11 @@ async fn inspect_parts(
     request: &str,
     parts: &[Part],
 ) -> anyhow::Result<Vec<Part>> {
-    let (session, _) = app.store.input_safety_policy(sid)?;
-    let policy = app.config.safety.merge(&session)?;
+    let (session, _, admission) = app.store.input_safety_policy(sid)?;
+    let policy = app.config.safety.merge(&session)?.merge(
+        &app.runtime
+            .integration_checks_for_session(sid, &admission)?,
+    )?;
     openworker_runtime::attachments::validate_parts(parts)?;
     let mut checked = Vec::new();
     let mut total = 0usize;
@@ -113,8 +116,8 @@ async fn inspect_parts(
                         attachment_id.clone()
                     }
                 } else {
-                    if policy.protects(Phase::UserInput, None)
-                        || policy.protects(Phase::ModelInput, None)
+                    if policy.enforces(Phase::UserInput, None)
+                        || policy.enforces(Phase::ModelInput, None)
                     {
                         return Err(InspectionUnsupported.into());
                     }

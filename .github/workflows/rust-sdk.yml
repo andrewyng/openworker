@@ -126,6 +126,10 @@ jobs:
         run: |
           cargo fmt --all --check
           cargo clippy --locked --workspace --all-targets --features openworker-sdk/test-support,openworker-server-reference/team-test -- -D warnings
+      - name: Test lifecycle delivery without security features
+        run: cargo test --locked -p openworker-sdk --no-default-features --features test-support --test runtime_observer
+      - name: Test Prisma AIRS registration and scanning
+        run: cargo test --locked -p openworker-sdk --features test-support,security-adapters --test security_scanner
 
   sdk-storage:
     strategy:
@@ -174,6 +178,18 @@ jobs:
         run: echo "OW_PG_TEST_URL=postgresql://postgres:sdk-test-only@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/sdk_tests" >> "$GITHUB_ENV"
       - name: SDK SQLite/PostgreSQL and embedded/stdio matrix
         run: node tests/sdk-storage-shard.mjs "${{ matrix.shard }}"
+      - name: Workspace provider contract and builder/reviewer sessions
+        if: matrix.shard == 'workspaces'
+        run: |
+          (cd ../deploy/workspaces/gateway && go test ./...)
+          python3 -m unittest discover -s ../deploy/workspaces
+          python3 -m venv "$RUNNER_TEMP/modal-tests"
+          "$RUNNER_TEMP/modal-tests/bin/pip" install -r ../deploy/workspaces/modal_provider/requirements.txt
+          (cd ../deploy/workspaces && "$RUNNER_TEMP/modal-tests/bin/python" -m unittest modal_provider.test_backend)
+          npm --prefix typescript-sdk ci
+          npm --prefix typescript-sdk run build
+          cargo test --locked -p openworker-runtime --features workspace-reference --test workspace_provider
+          cargo test --locked -p openworker-server-reference --features workspace-reference --lib builder_and_reviewer_sessions -- --ignored
 
   typescript-storage-and-packaging:
     runs-on: ubuntu-24.04
@@ -231,6 +247,7 @@ jobs:
           node ../harness/trace-viewer/sync.mjs --check
           npm --prefix typescript-sdk run test:integration
           npm --prefix typescript-sdk run test:dynamic-agents
+          node --test typescript-sdk/test/runtime-integrations.test.mjs
           node --test --test-concurrency=2 --test-reporter=tap typescript-sdk/test/chat-usage.test.mjs typescript-sdk/test/openrouter-streaming.test.mjs typescript-sdk/test/anthropic-caching.test.mjs typescript-sdk/test/gemini-compat.test.mjs typescript-sdk/test/session-options.test.mjs typescript-sdk/test/application-guidance.test.mjs typescript-sdk/test/approval-decisions.test.mjs typescript-sdk/test/stream-events.test.mjs typescript-sdk/test/attachments.test.mjs
           node --test --test-reporter=tap typescript-sdk/test/desktop-api.test.mjs typescript-sdk/test/cancel-approval.test.mjs typescript-sdk/test/registration-errors.test.mjs typescript-sdk/test/agent-team.test.mjs typescript-sdk/test/standalone-subagents.test.mjs
           node --test --test-reporter=tap typescript-sdk/test/coding.test.mjs typescript-sdk/test/assistant.test.mjs
@@ -288,6 +305,8 @@ jobs:
         run: |
           cargo test --locked -p openworker-runtime -- --test-threads=1
           cargo test --locked -p openworker-runtime --no-default-features --test attachment_features
+          cargo test --locked -p openworker-runtime --no-default-features --lib integrations::tests
+          cargo test --locked -p openworker-store-postgres --no-default-features --test service_catalog integration_policy_on_an_existing_session_and_recovered_worker -- --ignored --exact
           cargo test --locked -p openworker-server-reference --test input_attachments -- --ignored --test-threads=1
           cargo test --locked -p openworker-telemetry --features otlp
           OW_OBSERVABILITY_TEST_URL="$OW_PG_TEST_URL" cargo test --locked -p openworker-observability --features postgres,evaluations -- --include-ignored --test-threads=1

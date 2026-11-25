@@ -65,8 +65,8 @@ pub use agent_team::{
 };
 pub use harness::{AgentHandle, Harness, HarnessBuilder};
 pub use session::{
-    Interruption, InterruptionKind, Response, Run, RunEvent, RunResult, RunStatus, RunStream,
-    Session, SessionInput, SessionRef, TeamRef, WorkerRef,
+    Interruption, InterruptionKind, Response, Run, RunCheckpoint, RunEvent, RunResult, RunStatus,
+    RunStream, Session, SessionInput, SessionRef, TeamRef, WorkerRef,
 };
 pub use team::{ItemSpec, ItemStatus, Team};
 
@@ -133,6 +133,8 @@ impl Approvals {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Agent {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub(crate) integrations: crate::integrations::Preferences,
     pub(crate) id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) name: Option<String>,
@@ -163,6 +165,8 @@ pub struct Agent {
     pub(crate) approvals: Approvals,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) auto_skip_questions: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) never_allow_read_write_outside_workspace: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) auto_approver_context: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -183,10 +187,19 @@ fn default_fallback_model() -> String {
 }
 
 impl Agent {
+    pub fn integration(
+        mut self,
+        id: impl Into<String>,
+        options: impl Into<crate::integrations::Preference>,
+    ) -> Self {
+        self.integrations.insert(id.into(), options.into());
+        self
+    }
     /// `id` is the stable identifier sessions are pinned to: ASCII letters,
     /// digits, `-` or `_`, at most 64 characters.
     pub fn new(id: impl Into<String>) -> Self {
         Self {
+            integrations: Default::default(),
             id: id.into(),
             name: None,
             description: String::new(),
@@ -203,6 +216,7 @@ impl Agent {
             scheduling: false,
             approvals: Approvals::default(),
             auto_skip_questions: false,
+            never_allow_read_write_outside_workspace: false,
             auto_approver_context: None,
             compaction: None,
             subagents: vec![],
@@ -257,6 +271,7 @@ impl Agent {
     /// Default model through a named model connection (see `connection/set`).
     pub fn model(mut self, connection: impl Into<String>, model: impl Into<String>) -> Self {
         self.model = Some(ModelChoice {
+            notify_on_session_state: None,
             connection: connection.into(),
             model: model.into(),
         });
@@ -314,6 +329,11 @@ impl Agent {
     /// Enable bounded schedules driven by the SDK host while it runs.
     pub fn scheduling(mut self, enabled: bool) -> Self {
         self.scheduling = enabled;
+        self
+    }
+    /// Reject outside-workspace first-party file operations before review.
+    pub fn never_allow_read_write_outside_workspace(mut self, enabled: bool) -> Self {
+        self.never_allow_read_write_outside_workspace = enabled;
         self
     }
     /// Return a recorded "no human answer available" result instead of parking
@@ -456,7 +476,10 @@ impl Agent {
 }
 
 /// Configuration for model-created standalone children.
-pub use openworker_runtime::subagents::Config as SubagentOptions;
+pub use openworker_runtime::subagents::{
+    Config as SubagentOptions, CreationGrant as SubagentCreationGrant,
+    WorkspaceGrant as SubagentWorkspaceGrant,
+};
 
 #[cfg(test)]
 mod tool_free_tests {

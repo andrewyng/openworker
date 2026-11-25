@@ -60,7 +60,9 @@ fn read_history_result(result: Result<Value>) -> Result<Value> {
 }
 
 pub struct Runtime {
-    #[cfg(feature = "guardrails")]
+    #[cfg(not(windows))]
+    pub sandbox_loop: Option<crate::loop_channel::Driver>,
+    pub workspaces: crate::workspaces::Registry,
     observers_started: AtomicBool,
     observers_stop: CancellationToken,
     compliance_defaults: Option<crate::compliance::Config>,
@@ -72,6 +74,7 @@ pub struct Runtime {
     coding_git: Option<(String, crate::coding::openshell_git::Settings)>,
     pub bundle: Bundle,
     pub model: Model,
+    pub integrations: Arc<crate::integrations::Configured>,
     pub connections: Arc<crate::connections::Manager>,
     execution_digest: String,
     runner_digest: String,
@@ -331,14 +334,17 @@ impl Runtime {
         let (events, _) = broadcast::channel(512);
         let connections = Arc::new(crate::connections::Manager::open(&root)?);
         Ok(Arc::new(Self {
-            #[cfg(feature = "guardrails")]
+            workspaces: Default::default(),
             observers_started: AtomicBool::new(false),
             observers_stop: CancellationToken::new(),
             compliance_defaults: None,
+            integrations: Default::default(),
             safety_defaults: Default::default(),
             safety_handlers: Arc::new(Default::default()),
             telemetry,
             store: Arc::new(Mutex::new(store)),
+            #[cfg(not(windows))]
+            sandbox_loop: None,
             environments: None,
             coding_git: None,
             bundle,
@@ -606,9 +612,11 @@ impl Runtime {
         feedback: Option<&str>,
     ) -> Result<crate::provider::Completion> {
         let started = tokio::time::Instant::now();
+        let state = self.store.lock().unwrap().metadata(sid)?;
+        let generation_timeout = self.session_model(&state).timeouts()?.generation();
         let max_attempts = if summary { 1 } else { 3 };
         for number in 1..=max_attempts {
-            if started.elapsed().as_secs() >= 240 {
+            if started.elapsed() >= generation_timeout {
                 return Err(
                     crate::provider::Error::new(crate::provider::Failure::Transport).into(),
                 );
@@ -624,8 +632,18 @@ impl Runtime {
                 purpose: crate::telemetry::ModelPurpose::Main,
                 attempt: number,
             });
+            if let Some((manager, selected)) = &mut model.connection {
+                if let Some((id, _)) = manager.integrations.provider(&selected.connection) {
+                    let decisions = manager.integrations.resolve(&s.integrations)?;
+                    selected.notify_on_session_state =
+                        decisions.get(&id).is_some_and(|d| d.enabled);
+                }
+            }
             let safety = self.effective_safety(sid)?;
-            let guarded_output = safety.protects(crate::safety::Phase::ModelOutput, None)
+            // A cluster can require a configured output scanner while the provider is streaming.
+            let guarded_output = (self.integrations.cluster_policy
+                && self.integrations.may_inspect_output())
+                || safety.enforces(crate::safety::Phase::ModelOutput, None)
                 || !safety.guardrails.tool_calls.is_empty()
                 || safety
                     .hooks
@@ -811,6 +829,18 @@ impl Runtime {
             }
 
             let event = self.store.lock().unwrap().start_attempt(sid, &id, number)?;
+            model.agent_context = Some(crate::provider_adapters::AgentContext::resolve(
+                &self.store,
+                &s,
+            )?);
+            if !summary
+                && model
+                    .connection
+                    .as_ref()
+                    .is_some_and(|(_, s)| s.notify_on_session_state)
+            {
+                model.session_sequence = Some(event.event_id);
+            }
             self.publish(event);
             let request = async {
                 let history = {
@@ -826,8 +856,41 @@ impl Runtime {
                     images.hydrate(sid, &attachment_history)
                 };
                 tokio::time::timeout(
-                    std::time::Duration::from_secs(240).saturating_sub(started.elapsed()),
-                    model.next_limited(&instructions, &history, tools, output_limit, tx),
+                    generation_timeout.saturating_sub(started.elapsed()),
+                    async {
+                        if let Some(binding) = &s.loop_environment {
+                            #[cfg(not(windows))]
+                            {
+                                let driver = self
+                                    .sandbox_loop
+                                    .as_ref()
+                                    .context("Sandbox loop unavailable")?;
+                                let turn = &s.turn.as_ref().context("Missing turn")?.id;
+                                return model
+                                    .observed(&instructions, &history, tx, |out| {
+                                        driver.step(
+                                            &self.store,
+                                            binding,
+                                            sid,
+                                            turn,
+                                            &id,
+                                            &model,
+                                            &instructions,
+                                            &history,
+                                            tools,
+                                            output_limit,
+                                            out,
+                                        )
+                                    })
+                                    .await;
+                            }
+                            #[cfg(windows)]
+                            bail!("OpenShell service worker required");
+                        }
+                        model
+                            .next_limited(&instructions, &history, tools, output_limit, tx)
+                            .await
+                    },
                 )
                 .await
                 .unwrap_or_else(|_| {
@@ -871,6 +934,11 @@ impl Runtime {
                             }
                         },
                         Some(Progress::Usage(u))=>{reported_output=u.output;},
+                        Some(Progress::ProviderMetadata(metadata))=>{
+                            let mut data=serde_json::to_value(metadata)?;
+                            data["attempt_id"]=json!(id);
+                            self.progress(sid,"model_route",data)?;
+                        },
                         Some(Progress::OutputStarted)=>{},
                         Some(Progress::Complete(r))=>{if completed.is_some(){bail!("Duplicate provider completion");}completed=Some(r);},
                         None=>closed=true
@@ -971,7 +1039,7 @@ impl Runtime {
                     }
                     if number == max_attempts
                         || !failure.is_some_and(|e| e.retryable())
-                        || started.elapsed().as_secs() >= 240
+                        || started.elapsed() >= generation_timeout
                     {
                         return Err(error);
                     }
@@ -987,9 +1055,10 @@ impl Runtime {
                         "model_retrying",
                         json!({"attempt_id":id,"next_attempt":number+1,"delay_ms":delay}),
                     )?;
-                    tokio::time::sleep(std::time::Duration::from_millis(delay).min(
-                        std::time::Duration::from_secs(240).saturating_sub(started.elapsed()),
-                    ))
+                    tokio::time::sleep(
+                        std::time::Duration::from_millis(delay)
+                            .min(generation_timeout.saturating_sub(started.elapsed())),
+                    )
                     .await;
                 }
             }
@@ -1144,8 +1213,12 @@ impl Runtime {
                 return Err(safety::Blocked.into());
             }
             let mut summarizer = self.session_model(&s);
+            summarizer.agent_context = Some(crate::provider_adapters::AgentContext::resolve(
+                &self.store,
+                &s,
+            )?);
             summarizer.content_withheld =
-                safety_config.protects(crate::safety::Phase::ModelOutput, None);
+                safety_config.enforces(crate::safety::Phase::ModelOutput, None);
             if let Some(model) = &cfg.summary_model {
                 summarizer.name = model.clone();
             }
@@ -1296,13 +1369,26 @@ impl Runtime {
     where
         F: FnOnce(&mut Session) -> Result<()>,
     {
+        Ok(self.update_with_cursor(sid, kind, data, f)?.0)
+    }
+    fn update_with_cursor<F>(
+        &self,
+        sid: &str,
+        kind: &str,
+        data: Value,
+        f: F,
+    ) -> Result<(Session, i64)>
+    where
+        F: FnOnce(&mut Session) -> Result<()>,
+    {
         let mut db = self.store.lock().unwrap();
         let mut s = db.get(sid)?;
         f(&mut s)?;
         let e = db.save(&s, kind, data)?;
         drop(db);
+        let cursor = e.event_id;
         self.publish(e);
-        Ok(s)
+        Ok((s, cursor))
     }
     pub fn snapshot(&self, sid: &str) -> Result<Value> {
         let db = self.store.lock().unwrap();
@@ -1322,6 +1408,17 @@ impl Runtime {
             .collect::<Vec<_>>();
         let (messages, truncated) = db.recent_messages(sid)?;
         let mut snapshot = json!({"session":{"id":s.id,"name":s.name,"compliance":s.compliance,"coworker":s.coworker,"model":s.model,"model_provider":s.model_provider,"model_selection":s.model_selection,"reviewer_selection":s.reviewer_selection,"auto_approver_context":s.auto_approver_context,"compaction_config":s.compaction_config,"workspace":s.workspace,"closed":s.closed,"provider_blocked":s.provider_blocked,"permissions":s.permissions,"tool_policy":s.tool_policy,"resource_policy":s.resource_policy,"package":s.package,"skills":s.skills,"loaded_skills":s.loaded_skills,"sandbox":s.execution_backend,"enforcement":s.enforcement()},"turn":s.turn,"compaction":s.compaction.as_ref().map(|c|json!({"boundary":c.boundary,"trimmed":c.trimmed,"model":c.model})),"attempts":db.attempts(sid)?,"history_truncated":truncated,"messages":messages,"interactions":pending,"cursor":db.cursor(sid)?,"mode":if self.model.scripted{"scripted-test"}else{"live"}});
+        snapshot["session"]["loopPlacement"] = json!(if s.loop_environment.is_some() {
+            "sandbox"
+        } else {
+            "service"
+        });
+        if let Some(id) = &s.workspace_id {
+            snapshot["session"]["workspaceId"] = json!(id);
+        }
+        if !s.integrations.applied.is_empty() {
+            snapshot["session"]["integrations"] = json!(s.integrations.applied);
+        }
         snapshot["schedules"] = json!(s.schedules);
         if let Some(environment) = &s.environment {
             snapshot["session"]["environment"] = json!(environment);
@@ -1357,9 +1454,11 @@ impl Runtime {
                 "policy",
                 "expected_policy_digest",
                 "environment_id",
+                "workspace_id",
                 "safety",
                 "compliance",
                 "initial_history",
+                "integrations",
             ]
             .contains(&k.as_str())
         }) {
@@ -1439,6 +1538,7 @@ impl Runtime {
             .map(|v| serde_json::from_value::<crate::connections::Choice>(v.clone()))
             .transpose()?;
         let choice = override_model
+            .clone()
             .or_else(|| self.bundle.manifest.default_model.clone())
             .or(defaults.agent);
         let model_selection = choice
@@ -1454,7 +1554,40 @@ impl Runtime {
             .as_ref()
             .map(|c| self.connections.resolve(c))
             .transpose()?;
+        let mut agent_preferences = self.bundle.manifest.integrations.clone();
+        if let Some(entries) = p.get("integrations") {
+            crate::integrations::validate_entries(entries)?;
+        }
+        let mut session_preferences = p
+            .get("integrations")
+            .cloned()
+            .map(serde_json::from_value::<crate::integrations::Preferences>)
+            .transpose()?
+            .unwrap_or_default();
+        let default_model = self.bundle.manifest.default_model.as_ref().filter(|m| {
+            choice
+                .as_ref()
+                .is_some_and(|choice| choice.connection == m.connection)
+        });
+        self.integrations
+            .model_preference(&mut agent_preferences, default_model)?;
+        self.integrations
+            .model_preference(&mut session_preferences, override_model.as_ref())?;
+        let integrations = self.integrations.admit_for_model(
+            &agent_preferences,
+            &session_preferences,
+            model_selection.as_ref(),
+        )?;
+        let workspace_id: Option<String> = serde_json::from_value(p["workspace_id"].clone())?;
+        if let Some(reference) = &workspace_id {
+            self.workspaces.validate_reference(reference)?;
+            // Workspace tools always execute on their attachment. Discovery
+            // intersects this release with the selected provider capabilities.
+            crate::workspaces::validate_tools(&self.bundle, self.bundle.tools.bindings.keys())?;
+        }
         let mut s = Session {
+            workspace_id,
+            integrations,
             safety_models: Default::default(),
             compliance: self.compliance_defaults.clone().or(p
                 .get("compliance")
@@ -1469,6 +1602,9 @@ impl Runtime {
             )?,
             agent_team: None,
             environment,
+            loop_environment: None,
+            allow_workspace_reads: vec![],
+            allow_workspace_writes: vec![],
             managed_workspace: None,
             storage_revision: 0,
             approval_grants: vec![],
@@ -1944,6 +2080,9 @@ impl Runtime {
                     }
                     Ok(())
                 })?;
+                if let Some(reference) = &s.workspace_id {
+                    self.workspaces.detach(reference, &sid).await?;
+                }
                 Ok(json!({"closed":true}))
             }
             _ => bail!("Method not found"),
@@ -2057,16 +2196,70 @@ impl Runtime {
                         .registry
                         .turn_finished(&sid, t.status == "completed");
                 }
-                rt.jobs.lock().unwrap().remove(&sid);
+                let _ = rt.finish_job(&sid, &token).await;
             })
             .await;
         });
         Ok(())
     }
+    // A cancellation can arrive after drive has returned a waiting outcome,
+    // while this job still owns cleanup. Finish that cancellation before release.
+    async fn finish_job(&self, sid: &str, token: &CancellationToken) -> Result<()> {
+        // A waiting turn is durably parked. Release the live stream; responses use
+        // the external journal even if Spark or the original worker disappears.
+        #[cfg(not(windows))]
+        if let Some(driver) = &self.sandbox_loop {
+            let _ = driver.release(&self.store, sid).await;
+        }
+        {
+            let mut jobs = self.jobs.lock().unwrap();
+            if !token.is_cancelled() {
+                jobs.remove(sid);
+                return Ok(());
+            }
+        }
+        let result: Result<()> = async {
+            let unfinished = self
+                .store
+                .lock()
+                .unwrap()
+                .metadata(sid)?
+                .turn
+                .as_ref()
+                .is_some_and(|turn| !terminal(&turn.status));
+            if unfinished {
+                self.cancel_finish(sid).await?;
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(error) = &result {
+            let _ = self.update(
+                sid,
+                "turn_completed",
+                json!({"status":"interrupted","error":error.to_string()}),
+                |session| {
+                    if let Some(turn) = &mut session.turn {
+                        turn.status = "interrupted".into();
+                    }
+                    Ok(())
+                },
+            );
+        }
+        self.jobs.lock().unwrap().remove(sid);
+        result
+    }
+
     fn check_backend(&self, sid: &str) -> Result<()> {
         self.bundle.verify()?;
         self.tool_policy.verify()?;
         let s = self.store.lock().unwrap().metadata(sid)?;
+        #[cfg(not(windows))]
+        ensure!(
+            s.loop_environment.is_some() == self.sandbox_loop.is_some(),
+            "Pinned loop placement does not match worker"
+        );
+        self.integrations.resolve(&s.integrations)?;
         s.safety.validate()?;
         if let Some(c) = &s.compliance {
             ensure!(
@@ -2538,7 +2731,10 @@ impl Runtime {
         if !s.direct_processes.is_empty() && !self.clients.lock().await.contains_key(sid) {
             self.remove_sandbox(sid).await?;
         }
-        let sandbox_id = if s.environment.is_none() && s.resource_policy.needs_sandbox() {
+        let sandbox_id = if s.workspace_id.is_none()
+            && s.environment.is_none()
+            && s.resource_policy.needs_sandbox()
+        {
             Some(self.sandbox_id(sid).await?)
         } else {
             None
@@ -2553,6 +2749,16 @@ impl Runtime {
                 .unwrap_or_default();
             let mut catalogs = BTreeMap::new();
             for server in self.bundle.tools.servers.values() {
+                if let Some(reference) = &s.workspace_id {
+                    let channel = self.workspaces.attach(reference, sid).await?;
+                    let tools = channel.schemas();
+                    clients.insert(
+                        server.id.clone(),
+                        Arc::new(AsyncMutex::new(Client::Workspace(channel))),
+                    );
+                    catalogs.insert(server.id.clone(), json!({"tools":tools}));
+                    continue;
+                }
                 if server.program == "$NATIVE" {
                     let tools: Vec<_> = self.bundle.registry.native_catalog(&server.id).iter().map(|d|
                         json!({"name":d.qualified_name,"description":d.description,"inputSchema":d.input_schema,"implementation_version":d.version})
@@ -2623,6 +2829,16 @@ impl Runtime {
                 if s.schema_digest.as_ref().is_some_and(|h|h!=&hash){bail!("Tool catalogs/routes changed; refusing execution");}
                 s.schema_digest=Some(hash);Ok(())
             })?;
+            // Only the model-facing guidance changes. Keep the stored tool
+            // identity stable for existing sessions and pending approvals.
+            for tool in &mut tools {
+                if tool["name"].as_str().is_some_and(|alias| {
+                    permissions::can_review_external_file(&self.bundle, &s, alias)
+                }) {
+                    let description = tool["description"].as_str().unwrap_or_default();
+                    tool["description"] = json!(format!("{description} An exact absolute path in this OpenShell sandbox is also accepted for individual review."));
+                }
+            }
             Ok::<_, anyhow::Error>((clients, tools))
         };
         tokio::select! {biased;
@@ -2640,7 +2856,7 @@ impl Runtime {
         let session = self.store.lock().unwrap().get(sid)?;
         let protected_result = self
             .effective_safety(sid)?
-            .protects(crate::safety::Phase::ToolResult, Some(name));
+            .enforces(crate::safety::Phase::ToolResult, Some(name));
         let turn = session
             .turn
             .as_ref()
@@ -2721,7 +2937,7 @@ impl Runtime {
             .span(Op::Policy, Some(sid), call["call_id"].as_str());
         let result = crate::telemetry::scope(
             span.context(),
-            Box::pin(self.authorize_call_inner(sid, call)),
+            Box::pin(self.authorize_call_inner(sid, call, false)),
         )
         .await;
         let outcome = match &result {
@@ -2733,7 +2949,12 @@ impl Runtime {
         span.finish(outcome);
         result
     }
-    async fn authorize_call_inner(&self, sid: &str, call: &Value) -> Result<Interaction> {
+    async fn authorize_call_inner(
+        &self,
+        sid: &str,
+        call: &Value,
+        batch: bool,
+    ) -> Result<Interaction> {
         self.check_backend(sid)?;
         let s = self.store.lock().unwrap().get(sid)?;
         let t = s.turn.as_ref().context("Missing turn")?;
@@ -2775,9 +2996,32 @@ impl Runtime {
             hard_denial = Some(e.to_string());
             i.response = Some("deny".into());
             i.origin = Some("hard_policy".into());
+        } else if (cfg!(unix) || s.workspace_id.is_some() || s.environment.is_some())
+            && permissions::native_tool(&self.bundle, alias) == Some("read_file")
+            && args["path"]
+                .as_str()
+                .is_some_and(|p| permissions::granted_read_path(&s.allow_workspace_reads, p))
+        {
+            i.response = Some("once".into());
+            i.origin = Some("workspace_read_grant".into());
+        } else if permissions::granted_write_directory(&self.bundle, &s, alias, &args).is_some() {
+            i.response = Some("once".into());
+            i.origin = Some("workspace_write_grant".into());
+        } else if alias == crate::subagents::CREATE
+            && !batch
+            && self
+                .store
+                .lock()
+                .unwrap()
+                .agent_team(sid, "subagent_prepare", &args, None)?["creation_grant"]
+                == true
+        {
+            i.response = Some("once".into());
+            i.origin = Some(crate::subagents::CREATION_GRANT.into());
         } else if let Some(grant) = s.approval_grants.iter().find(|g| {
             alias != crate::team_type_catalog::TOOL
                 && alias != crate::subagents::CREATE
+                && permissions::external_file(&self.bundle, alias, &args).is_none()
                 && s.permissions.mode != Mode::Bypass
                 && g.matches(&s, alias, &self.bundle)
         }) {
@@ -2804,6 +3048,11 @@ impl Runtime {
                         match permissions::review_context(&s, &self.bundle, call) {
                             Ok(input) => match reviewer {
                                 Some(mut model) => {
+                                    model.agent_context =
+                                        Some(crate::provider_adapters::AgentContext::resolve(
+                                            &self.store,
+                                            &s,
+                                        )?);
                                     let safety_config = self.effective_safety(sid)?;
                                     let (_, blocked) = self
                                         .check_content(
@@ -2819,7 +3068,7 @@ impl Runtime {
                                         return Err(safety::Blocked.into());
                                     }
                                     model.content_withheld = safety_config
-                                        .protects(crate::safety::Phase::ModelOutput, None);
+                                        .enforces(crate::safety::Phase::ModelOutput, None);
                                     let (reserved, auxiliary_attempt) =
                                         self.reserve_aux(sid, 4000)?;
                                     let (verdict, usage) = model
@@ -2879,6 +3128,13 @@ impl Runtime {
         self.check_backend(sid)?; // policy may have changed during AI review
         let mut data = serde_json::to_value(&i)?;
         data["interaction_id"] = json!(i.id);
+        if waiting {
+            data["state_change"] = json!(if i.kind == "question" {
+                "waiting_user_response"
+            } else {
+                "waiting_user_approval"
+            });
+        }
         data["category"] = if alias == "ask_user" {
             Value::Null
         } else {
@@ -2891,7 +3147,7 @@ impl Runtime {
         data["approval_mode"] = serde_json::to_value(s.permissions.mode)?;
         let reason_withheld = self
             .effective_safety(sid)?
-            .protects(crate::safety::Phase::ModelOutput, None);
+            .enforces(crate::safety::Phase::ModelOutput, None);
         if i.response.as_deref() == Some("deny") && !reason_withheld {
             i.approval_reason = review
                 .as_ref()
@@ -2913,7 +3169,19 @@ impl Runtime {
             data,
             |current| {
                 let turn = current.turn.as_mut().context("No turn")?;
-                if turn.id != t.id || turn.status != "running" || turn.queue.first() != Some(call) {
+                let queued = if batch {
+                    turn.queue.contains(call)
+                } else {
+                    turn.queue.first() == Some(call)
+                };
+                if turn.id != t.id
+                    || turn.status != "running"
+                    || !queued
+                    || batch
+                        && current.interactions.iter().any(|old| {
+                            old.turn_id == t.id && old.call["call_id"] == call["call_id"]
+                        })
+                {
                     bail!("Authorization became stale or cancelled");
                 }
                 if let Some(v) = &review {
@@ -2923,7 +3191,7 @@ impl Runtime {
                         VerdictKind::Unsure => {}
                     }
                 }
-                if waiting {
+                if waiting && !batch {
                     turn.status = "waiting".into();
                 }
                 current.interactions.push(i.clone());
@@ -2931,6 +3199,64 @@ impl Runtime {
             },
         )?;
         Ok(i)
+    }
+    /// Expose independent decisions before parking a model response. Execution stays
+    /// ordered by the durable queue and repeats the normal policy checks.
+    async fn prepare_batch(&self, sid: &str, s: &Session, tools: &[Value]) -> Result<bool> {
+        let turn = s.turn.as_ref().context("Missing turn")?;
+        let mut waiting = false;
+        for call in &turn.queue {
+            let name = call["name"].as_str().context("Missing tool name")?;
+            if let Some(i) = s
+                .interactions
+                .iter()
+                .find(|i| i.turn_id == turn.id && i.call["call_id"] == call["call_id"])
+            {
+                waiting |= i.response.is_none();
+                continue;
+            }
+            // Dynamic internal tools and scanner-mediated arguments must first
+            // undergo their own preparation in drive, in submission order.
+            if !self.bundle.tools.bindings.contains_key(name)
+                || self.effective_safety(sid)?.protects(
+                    crate::safety::Phase::ToolCall,
+                    Some(&self.safety_tool_name(name)),
+                )
+            {
+                break;
+            }
+            let Some(schema) = tools.iter().find(|t| t["name"] == name) else {
+                break;
+            };
+            let Some(args) = call["arguments"]
+                .as_str()
+                .and_then(|a| serde_json::from_str::<Value>(a).ok())
+            else {
+                break;
+            };
+            if validate_arguments(&schema["parameters"], &args).is_err() {
+                break;
+            }
+            let i = Box::pin(self.authorize_call_inner(sid, call, true)).await?;
+            waiting |= i.response.is_none();
+        }
+        if waiting {
+            self.update(
+                sid,
+                "approval_batch_waiting",
+                json!({"turn_id":turn.id}),
+                |latest| {
+                    let t = latest.turn.as_mut().context("Missing turn")?;
+                    ensure!(
+                        t.id == turn.id && t.status == "running",
+                        "Approval batch was cancelled"
+                    );
+                    t.status = "waiting".into();
+                    Ok(())
+                },
+            )?;
+        }
+        Ok(waiting)
     }
     async fn drive(&self, sid: &str, clients: Clients, tools: Vec<Value>) -> Result<()> {
         self.update(sid, "turn_started", json!({}), |s| {
@@ -2951,6 +3277,15 @@ impl Runtime {
                 .or_else(|| t.budget.reason().map(str::to_owned))
             {
                 return self.finish_budget(sid, &reason, &tools).await;
+            }
+            if s.loop_environment.is_some() && t.queue.len() > 1 {
+                if self.prepare_batch(sid, &s, &tools).await? {
+                    return Ok(());
+                }
+                if self.store.lock().unwrap().metadata(sid)?.storage_revision != s.storage_revision
+                {
+                    continue;
+                }
             }
             if let Some(call) = t.queue.first() {
                 let alias = call["name"].as_str().context("Missing tool name")?;
@@ -2987,8 +3322,21 @@ impl Runtime {
                     .and_then(Value::as_str)
                     .is_some_and(|p| std::path::Path::new(p).is_absolute())
                 {
-                    self.reject_unexecuted(sid,call,"invalid_tool_path","File paths must be workspace-relative. No action executed. Correct the path within the granted workspace; access restrictions still apply.",true)?;
-                    continue;
+                    let checked = permissions::external_file(&self.bundle, alias, &args)
+                        .context("This tool requires a workspace-relative path")
+                        .and_then(|path| {
+                            permissions::check_external_file(&self.bundle, &s, alias, path)
+                        });
+                    if let Err(error) = checked {
+                        self.reject_unexecuted(
+                            sid,
+                            call,
+                            "invalid_tool_path",
+                            &error.to_string(),
+                            true,
+                        )?;
+                        continue;
+                    }
                 }
                 let check_name = self.safety_tool_name(alias);
                 let safety_config = self.effective_safety(sid)?;
@@ -3284,8 +3632,32 @@ impl Runtime {
                     {
                         bail!("Approval binding mismatch");
                     }
+                    let external_file =
+                        permissions::external_file(&self.bundle, alias, &args).is_some();
+                    if external_file {
+                        ensure!(
+                            interaction.call == *call
+                                && matches!(
+                                    interaction.origin.as_deref(),
+                                    Some("reviewer" | "human")
+                                )
+                                && response == "once",
+                            "External file access requires an exact reviewer or human decision"
+                        );
+                    }
                     let backend = s.tool_backend(interaction.server.as_deref());
-                    if !self.start_tool(sid,interaction,json!({"interaction_id":interaction.id,"call_id":call["call_id"],"execution_kind":if interaction.server.as_ref().is_some_and(|id|self.bundle.tools.servers.get(id).is_some_and(|s|s.program=="$NATIVE")){"native"}else if interaction.server.is_some(){"mcp"}else{"internal"},"name":alias,"server":interaction.server,"remote_tool":interaction.remote_tool,"policy_digest":interaction.policy_digest,"resource_policy_digest":s.resource_policy.digest,"arguments":args,"approval_origin":interaction.origin,"grant_id":interaction.grant_id,"enforcement":if alias=="read_history"{"session-read-only"}else if crate::skills::internal(alias){"bundle-read-only"}else{backend.enforcement()},"sandbox":if alias=="read_history"||crate::skills::internal(alias){"not-applicable"}else{backend.name()}}))? { return Ok(()); }
+                    let workspace_tool = s.workspace_id.is_some() && interaction.server.is_some();
+                    let tool_backend = if workspace_tool {
+                        "workspace-provider"
+                    } else {
+                        backend.name()
+                    };
+                    let enforcement = if workspace_tool {
+                        "workspace-attachment"
+                    } else {
+                        backend.enforcement()
+                    };
+                    if !self.start_tool(sid,interaction,json!({"interaction_id":interaction.id,"call_id":call["call_id"],"execution_kind":if workspace_tool{"workspace"}else if interaction.server.as_ref().is_some_and(|id|self.bundle.tools.servers.get(id).is_some_and(|s|s.program=="$NATIVE")){"native"}else if interaction.server.is_some(){"mcp"}else{"internal"},"name":alias,"server":interaction.server,"remote_tool":interaction.remote_tool,"policy_digest":interaction.policy_digest,"resource_policy_digest":s.resource_policy.digest,"arguments":args,"approval_origin":interaction.origin,"grant_id":interaction.grant_id,"enforcement":if alias=="read_history"{"session-read-only"}else if crate::skills::internal(alias){"bundle-read-only"}else{enforcement},"sandbox":if alias=="read_history"||crate::skills::internal(alias){"not-applicable"}else{tool_backend}}))? { return Ok(()); }
                     // A crash after this checkpoint is uncertain: never automatically replay.
                     if crate::assistant_tools::internal(alias) {
                         let mut span =
@@ -3328,7 +3700,7 @@ impl Runtime {
                         if alias == "read_history" || crate::skills::internal(alias) {
                             "not-applicable"
                         } else {
-                            backend.name()
+                            tool_backend
                         },
                     );
                     observation.metadata(
@@ -3338,7 +3710,7 @@ impl Runtime {
                         } else if crate::skills::internal(alias) {
                             "bundle-read-only"
                         } else {
-                            backend.enforcement()
+                            enforcement
                         },
                     );
                     observation.metadata("openworker.policy.digest", &interaction.policy_digest);
@@ -3368,6 +3740,29 @@ impl Runtime {
                                 self.call_native(sid, call, &binding.tool, args.clone())
                                     .await?
                             } else {
+                                let request=if external_file {
+                                    let name = match binding.tool.as_str() {
+                                        "read_file" => "read_reviewed_file",
+                                        "write_file" => "write_reviewed_file",
+                                        "edit_file" => "edit_reviewed_file",
+                                        _ => bail!("Unexpected reviewed file operation"),
+                                    };
+                                    json!({"name":name,"arguments":args})
+                                }else if interaction.origin.as_deref()==Some("workspace_write_grant") {
+                                    ensure!(interaction.call==*call,"Workspace write approval changed");
+                                    let directory=permissions::granted_write_directory(&self.bundle,&s,alias,&args).context("Workspace write grant expired")?;
+                                    json!({"name":format!("{}_under",binding.tool),"arguments":{"directory":directory,"operation":args}})
+                                }else if workspace_tool && interaction.origin.as_deref()==Some("workspace_read_grant") {
+                                    let path=args["path"].as_str().context("Workspace read path missing")?;
+                                    let directory=s.allow_workspace_reads.iter().find(|root|permissions::granted_read_path(std::slice::from_ref(root),path)).context("Workspace read grant expired")?;
+                                    ensure!(binding.tool=="read_file","Scoped grant tool changed");
+                                    let directory=directory.strip_suffix('/').unwrap_or(directory);
+                                    if directory == "." {
+                                        json!({"name":"read_file","arguments":args})
+                                    } else {
+                                        json!({"name":"read_file_under","arguments":{"path":path,"directory":directory}})
+                                    }
+                                }else{json!({"name":binding.tool,"arguments":args})};
                                 clients
                                     .get(&binding.server)
                                     .context("Bound server unavailable")?
@@ -3375,7 +3770,7 @@ impl Runtime {
                                     .await
                                     .request(
                                         "tools/call",
-                                        json!({"name":binding.tool,"arguments":args}),
+                                        request,
                                     )
                                     .await?
                             }
@@ -3389,7 +3784,7 @@ impl Runtime {
                             let name = self.safety_tool_name(alias);
                             if self
                                 .effective_safety(sid)?
-                                .protects(crate::safety::Phase::ToolResult, Some(&name))
+                                .enforces(crate::safety::Phase::ToolResult, Some(&name))
                             {
                                 // Transport diagnostics may quote raw tool output or
                                 // secrets. Preserve uncertainty without exporting it.
@@ -3537,11 +3932,16 @@ impl Runtime {
                 .cloned()
                 .collect::<Vec<_>>();
             let finished = queue.is_empty() && !had_calls;
-            self.update(
-                sid,
-                "assistant_message",
-                json!({"messages":messages}),
-                |s| {
+            let mut event_data = json!({"messages":messages});
+            #[cfg(not(windows))]
+            if let Some(driver) = &self.sandbox_loop {
+                event_data["loopProposal"] = driver
+                    .receipt()
+                    .await
+                    .context("Missing sandbox proposal identity")?;
+            }
+            let (saved, _cursor) =
+                self.update_with_cursor(sid, "assistant_message", event_data, |s| {
                     s.last_usage = completion.usage;
                     if let Some(member) = &mut s.agent_team {
                         member.last_output = messages
@@ -3557,8 +3957,20 @@ impl Runtime {
                     t.iterations += 1;
                     t.continuations = 0;
                     Ok(())
-                },
-            )?;
+                })?;
+            #[cfg(not(windows))]
+            if let Some(driver) = &self.sandbox_loop {
+                driver.committed(_cursor, finished).await;
+            }
+            if !saved.integrations.observers.is_empty() {
+                for call in &saved.turn.as_ref().context("Missing active turn")?.queue {
+                    self.progress(
+                        sid,
+                        "tool_queued",
+                        json!({"name":call["name"],"call_id":call["call_id"]}),
+                    )?;
+                }
+            }
             if finished {
                 if self.bounded_lifecycle(sid) {
                     self.cleanup_execution(sid, true).await?;
@@ -3659,6 +4071,7 @@ impl Runtime {
             pending.grant_id = None;
             let mut event_data = serde_json::to_value(&pending)?;
             event_data["interaction_id"] = json!(pending.id);
+            event_data["state_change"] = json!("waiting_user_approval");
             event_data["reason"] = json!("Session grant revoked or invalidated before execution");
             session.interactions.push(pending);
             session.turn.as_mut().unwrap().status = "waiting".into();
@@ -3796,10 +4209,17 @@ impl Runtime {
                 Ok(())
             },
         )?;
-        let job = self.jobs.lock().unwrap().get(sid).cloned();
-        if let Some(token) = job {
-            token.cancel();
-        } else {
+        let active = {
+            let jobs = self.jobs.lock().unwrap();
+            if let Some(token) = jobs.get(sid) {
+                // Publish cancellation before the worker can remove its job entry.
+                token.cancel();
+                true
+            } else {
+                false
+            }
+        };
+        if !active {
             self.cancel_finish(sid).await?;
         }
         Ok(json!({"turn":self.store.lock().unwrap().get(sid)?.turn}))
@@ -3903,6 +4323,13 @@ impl Runtime {
                 bail!("Only once, session or deny is supported");
             }
             ensure!((i.call["name"] != crate::team_type_catalog::TOOL && i.call["name"] != crate::subagents::CREATE) || d != "session", "Approve this exact type definition once; whole-tool session grants cannot approve definitions");
+            if let (Some(alias), Some(args)) = (i.call["name"].as_str(), i.call["arguments"].as_str()) {
+                let args: Value = serde_json::from_str(args)?;
+                if permissions::external_file(&self.bundle, alias, &args).is_some() {
+                    ensure!(d == "deny" || (d == "once" && origin == "human"),
+                        "An external file may only be approved for this exact request");
+                }
+            }
             d
         } else {
             let answer = text(p, "answer", 4000)?;
@@ -3983,12 +4410,21 @@ impl Runtime {
             s.approval_grants.retain(|g| g.tool != grant.tool);
             s.approval_grants.push(grant.clone());
         }
-        s.turn.as_mut().unwrap().status = "accepted".into();
+        let others_pending = s.loop_environment.is_some()
+            && s.interactions.iter().any(|other| {
+                other.turn_id == resolved_interaction.turn_id && other.response.is_none()
+            });
+        s.turn.as_mut().unwrap().status = if others_pending {
+            "waiting"
+        } else {
+            "accepted"
+        }
+        .into();
         let event = db.save(
             &s,
             "interaction_resolved",
             control_event(
-                json!({"interaction_id":iid,"origin":origin,"tool":tool,"kind":resolved_interaction.kind,"response":if approval {json!(resolved_interaction.response)} else {Value::Null},"call_id":resolved_interaction.call["call_id"],"session_grant":new_grant,"requested_at_ms":resolved_interaction.requested_at_ms,"resolved_at_ms":resolved_interaction.resolved_at_ms}),
+                json!({"interaction_id":iid,"state_change": match resolved_interaction.kind.as_str() {"approval"=>Some("user_approval_done"),"question"=>Some("user_response_done"),_=>None},"decision":if approval {Some(if denied {"denied"} else {"approved"})}else{None},"origin":origin,"tool":tool,"kind":resolved_interaction.kind,"response":if approval {json!(resolved_interaction.response)} else {Value::Null},"call_id":resolved_interaction.call["call_id"],"policy_digest":if approval { Some(&resolved_interaction.policy_digest) } else { None },"session_grant":new_grant,"requested_at_ms":resolved_interaction.requested_at_ms,"resolved_at_ms":resolved_interaction.resolved_at_ms}),
                 control,
             ),
         )?;
@@ -4010,7 +4446,9 @@ impl Runtime {
         );
         resolution.turn(&resolved_interaction.turn_id);
         resolution.finish(if denied { Outcome::Denied } else { Outcome::Ok });
-        self.spawn(sid)?;
+        if !others_pending {
+            self.spawn(sid)?;
+        }
         Ok(json!({"interaction_id":iid,"duplicate":false}))
     }
     async fn remove_sandbox(&self, sid: &str) -> Result<()> {
