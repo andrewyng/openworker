@@ -62,9 +62,8 @@ TRUNCATION_NUDGE = (
 # no signature (Anthropic rejects it on replay) and its content is empty or a fragment;
 # the transcript keeps the original, the outbound view sends this.
 TRUNCATION_STUB = "(reply cut off at the output-token limit before any action)"
-# OPE-192: the per-turn context block is ephemeral and volatile (it carries a clock). It is
-# sent as its own trailing message opening with this tag, so a provider can keep its cache
-# breakpoint on the last STABLE block and leave the note outside the cached prefix.
+# The per-turn context block is outbound-only. Its text and position stay stable until
+# the live context changes or its message leaves the outbound history.
 EPHEMERAL_CONTEXT_OPEN = "<system-context>"
 
 _REVIEWER_TRIP = 5
@@ -626,6 +625,9 @@ class TurnEngine:
         self.persona_coverage: list[str] = []
         self.context_facts: dict[str, Any] = {}
         self._last_context_block = ""
+        # Cache placement is process-local, never a sidecar in the stored transcript.
+        self._context_anchor: Optional[tuple[int, dict[str, Any]]] = None
+        self._context_anchor_compaction: Optional[tuple[_compaction.CompactionState, int]] = None
         self._turn_context_hash: Optional[str] = None
         self._context_turn: Optional[str] = None
         self._stamp_seen: dict[str, Any] = {}
@@ -4066,8 +4068,10 @@ class TurnEngine:
         Every message is stripped of the display-only sidecars — `source`, `_display`, `ts`
         and `mid` — (providers reject unknown keys), unconditionally — whether or not a
         `<system-context>` block is added. When a context
-        provider yields a non-empty string, an ephemeral `<system-context>` block is appended to the
-        last user message. A partial assistant turn abandoned by a turn that died mid-stream —
+        provider yields a non-empty string, an ephemeral `<system-context>` block is appended to a
+        user message. Unchanged context keeps its position across new questions; changed context
+        moves to the newest user message, with no obsolete block left behind.
+        A partial assistant turn abandoned by a turn that died mid-stream —
         identified by the error/interrupted notice that follows it — is dropped too: display-only
         like the notices, and rejected outright by several providers as the final message.
         Never mutates `self.messages`, so none of this is persisted/replayed.
@@ -4099,6 +4103,12 @@ class TurnEngine:
         # block+tail are byte-stable between turns, so prompt caching keeps working.
         source_messages = _compaction.apply_to_outbound(
             self.messages, self.compaction_state
+        )
+        # apply_to_outbound returns the original list unless it inserts a synthetic user
+        # after the optional system message. That user is rebuilt on every call.
+        compacted_message = (
+            source_messages[1 if source_messages[0].get("role") == "system" else 0]
+            if source_messages is not self.messages else None
         )
         # Runtime receipts stay out of provider payloads. Reminder/board context is
         # earlier agent context, not words attributed to the incoming user and never
@@ -4139,6 +4149,10 @@ class TurnEngine:
                 failed = False  # that notice belongs to this partial
                 continue
             break
+        source_messages = [
+            msg for i, msg in enumerate(source_messages)
+            if msg.get("role") != "notice" and i not in abandoned
+        ]
         out = [
             (
                 # OPE-171: a length-truncated, action-free reply is replayed as a stub.
@@ -4148,8 +4162,7 @@ class TurnEngine:
                 if any(s in msg for s in _SIDECARS)
                 else msg
             )
-            for i, msg in enumerate(source_messages)
-            if msg.get("role") != "notice" and i not in abandoned
+            for msg in source_messages
         ]
         # PDF attachments (stored as `file` parts) are adapted to the ACTIVE model right
         # here — never in the persisted history — so a mid-session model switch always
@@ -4215,38 +4228,59 @@ class TurnEngine:
         context = (
             self.context_provider() if self.context_provider is not None else ""
         ) or ""
+        if context != self._last_context_block or not context:
+            self._context_anchor = None
+            self._context_anchor_compaction = None
         self._last_context_block = context
         if not context:
             return out
-        # The block rides on the LAST user message — one shape for every provider. In a
-        # chat that is the newest message; in a tool loop (tool results carry role "tool")
-        # it is the task prompt, message one. That is only safe because the block holds
-        # nothing that moves on its own. OPE-192: it used to open with a `Now:` line to the
-        # minute, so every minute crossing rewrote message one, and a provider's prompt
-        # cache is reusable only up to the first byte that differs — the whole conversation
-        # was re-processed (measured: 16 of 105 calls on one Fable 5.1 attempt held 95% of
-        # its cache writes; on the Kimi K3 run 60% of minute crossings missed vs 1.5%
-        # otherwise). The time is a tool now (`current_time`). What is left — folders,
-        # skill menu, mode notices — changes only when the user changes something, so the
-        # outbound history stays byte-identical turn to turn. Ephemeral: never persisted.
+        # One current block, not snapshots on every past question. Keeping its first
+        # sent position preserves the cached prefix across new user/steering messages.
+        # Context changes deliberately reset that prefix; obsolete modes, folder grants
+        # and skill notices must disappear. Restored engines also start cold.
+        index = None
+        if self._context_anchor is not None:
+            position, message = self._context_anchor
+            if position < len(source_messages):
+                candidate = source_messages[position]
+                synthetic = self._context_anchor_compaction
+                if candidate.get("role") == "user" and (
+                    candidate is message
+                    or (
+                        candidate is compacted_message
+                        and synthetic is not None
+                        and synthetic[0] is self.compaction_state
+                        and synthetic[1] == self.compaction_state.boundary_index
+                        and candidate == message
+                    )
+                ):
+                    index = position
+        if index is None:
+            index = next((i for i in range(len(out) - 1, -1, -1)
+                          if out[i].get("role") == "user"), None)
+        if index is None:
+            self._context_anchor = None
+            self._context_anchor_compaction = None
+            return out
+        self._context_anchor = (index, source_messages[index])
+        self._context_anchor_compaction = (
+            (self.compaction_state, self.compaction_state.boundary_index)
+            if source_messages[index] is compacted_message else None
+        )
         block = (
             f"\n\n{EPHEMERAL_CONTEXT_OPEN}\n"
             "(automatic per-turn context, not part of the user's message)\n"
             f"{context}\n</system-context>"
         )
-        for i in range(len(out) - 1, -1, -1):
-            if out[i].get("role") != "user":
-                continue
-            msg = dict(out[i])
-            content = msg.get("content")
-            if isinstance(content, str):
-                msg["content"] = content + block
-            elif isinstance(content, list):  # content-parts (text + images)
-                msg["content"] = [*content, {"type": "text", "text": block}]
-            else:
-                msg["content"] = block
-            out[i] = msg
-            break
+        msg = dict(out[index])
+        content = msg.get("content")
+        if isinstance(content, str):
+            msg["content"] = content + block
+        elif isinstance(content, list):  # content-parts (text + images)
+            msg["content"] = [*content, {"type": "text", "text": block}]
+        else:
+            msg["content"] = block
+        out[index] = msg
         return out
 
 
