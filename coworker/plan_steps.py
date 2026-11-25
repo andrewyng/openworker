@@ -45,6 +45,11 @@ MAX_NOTE = 200
 
 _FILE_TOOLS = {"write_file", "replace_in_file", "apply_patch", "apply_unified_diff"}
 _PATCH_DELETE = re.compile(r"^\*\*\* Delete File: (.+)$", re.MULTILINE)
+# A move names its source on the `*** Update File:` line and the destination on the
+# `*** Move to:` immediately after it (the applier reads it there and nowhere else). The
+# move unlinks the source, so it leaves the disk exactly as a `Delete File` of it would —
+# which is why workspace_safety.removes_files treats the two as one thing.
+_PATCH_MOVED_FROM = re.compile(r"^\*\*\* Update File: (.+)\n\*\*\* Move to: ", re.MULTILINE)
 # Anything that makes a command more than "delete these named files": chaining, pipes,
 # redirection, substitution, globbing, variables.
 _SHELL_META = re.compile(r"[;&|`$<>(){}*?\[\]\n\r]")
@@ -370,6 +375,11 @@ def match_step(
                 return False
             removed = _PATCH_DELETE.findall(str(args.get("patch", ""))) if tool_name == "apply_patch" else []
             removed = [p.strip() for p in removed]
+            if tool_name == "apply_patch":
+                # A move's source is unlinked, so the step it needs is a delete of that
+                # file — the same one a `Delete File` of it would need. The destination is
+                # already in `paths` and so needs a write step, which is right.
+                removed += [p.strip() for p in _PATCH_MOVED_FROM.findall(str(args.get("patch", "")))]
             changed = [p for p in paths if p not in removed]
             return (not changed or _covered(changed, writes, resolve)) and (
                 not removed or _covered(removed, deletes, resolve)
