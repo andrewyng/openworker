@@ -4,6 +4,8 @@ use anyhow::{ensure, Result};
 use openworker_telemetry::Record;
 use serde::{Deserialize, Serialize};
 use std::time::UNIX_EPOCH;
+#[cfg(feature = "evaluations")]
+pub mod evaluations;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 pub mod query;
@@ -340,6 +342,74 @@ pub struct StoredStep {
 /// Trusted host interface only. A service must authorize the canonical session
 /// before querying; the observation database is never an authorization authority.
 pub trait Store: Send + 'static {
+    #[cfg(feature = "evaluations")]
+    fn register_evaluation_sink(
+        &mut self,
+        _deployment: &str,
+        _sink: &str,
+        _binding: &str,
+    ) -> Result<()> {
+        anyhow::bail!("Evaluation export unavailable")
+    }
+
+    #[cfg(feature = "evaluations")]
+    fn prune_evaluations(
+        &mut self,
+        _deployment: &str,
+        _before_ms: u64,
+        _limit: u16,
+    ) -> Result<u64> {
+        anyhow::bail!("Evaluation pruning unsupported")
+    }
+
+    #[cfg(feature = "evaluations")]
+    fn claim_evaluation_export(
+        &mut self,
+        _deployment: &str,
+        _sink: &str,
+        _binding: &str,
+        _token: &str,
+        _now: u64,
+    ) -> Result<Option<evaluations::Delivery>> {
+        anyhow::bail!("Evaluation export unavailable")
+    }
+    #[cfg(feature = "evaluations")]
+    fn settle_evaluation_export(
+        &mut self,
+        _deployment: &str,
+        _sink: &str,
+        _token: &str,
+        _now: u64,
+        _success: bool,
+    ) -> Result<()> {
+        anyhow::bail!("Evaluation export unavailable")
+    }
+
+    #[cfg(feature = "evaluations")]
+    fn evaluation(
+        &mut self,
+        _deployment: &str,
+        _id: &str,
+    ) -> Result<Option<evaluations::Evaluation>> {
+        anyhow::bail!("Evaluation storage unavailable")
+    }
+    #[cfg(feature = "evaluations")]
+    fn record_evaluation(&mut self, value: &evaluations::Evaluation) -> Result<Write> {
+        self.record_evaluation_bounded(value, evaluations::DEFAULT_MAX_PENDING)
+    }
+    #[cfg(feature = "evaluations")]
+    fn record_evaluation_bounded(
+        &mut self,
+        _value: &evaluations::Evaluation,
+        _max_pending: u32,
+    ) -> Result<Write> {
+        anyhow::bail!("Evaluation storage unsupported")
+    }
+    #[cfg(feature = "evaluations")]
+    fn evaluations(&mut self, _query: &evaluations::Query) -> Result<evaluations::Page> {
+        anyhow::bail!("Evaluation storage unsupported")
+    }
+
     /// Read-only bounded session/turn projection; no authorization authority.
     fn timeline(&mut self, _query: &query::Query) -> Result<query::Page> {
         anyhow::bail!("Recording queries unsupported by this adapter")

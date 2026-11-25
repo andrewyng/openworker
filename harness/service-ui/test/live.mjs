@@ -203,13 +203,28 @@ try {
     const { chromium, expect } = createRequire(import.meta.url)(
       process.env.OW_PLAYWRIGHT_MODULE,
     );
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, executablePath: process.env.OW_BROWSER_EXECUTABLE });
     const page = await browser.newPage({
       viewport: { width: 1440, height: 1000 },
     });
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
+    // A delayed startup 401 must not clear a token being entered or undo login.
+    let releaseStartup, startupRequested;
+    const startupGate = new Promise(resolve => { releaseStartup = resolve; });
+    const requested = new Promise(resolve => { startupRequested = resolve; });
+    await page.route("**/session", async route => {
+      startupRequested();
+      await startupGate;
+      await route.fulfill({status:401,contentType:"application/json",body:'{"error":"login_required"}'});
+    });
     await page.goto(app.url);
+    await requested;
+    await expect(page.getByLabel("Service token", { exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeDisabled();
+    releaseStartup();
+    await expect(page.getByLabel("Service token", { exact: true })).toBeEnabled();
+    await page.unroute("**/session");
     await page
       .getByLabel("Service token", { exact: true })
       .fill(process.env.OW_UI_USER);
@@ -311,15 +326,33 @@ try {
     await page
       .getByRole("button", { name: "Issue token", exact: true })
       .click();
+    await page.getByLabel("Role",{exact:true}).selectOption("app");
+    await page.getByLabel("Additional tools (comma separated)").fill("web_search");
+    await page.getByLabel("Model profiles (comma separated)").fill("coding");
     await page.getByLabel("Principal", { exact: true }).fill("browser-issued");
     await page.locator("#save").click();
     await expect(page.locator("main")).toContainText("browser-issued");
-    const row = page.locator("tr").filter({ hasText: "browser-issued" });
+    const row = page.locator("tr").filter({ hasText:"app_browser-issued" }).filter({has:page.getByRole("button",{name:"Revoke",exact:true})});
+    await row.getByRole("button",{name:"Rotate",exact:true}).click();
+    await page.locator("#save").click();
+    await expect(page.locator("tr").filter({hasText:"app_browser-issued"})).toHaveCount(2);
+
     await row.getByRole("button", { name: "Revoke" }).click();
     await page.locator("#save").click();
-    await expect(
-      page.locator("tr").filter({ hasText: "browser-issued" }),
-    ).toContainText("Revoked");
+    await expect(page.locator("tr").filter({hasText:"app_browser-issued"}).filter({hasText:"Revoked"})).toHaveCount(2);
+    await page.getByRole("button", { name: "Models", exact: true }).click();
+    await page.getByRole("button", { name: "New model profile" }).click();
+    await page.getByLabel("Profile name").fill("coding");
+    await page.getByLabel("Model connection").selectOption("fixture");
+    await page.getByLabel("Model ID").fill("editor-v1");
+    await page.locator("#save").click();
+    const codingProfile = page.getByRole("row").filter({hasText:"coding"});
+    await expect(codingProfile).toContainText("editor-v1");
+    await codingProfile.getByRole("button", { name:"Change model" }).click();
+    await page.getByLabel("Model ID").fill("editor-v2");
+    await page.locator("#save").click();
+    await expect(codingProfile).toContainText("editor-v2");
+    assert.equal((await request(alice, "/v1/model-providers")).status, 403);
     await page.locator("#profile-button").click();
     await page.getByRole("button", { name: "Sign out", exact: true }).click();
     await page

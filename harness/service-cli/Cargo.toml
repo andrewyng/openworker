@@ -6,14 +6,19 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 [[bin]]
+name = "owcluster"
+path = "src/owcluster.rs"
+[[bin]]
 name = "ows"
 path = "src/main.rs"
+test = false
+bench = false
 [dependencies]
 openworker-sdk = { path = "../harness-sdk" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
 serde_yaml = "0.9"
 tokio = { version = "1", features = ["full"] }
 futures-util = "0.3"

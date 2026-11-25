@@ -1,0 +1,938 @@
+{
+ "gpt-5.6-sol": {
+  "label": "GPT-5.6 Sol · OpenAI",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 400000
+ },
+ "gpt-5.6-terra": {
+  "label": "GPT-5.6 Terra · OpenAI",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 400000
+ },
+ "gpt-5.6-luna": {
+  "label": "GPT-5.6 Luna · OpenAI",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 400000
+ },
+ "gpt-5.5": {
+  "label": "GPT-5.5 · OpenAI",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 400000
+ },
+ "openai-codex:gpt-5.6-sol": {
+  "label": "GPT-5.6 Sol · ChatGPT plan",
+  "tools": true,
+  "vision": true,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 400000
+ },
+ "openai-codex:gpt-5.6-terra": {
+  "label": "GPT-5.6 Terra · ChatGPT plan",
+  "tools": true,
+  "vision": true,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 400000
+ },
+ "openai-codex:gpt-5.6-luna": {
+  "label": "GPT-5.6 Luna · ChatGPT plan",
+  "tools": true,
+  "vision": true,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 400000
+ },
+ "openai-codex:gpt-5.2-codex": {
+  "label": "GPT-5.2 Codex · ChatGPT plan",
+  "tools": true,
+  "vision": true,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 400000
+ },
+ "openai-codex:gpt-5.2": {
+  "label": "GPT-5.2 · ChatGPT plan",
+  "tools": true,
+  "vision": true,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 400000
+ },
+ "openai-codex:gpt-5.1-codex": {
+  "label": "GPT-5.1 Codex · ChatGPT plan",
+  "tools": true,
+  "vision": true,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 400000
+ },
+ "openai-codex:gpt-5.1-codex-mini": {
+  "label": "GPT-5.1 Codex Mini · ChatGPT plan",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 400000
+ },
+ "anthropic:claude-fable-5-1": {
+  "label": "Claude Fable 5.1 · Anthropic",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "anthropic:claude-opus-5": {
+  "label": "Claude Opus 5 · Anthropic",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "anthropic:claude-sonnet-5": {
+  "label": "Claude Sonnet 5 · Anthropic",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "anthropic:claude-fable-5": {
+  "label": "Claude Fable 5 · Anthropic",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "anthropic:claude-opus-4-8": {
+  "label": "Claude Opus 4.8 · Anthropic",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 200000
+ },
+ "anthropic:claude-sonnet-4-6": {
+  "label": "Claude Sonnet 4.6 · Anthropic",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 200000
+ },
+ "anthropic:claude-haiku-4-5": {
+  "label": "Claude Haiku 4.5 · Anthropic",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 200000
+ },
+ "anthropic:claude-opus-4-6": {
+  "label": "Claude Opus 4.6 · Anthropic",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 200000
+ },
+ "anthropic:claude-opus-4-5": {
+  "label": "Claude Opus 4.5 · Anthropic",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 200000
+ },
+ "anthropic:claude-sonnet-4-5": {
+  "label": "Claude Sonnet 4.5 · Anthropic",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 200000
+ },
+ "gemini:gemini-3.1-pro-preview": {
+  "label": "Gemini 3.1 Pro · Google",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "gemini:gemini-3.6-flash": {
+  "label": "Gemini 3.6 Flash · Google",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "gemini:gemini-2.5-pro": {
+  "label": "Gemini 2.5 Pro · Google",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "gemini:gemini-2.5-flash": {
+  "label": "Gemini 2.5 Flash · Google",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "ark:dola-seed-evolving-latest-version": {
+  "label": "Dola Seed Evolving · BytePlus Ark",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 256000
+ },
+ "ark:dola-seed-2-1-turbo-260628": {
+  "label": "Dola Seed 2.1 Turbo · BytePlus Ark",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 256000
+ },
+ "ark-agent-plan-cn:doubao-seed-evolving": {
+  "label": "Doubao Seed Evolving · Volcengine Agent Plan",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 256000
+ },
+ "ark-agent-plan-cn:doubao-seed-2.1-turbo": {
+  "label": "Doubao Seed 2.1 Turbo · Volcengine Agent Plan",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 256000
+ },
+ "meta:muse-spark-1.1": {
+  "label": "Muse Spark 1.1 · Meta",
+  "tools": true,
+  "vision": true,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": null
+ },
+ "zai:glm-5.2": {
+  "label": "GLM-5.2 · Z AI",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "deepseek:deepseek-v4-flash": {
+  "label": "DeepSeek V4 Flash · DeepSeek",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "deepseek:deepseek-v4-pro": {
+  "label": "DeepSeek V4 Pro · DeepSeek",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "kimi:kimi-k2.6": {
+  "label": "Kimi K2.6 · Moonshot",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 256000
+ },
+ "minimax:MiniMax-M2.5": {
+  "label": "MiniMax M2.5 · MiniMax",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": null
+ },
+ "qwen:qwen3-max": {
+  "label": "Qwen3 Max · Alibaba",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 256000
+ },
+ "qwen:qwen3.8-max": {
+  "label": "Qwen3.8 Max · Alibaba",
+  "tools": true,
+  "vision": true,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "xai:grok-4.3": {
+  "label": "Grok 4.3 · xAI",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 256000
+ },
+ "mistral:mistral-large-latest": {
+  "label": "Mistral Large · Mistral",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 128000
+ },
+ "upstage:solar-pro4": {
+  "label": "Solar Pro 4 · Upstage",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 512000
+ },
+ "upstage:solar-mini4": {
+  "label": "Solar Mini 4 · Upstage",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 512000
+ },
+ "cerebras:gpt-oss-120b": {
+  "label": "GPT-OSS 120B · via Cerebras",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 131072
+ },
+ "huggingface:zai-org/GLM-5.2": {
+  "label": "GLM-5.2 · via Hugging Face",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "cohere:command-a-plus-05-2026": {
+  "label": "Command A+ · Cohere",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 128000
+ },
+ "siliconflow:zai-org/GLM-5.2": {
+  "label": "GLM-5.2 · via SiliconFlow",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "sambanova:Meta-Llama-3.3-70B-Instruct": {
+  "label": "Llama 3.3 70B · SambaNova",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 131072
+ },
+ "sambanova:DeepSeek-V3.1": {
+  "label": "DeepSeek V3.1 · SambaNova",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 131072
+ },
+ "sambanova:MiniMax-M3.1-Flash": {
+  "label": "MiniMax M3.1 Flash · SambaNova",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "atlascloud:zai-org/glm-5.2": {
+  "label": "GLM-5.2 · via Atlas Cloud",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "novita:zai-org/glm-5.2": {
+  "label": "GLM-5.2 · via Novita",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "together:thinkingmachines/Inkling": {
+  "label": "Inkling · via Together",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": null
+ },
+ "together:zai-org/GLM-5.2": {
+  "label": "GLM-5.2 · via Together",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048575
+ },
+ "together:moonshotai/Kimi-K3": {
+  "label": "Kimi K3 · via Together",
+  "tools": true,
+  "vision": true,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "together:moonshotai/Kimi-K2.7-Code": {
+  "label": "Kimi K2.7 Code · via Together",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 262144
+ },
+ "together:moonshotai/Kimi-K2.6": {
+  "label": "Kimi K2.6 · via Together",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 262144
+ },
+ "together:deepseek-ai/DeepSeek-V4-Pro": {
+  "label": "DeepSeek V4 Pro · via Together",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 512000
+ },
+ "together:meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": {
+  "label": "Llama 4 Maverick · via Together",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "fireworks:accounts/fireworks/models/glm-5p2": {
+  "label": "GLM-5.2 · via Fireworks",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1040000
+ },
+ "fireworks:accounts/fireworks/models/kimi-k2p6": {
+  "label": "Kimi K2.6 · via Fireworks",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 256000
+ },
+ "fireworks:accounts/fireworks/models/deepseek-v4-pro": {
+  "label": "DeepSeek V4 Pro · via Fireworks",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1040000
+ },
+ "fireworks:accounts/fireworks/models/llama4-maverick-instruct-basic": {
+  "label": "Llama 4 Maverick · via Fireworks",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "openrouter:z-ai/glm-5.2": {
+  "label": "GLM-5.2 · via OpenRouter",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "openrouter:moonshotai/kimi-k3": {
+  "label": "Kimi K3 · via OpenRouter",
+  "tools": true,
+  "vision": true,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "openrouter:moonshotai/kimi-k2.6": {
+  "label": "Kimi K2.6 · via OpenRouter",
+  "tools": true,
+  "vision": true,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 256000
+ },
+ "openrouter:deepseek/deepseek-v4-pro": {
+  "label": "DeepSeek V4 Pro · via OpenRouter",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "openrouter:meta-llama/llama-4-maverick": {
+  "label": "Llama 4 Maverick · via OpenRouter",
+  "tools": true,
+  "vision": true,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "openrouter:nvidia/nemotron-3-ultra-550b-a55b": {
+  "label": "Nemotron 3 Ultra · via OpenRouter",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 202800
+ },
+ "openrouter:nvidia/nemotron-3.5-lightning": {
+  "label": "Nemotron 3.5 Lightning · via OpenRouter",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 262144
+ },
+ "openrouter:z-ai/glm-5.3": {
+  "label": "GLM 5.3 · via OpenRouter",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "openrouter:stealth/ox-alpha": {
+  "label": "Ox Alpha · via OpenRouter",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "orcarouter:anthropic/claude-sonnet-5": {
+  "label": "Claude Sonnet 5 · via OrcaRouter",
+  "tools": true,
+  "vision": true,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "orcarouter:deepseek/deepseek-v4-pro": {
+  "label": "DeepSeek V4 Pro · via OrcaRouter",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "nvidia:nvidia/nemotron-3-super-120b-a12b": {
+  "label": "Nemotron 3 Super · via NVIDIA",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "nvidia:nvidia/nemotron-3-ultra-550b-a55b": {
+  "label": "Nemotron 3 Ultra · via NVIDIA",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "nvidia:nvidia/nemotron-3.5-lightning-30b-a3b": {
+  "label": "Nemotron 3.5 Lightning · via NVIDIA",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "bedrock:claude/anthropic.claude-fable-5": {
+  "label": "Claude Fable 5 · AWS Bedrock",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "bedrock:claude/anthropic.claude-opus-5": {
+  "label": "Claude Opus 5 · AWS Bedrock",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "bedrock:claude/anthropic.claude-sonnet-5": {
+  "label": "Claude Sonnet 5 · AWS Bedrock",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "bedrock:claude/anthropic.claude-sonnet-4-6-v1:0": {
+  "label": "Claude Sonnet 4.6 · AWS Bedrock",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 200000
+ },
+ "bedrock:claude/anthropic.claude-haiku-4-5-v1:0": {
+  "label": "Claude Haiku 4.5 · AWS Bedrock",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 200000
+ },
+ "bedrock:other/amazon.nova-2-pro-v1:0": {
+  "label": "Nova 2 Pro · AWS Bedrock",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 300000
+ },
+ "bedrock:other/meta.llama4-maverick-17b-instruct-v1:0": {
+  "label": "Llama 4 Maverick · AWS Bedrock",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "bedrock:other/mistral.mistral-large-3-v1:0": {
+  "label": "Mistral Large 3 · AWS Bedrock",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 128000
+ },
+ "bedrock:other/nvidia.nemotron-super-3-120b": {
+  "label": "Nemotron Super 3 120B · AWS Bedrock",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": false,
+  "streaming": true,
+  "context": null
+ },
+ "vertex:gemini/gemini-3.1-pro-preview": {
+  "label": "Gemini 3.1 Pro · Vertex AI",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "vertex:gemini/gemini-3.6-flash": {
+  "label": "Gemini 3.6 Flash · Vertex AI",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "vertex:claude/claude-sonnet-4-6": {
+  "label": "Claude Sonnet 4.6 · Vertex AI",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 200000
+ },
+ "vertex:claude/claude-haiku-4-5": {
+  "label": "Claude Haiku 4.5 · Vertex AI",
+  "tools": true,
+  "vision": true,
+  "pdf": true,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 200000
+ },
+ "vertex:openweight/meta/llama-4-maverick-17b-128e-instruct-maas": {
+  "label": "Llama 4 Maverick · Vertex AI",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "vertex:openweight/qwen/qwen3-coder-480b-a35b-instruct-maas": {
+  "label": "Qwen3 Coder · Vertex AI",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 256000
+ },
+ "nebius:zai-org/GLM-5.2": {
+  "label": "GLM-5.2 · via Nebius",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "nebius:deepseek-ai/DeepSeek-V4-Pro": {
+  "label": "DeepSeek V4 Pro · via Nebius",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "groq:llama-3.3-70b-versatile": {
+  "label": "Llama 3.3 70B Versatile · via Groq",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 131072
+ },
+ "groq:openai/gpt-oss-120b": {
+  "label": "GPT-OSS 120B · via Groq",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": false,
+  "streaming": true,
+  "context": 131072
+ },
+ "groq:openai/gpt-oss-20b": {
+  "label": "GPT-OSS 20B · via Groq",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": false,
+  "streaming": true,
+  "context": 131072
+ },
+ "openrouter-account:z-ai/glm-5.2": {
+  "label": "GLM-5.2 · via OpenRouter",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "openrouter-account:moonshotai/kimi-k3": {
+  "label": "Kimi K3 · via OpenRouter",
+  "tools": true,
+  "vision": true,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "openrouter-account:moonshotai/kimi-k2.6": {
+  "label": "Kimi K2.6 · via OpenRouter",
+  "tools": true,
+  "vision": true,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 256000
+ },
+ "openrouter-account:deepseek/deepseek-v4-pro": {
+  "label": "DeepSeek V4 Pro · via OpenRouter",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "openrouter-account:meta-llama/llama-4-maverick": {
+  "label": "Llama 4 Maverick · via OpenRouter",
+  "tools": true,
+  "vision": true,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1000000
+ },
+ "openrouter-account:nvidia/nemotron-3-ultra-550b-a55b": {
+  "label": "Nemotron 3 Ultra · via OpenRouter",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 202800
+ },
+ "openrouter-account:nvidia/nemotron-3.5-lightning": {
+  "label": "Nemotron 3.5 Lightning · via OpenRouter",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 262144
+ },
+ "openrouter-account:z-ai/glm-5.3": {
+  "label": "GLM 5.3 · via OpenRouter",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ },
+ "openrouter-account:stealth/ox-alpha": {
+  "label": "Ox Alpha · via OpenRouter",
+  "tools": true,
+  "vision": false,
+  "pdf": false,
+  "parallel_tool_calls": true,
+  "streaming": true,
+  "context": 1048576
+ }
+}

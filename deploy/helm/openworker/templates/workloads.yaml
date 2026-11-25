@@ -67,6 +67,10 @@ spec:
           command: ["/opt/openworker/openworker-server-reference"]
           args: ["--config", "/config/reference.json", "{{ $role }}", "--node", "$(POD_NAME)"{{ if eq $role "api" }}, "--listen", "127.0.0.1:8080"{{ else }}, "--health-listen", "127.0.0.1:8081", "--slots", {{ $.Values.worker.slots | quote }}, "--drain-timeout-seconds", {{ $.Values.worker.drainTimeoutSeconds | quote }}, "--shutdown-timeout-seconds", {{ $.Values.worker.shutdownTimeoutSeconds | quote }}{{ end }}]
           env:
+            {{- if and $.Values.secrets.modelRegistry (or (eq $role "api") (eq $role "worker")) }}
+            - name: OPENWORKER_MODEL_REGISTRY_KEY
+              valueFrom: {secretKeyRef: {name: {{ $.Values.secrets.modelRegistry | quote }}, key: registry-key}}
+            {{- end }}
             - name: POD_NAME
               valueFrom: {fieldRef: {fieldPath: metadata.name}}
             - name: OW_SERVER_DATABASE_URL

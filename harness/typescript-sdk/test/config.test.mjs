@@ -83,3 +83,30 @@ for (const kind of ["directory", "file", "resources"])
   });
 
  test("agent budgets retain their typed wire values",()=>{const limits={maxModelCalls:40,maxOutputTokens:64000,summaryTokens:512};const wire=agentWire({id:"builder",instructions:"Build",tools:["coding.read_file"],limits});assert.deepEqual(wire.limits,limits);});
+
+test("standalone enablement is additive and legacy subagent arrays retain their wire format",()=>{
+  const base={id:"parent",instructions:"Help",tools:[]};
+  assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(agentWire(base))),"standalone_subagents"),false);
+  const enabled=agentWire({...base,subagents:{enabled:true,maxConcurrent:2,maxChildren:8}});
+  assert.deepEqual(enabled.standalone_subagents,{enabled:true,maxConcurrent:2,maxChildren:8});
+  const legacy=agentWire({...base,subagents:[{id:"worker",instructions:"Build",tools:[]}]});
+  assert.equal(legacy.subagents[0].id,"worker");
+  assert.equal(legacy.standalone_subagents,undefined);
+});
+
+test("application guidance maps to the private wire without changing compaction tuning",()=>{
+  const a=JSON.parse(JSON.stringify(agentWire({id:"a",instructions:"Help.",tools:[],autoApproverContext:"review",compaction:{additionalInstructions:"summary"}})));
+  assert.equal(a.auto_approver_context,"review");
+  assert.deepEqual(a.compaction,{additional_instructions:"summary"});
+  const global=hostConfig({executable:"/harness",stateDir:"/state",compaction:{additionalInstructions:"global",triggerAtContextFraction:0.7,contextWindow:160000}});
+  assert.deepEqual(global.desktop.compaction,{additional_instructions:"global",threshold_pct:0.7,context_window:160000});
+});
+
+test("workspace-only file access is an optional agent setting", () => {
+  const base = {id:"helper", instructions:"Check files", tools:["coding.read_file"]};
+  assert.equal(agentWire(base).never_allow_read_write_outside_workspace, undefined);
+  for (const setting of [true, false]) {
+    assert.equal(agentWire({...base, neverAllowReadWriteOutsideWorkspace:setting})
+      .never_allow_read_write_outside_workspace, setting);
+  }
+});

@@ -1,0 +1,31 @@
+# Install one registration per dedicated pair of existing namespaces.
+workloadNamespace: ""
+images:
+  controller: ""
+  runner: ""
+secrets:
+  auth: workspace-auth
+  tls: workspace-tls
+metadata:
+  storageClass: ""
+  size: 1Gi
+  # Set to a pre-existing claim to manage its lifecycle outside Helm.
+  existingClaim: ""
+data:
+  storageClass: ""
+  size: 1Gi
+  accessMode: ReadWriteMany
+  singleMount: false
+placement:
+  pinNode: ""
+  # Require one node per independent workspace sharing the same data ID.
+  spreadSharedData: false
+idleSeconds: 600
+
+# Optional ToolRunner workspace image names mapped to immutable image references.
+imageProfiles: {}
+preview:
+  domain: ""
+  gatewayImage: ""
+  serviceCASecret: workspace-service-ca
+  tlsSecret: workspace-preview-tls

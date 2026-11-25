@@ -61,6 +61,32 @@ impl Azure {
             fixture_origin: None,
         })
     }
+    pub(super) async fn check_setup_identity(&self, p: &Plan) -> Result<()> {
+        use base64::Engine;
+        let token = self.token("https://management.azure.com/").await?;
+        let part = token
+            .split('.')
+            .nth(1)
+            .context("Azure caller claims unavailable")?;
+        let bytes = Zeroizing::new(
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(part)
+                .context("Invalid caller claims")?,
+        );
+        let claims: Value = serde_json::from_slice(&bytes).context("Invalid caller claims")?;
+        // Identity pinning on a token obtained from the trusted CLI; ARM verifies
+        // its signature. This is not an independent token authentication API.
+        ensure!(
+            claims["tid"] == self.tenant
+                && claims["oid"]
+                    == p.azure_bootstrap
+                        .as_ref()
+                        .context("Setup recipient missing")?
+                        .setup_object_id,
+            "Azure login is not the exact reviewed setup principal/tenant"
+        );
+        Ok(())
+    }
     async fn token(&self, resource: &str) -> Result<Zeroizing<String>> {
         #[cfg(test)]
         if self.fixture_origin.is_some() {
@@ -100,54 +126,7 @@ impl Azure {
                 .await?
                 .context("Missing identity response")?
         } else {
-            // Azure CLI only supplies a short-lived token in memory. Neither its
-            // stderr nor response body may be copied into diagnostics/journals.
-            let mut cmd = tokio::process::Command::new("az");
-            cmd.args([
-                "account",
-                "get-access-token",
-                "--subscription",
-                &self.subscription,
-                "--tenant",
-                &self.tenant,
-                "--resource",
-                resource,
-                "--only-show-errors",
-                "-o",
-                "json",
-            ])
-            .env("AZURE_EXTENSION_USE_DYNAMIC_INSTALL", "no")
-            .env("AZURE_CORE_COLLECT_TELEMETRY", "false")
-            .kill_on_drop(true);
-            use tokio::io::AsyncReadExt;
-            cmd.stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null())
-                .stdin(std::process::Stdio::null());
-            let mut child = cmd.spawn().context("Token command unavailable")?;
-            let stdout = child.stdout.take().unwrap();
-            let mut bytes = Zeroizing::new(Vec::new());
-            let mut bounded_stdout = stdout.take(65537);
-            let operation = async {
-                let (status, _) =
-                    tokio::try_join!(child.wait(), bounded_stdout.read_to_end(&mut bytes))?;
-                Ok::<_, std::io::Error>(status)
-            };
-            let status = tokio::time::timeout(Duration::from_secs(20), operation)
-                .await
-                .context("Token command timed out")?
-                .context("Token command failed")?;
-            ensure!(
-                status.success() && bytes.len() <= 65536,
-                "Token acquisition failed"
-            );
-            let v: Value = serde_json::from_slice(&bytes).context("Invalid credential response")?;
-            bytes.clear();
-            ensure!(
-                v["tenant"].as_str() == Some(&self.tenant)
-                    && v["subscription"].as_str() == Some(&self.subscription),
-                "Token target mismatch"
-            );
-            v
+            cli_token_response("az", &self.subscription, &self.tenant, resource).await?
         };
         let token = v
             .get("accessToken")
@@ -187,11 +166,15 @@ impl Azure {
         let origin = "https://management.azure.com";
         let mut b = self
             .http
-            .request(method, format!("{origin}{id}?api-version={api}"))
+            .request(method.clone(), format!("{origin}{id}?api-version={api}"))
             .bearer_auth(token.as_str())
             .header("x-ms-client-request-id", request);
         if let Some(body) = body {
             b = b.json(body);
+        } else if method == reqwest::Method::POST {
+            // ARM action endpoints (including listClusterUserCredential) reject
+            // bodyless POST without explicit length with a non-JSON HTTP411 page.
+            b = b.header(reqwest::header::CONTENT_LENGTH, "0");
         }
         let r = b
             .send()
@@ -225,7 +208,8 @@ impl Azure {
                 "Unexpected operation endpoint; reconcile resource instead"
             );
         }
-        let body = bounded(r, 1024 * 1024).await?;
+        let body = bounded(r, 1024 * 1024).await
+            .with_context(|| format!("ARM response body invalid (HTTP {status}); inspect original request, no automatic replay"))?;
         Ok(Reply {
             status,
             etag,
@@ -331,8 +315,60 @@ async fn bounded(mut r: reqwest::Response, limit: usize) -> Result<Option<Value>
         .context("Malformed provider response; outcome unknown")
 }
 
+async fn cli_token_response(
+    program: &str,
+    subscription: &str,
+    tenant: &str,
+    resource: &str,
+) -> Result<Value> {
+    // Azure CLI only supplies a short-lived token in memory. Neither its
+    // stderr nor response body may be copied into diagnostics/journals.
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args([
+        "account",
+        "get-access-token",
+        "--subscription",
+        subscription,
+        "--resource",
+        resource,
+        "--only-show-errors",
+        "-o",
+        "json",
+    ])
+    .env("AZURE_EXTENSION_USE_DYNAMIC_INSTALL", "no")
+    .env("AZURE_CORE_COLLECT_TELEMETRY", "false")
+    .kill_on_drop(true);
+    use tokio::io::AsyncReadExt;
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null());
+    let mut child = cmd.spawn().context("Token command unavailable")?;
+    let stdout = child.stdout.take().unwrap();
+    let mut bytes = Zeroizing::new(Vec::new());
+    let mut bounded_stdout = stdout.take(65537);
+    let operation = async {
+        let (status, _) = tokio::try_join!(child.wait(), bounded_stdout.read_to_end(&mut bytes))?;
+        Ok::<_, std::io::Error>(status)
+    };
+    let status = tokio::time::timeout(Duration::from_secs(20), operation)
+        .await
+        .context("Token command timed out")?
+        .context("Token command failed")?;
+    ensure!(
+        status.success() && bytes.len() <= 65536,
+        "Token acquisition failed"
+    );
+    let v: Value = serde_json::from_slice(&bytes).context("Invalid credential response")?;
+    bytes.clear();
+    ensure!(
+        v["tenant"].as_str() == Some(tenant) && v["subscription"].as_str() == Some(subscription),
+        "Token target mismatch"
+    );
+    Ok(v)
+}
+
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use reqwest::Method;
     use std::{
@@ -340,7 +376,45 @@ mod tests {
         net::TcpListener,
         sync::{Arc, Mutex},
     };
-    fn fixture(
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cli_token_uses_subscription_only_and_validates_returned_tenant() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("az");
+        let script = |tenant: &str| {
+            format!(
+                r#"#!/bin/sh
+case " $* " in *" --tenant "*) exit 2;; esac
+[ "$1 $2 $3 $4 $5 $6" = "account get-access-token --subscription expected-sub --resource expected-resource" ] || exit 3
+printf '%s' '{{"tenant":"{tenant}","subscription":"expected-sub","accessToken":"fixture-secret-canary"}}'
+"#
+            )
+        };
+        std::fs::write(&program, script("expected-tenant")).unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(cli_token_response(
+            program.to_str().unwrap(),
+            "expected-sub",
+            "expected-tenant",
+            "expected-resource"
+        )
+        .await
+        .is_ok());
+        std::fs::write(&program, script("wrong-tenant")).unwrap();
+        let error = cli_token_response(
+            program.to_str().unwrap(),
+            "expected-sub",
+            "expected-tenant",
+            "expected-resource",
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("Token target mismatch"));
+        assert!(!error.contains("fixture-secret-canary"));
+    }
+    pub(in super::super) fn fixture(
         responses: Vec<Option<String>>,
     ) -> (Azure, Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -396,6 +470,42 @@ mod tests {
             body.len()
         )
     }
+    #[tokio::test]
+    async fn empty_arm_post_has_explicit_length_and_non_json_errors_are_sanitized() {
+        let (mut a, log, t) = fixture(vec![
+            Some(response(
+                "200 OK",
+                "Content-Type: application/json\r\n",
+                "{\"kubeconfigs\":[]}",
+            )),
+            Some(response(
+                "411 Length Required",
+                "Content-Type: text/html\r\n",
+                "<html>secret-canary</html>",
+            )),
+        ]);
+        let id="/subscriptions/66666666-7777-4888-8999-aaaaaaaaaaaa/resourceGroups/test/providers/Microsoft.ContainerService/managedClusters/test/listClusterUserCredential";
+        let first = a
+            .arm(Method::POST, id, "2024-10-01", None, "first")
+            .await
+            .unwrap();
+        assert_eq!(first.status, 200);
+        let error = a
+            .arm(Method::POST, id, "2024-10-01", None, "second")
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("HTTP 411"));
+        assert!(!error.contains("secret-canary"));
+        t.join().unwrap();
+        let requests = log.lock().unwrap();
+        assert_eq!(requests.len(), 2, "No automatic replay on provider error");
+        assert!(requests
+            .iter()
+            .all(|r| r.to_ascii_lowercase().contains("content-length: 0\r\n")));
+    }
+
     #[tokio::test]
     async fn control_uses_create_only_and_etag_cas_without_secret_headers() {
         let (mut a, log, t) = fixture(vec![

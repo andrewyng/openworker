@@ -32,7 +32,7 @@ Your application → OpenWorker API → Agent workers
 4. Install the service, establish its first administrator and register RuntimeProfiles.
 5. Submit a test agent, inspect its progress and qualify recovery and cleanup.
 
-The `ows` installer plans and checks the OpenShell/OpenWorker installation together.
+The `owcluster` installer plans and checks the OpenShell/OpenWorker installation together.
 An existing gateway keeps its original owner; selecting it does not authorize the
 installer to delete or reconfigure unrelated resources.
 

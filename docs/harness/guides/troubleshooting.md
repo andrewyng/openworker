@@ -3,7 +3,7 @@
 | Symptom | Check |
 |---|---|
 | Runtime not found | Install npm optional dependencies, or provide an absolute matching executable path. For packaged desktop apps, put it in resources outside ASAR. |
-| Release mismatch | Update SDK and helper together. Do not substitute a different binary merely because it implements protocol 0.1. |
+| Release mismatch | Use the native runtime required by your SDK. See [compatibility](releases.md) before substituting a custom executable. |
 | No model or authentication failure | Confirm provider name, exact model ID, API format, endpoint and credential source. Never put keys into a prompt. |
 | Run appears stopped | Inspect `session.state()` and interruptions. It may be waiting for approval, a question or a required safety check. |
 | Safety check unavailable | Restore the configured handler/service, then explicitly resume safety. Bypass is not a way around it. |
@@ -16,3 +16,22 @@ profile, session/run IDs and sanitized error/event codes. Exclude API keys,
 provider tokens, prompts, file contents and private state directories.
 
 [Versions and compatibility](releases.md) · [Guardrails guide](guardrails.md)
+
+## Agent registration is rejected
+
+A changed immutable definition returns `AgentDefinitionConflict` in Rust.
+TypeScript retains error code `Remote` and exposes
+`context.reason: "agent_definition_conflict"`, `context.agentId` and
+`context.conflictingFields`. The diagnostic contains field names such as
+`instructions`, `tools` or `approvals`, never their values. Older hosts may still
+return the generic “Harness rejected the request” message. Re-register the identical definition, or use a new name
+for the new definition; a new session alone does not change it. Keep existing
+state for old sessions. Do not log prompts or credentials to diagnose the conflict.
+
+## A tool action has an unknown outcome
+
+A disconnected stream is not evidence that execution failed. Save the session
+reference and submission ID, reattach, and inspect durable state. For a write
+with no known outcome, inspect the target system before retrying. Cancellation
+is not rollback. Use `session.cancel()` to request Stop; closing an observer only
+stops observation.

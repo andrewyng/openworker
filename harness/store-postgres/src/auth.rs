@@ -32,6 +32,7 @@ pub enum Role {
     ComplianceReader,
     ComplianceAuditor,
     Observer,
+    App,
     Operator,
     Administrator,
     Publisher,
@@ -44,6 +45,7 @@ pub enum Scope {
     All,
     Owned,
     Sessions { ids: Vec<String> },
+    Apps { principals: Vec<String> },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,6 +76,8 @@ pub(crate) struct Context {
 pub enum Action {
     Identify,
     ComplianceExport,
+    EvidenceExport,
+    EvidenceForward,
     ComplianceRead,
     ComplianceContent,
     Read,
@@ -91,6 +95,8 @@ impl Action {
         match self {
             Self::Identify => "identity.read",
             Self::ComplianceExport => "compliance.export",
+            Self::EvidenceExport => "compliance.evidence.download",
+            Self::EvidenceForward => "compliance.evidence.forward",
             Self::ComplianceRead => "compliance.read",
             Self::ComplianceContent => "compliance.content.read",
             Self::Read => "read",
@@ -125,6 +131,8 @@ impl Role {
         match action {
             Action::Identify => true,
             Action::ComplianceExport => matches!(self, Self::Administrator),
+            Action::EvidenceExport => matches!(self, Self::Administrator | Self::ComplianceAuditor),
+            Action::EvidenceForward => matches!(self, Self::Administrator),
             Action::Read => !matches!(self, Self::ComplianceReader | Self::ComplianceAuditor),
             Action::ComplianceRead => matches!(
                 self,
@@ -134,7 +142,7 @@ impl Role {
                 matches!(self, Self::Administrator | Self::ComplianceAuditor)
             }
             Action::Create | Action::Submit | Action::Control | Action::Artifact => {
-                matches!(self, Self::Operator | Self::Administrator)
+                matches!(self, Self::Operator | Self::App | Self::Administrator)
             }
             Action::Admin => matches!(self, Self::Administrator | Self::ServiceAdministrator),
             Action::Publish => matches!(self, Self::Administrator | Self::Publisher),
@@ -149,6 +157,14 @@ impl Role {
 impl Spec {
     pub fn validate(&self) -> Result<()> {
         id(&self.principal, 64)?;
+        if self.role == Role::App {
+            ensure!(
+                self.scope == Scope::Owned
+                    && self.environments.is_empty()
+                    && is_app_principal(&self.principal),
+                Error::Invalid
+            );
+        }
         ensure!(
             self.expires_at.is_none_or(|t| t > 0 && t < 253402300800),
             Error::Invalid
@@ -161,6 +177,22 @@ impl Spec {
             ensure!(!ids.is_empty() && ids.len() <= 256, Error::Invalid);
             for sid in ids {
                 id(sid, 80)?;
+            }
+        }
+        if let Scope::Apps { principals } = &self.scope {
+            ensure!(
+                matches!(self.role, Role::ComplianceReader | Role::ComplianceAuditor)
+                    && !principals.is_empty()
+                    && principals.len() <= 64
+                    && principals
+                        .iter()
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len()
+                        == principals.len(),
+                Error::Invalid
+            );
+            for principal in principals {
+                ensure!(is_app_principal(principal), Error::Invalid);
             }
         }
         if matches!(
@@ -251,8 +283,23 @@ fn identity(tx: &mut Transaction<'_>, ctx: &Context) -> Result<Identity> {
         expires_at: s.expires_at,
     })
 }
+pub(crate) fn is_app_principal(value: &str) -> bool {
+    value.len() <= 64
+        && value.strip_prefix("app_").is_some_and(|name| {
+            !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+}
 pub(crate) fn session_allowed(tx: &mut Transaction<'_>, p: &Identity, sid: &str) -> Result<bool> {
-    Ok(match &p.scope {Scope::All=>true,Scope::Sessions{ids}=>ids.iter().any(|v|v==sid),Scope::Owned=>tx.query_one("SELECT EXISTS(SELECT 1 FROM api_session_owners WHERE session_id=$1 AND principal=$2)",&[&sid,&p.principal])?.get(0)})
+    let principals = match &p.scope {
+        Scope::All => return Ok(true),
+        Scope::Sessions { ids } => return Ok(ids.iter().any(|v| v == sid)),
+        Scope::Owned => std::slice::from_ref(&p.principal),
+        Scope::Apps { principals } => principals,
+    };
+    Ok(tx.query_one("SELECT EXISTS(SELECT 1 FROM api_session_owners WHERE session_id=$1 AND principal=ANY($2))", &[&sid, &principals])?.get(0))
 }
 pub(crate) fn guard(
     tx: &mut Transaction<'_>,
@@ -264,6 +311,14 @@ pub(crate) fn guard(
     let Some(ctx) = ctx else { return Ok(None) };
     let p = identity(tx, ctx)?;
     ensure!(p.role.permits(action), Error::Forbidden);
+    ensure!(
+        !matches!(p.scope, Scope::Apps { .. })
+            || matches!(
+                action,
+                Action::Identify | Action::ComplianceRead | Action::EvidenceExport
+            ),
+        Error::Forbidden
+    );
     if action == Action::Create {
         ensure!(!matches!(p.scope, Scope::Sessions { .. }), Error::Forbidden);
         ensure!(
@@ -335,7 +390,11 @@ fn record(
     Ok(())
 }
 fn public(row: &postgres::Row) -> Value {
-    json!({"id":row.get::<_,String>("id"),"request_id":row.get::<_,String>("request_id"),"spec":row.get::<_,Value>("spec"),"revoked":row.get::<_,bool>("revoked")})
+    let mut row_info = json!({"id":row.get::<_,String>("id"),"request_id":row.get::<_,String>("request_id"),"spec":row.get::<_,Value>("spec"),"revoked":row.get::<_,bool>("revoked")});
+    if let Ok(Some(grants)) = row.try_get::<_, Option<Value>>("effective_grants") {
+        row_info["grants"] = grants;
+    }
+    row_info
 }
 fn admin_lock(tx: &mut Transaction<'_>) -> Result<()> {
     tx.query_one(
@@ -450,12 +509,20 @@ impl Database {
         request: String,
         spec: Spec,
         digest: String,
+        replaces: Option<String>,
+        grants: Option<crate::app_agents::Grants>,
     ) -> Result<Value> {
         let mut tx = self.client.transaction()?;
         check(&mut tx)?;
         admin_lock(&mut tx)?;
         let p = guard(&mut tx, self.auth.as_ref(), Action::Admin, None, None)?
             .ok_or(Error::Unauthorized)?;
+        ensure!(
+            (grants.is_none() || spec.role == Role::App)
+                && (spec.role != Role::App || replaces.is_some() || grants.is_some()),
+            Error::Invalid
+        );
+        let grant_json = grants.as_ref().map(serde_json::to_value).transpose()?;
         let data = serde_json::to_value(&spec)?;
         if let Some(row) = tx.query_opt(
             "SELECT * FROM api_credentials WHERE request_id=$1",
@@ -464,12 +531,65 @@ impl Database {
             ensure!(
                 row.get::<_, String>("token_hash") == digest
                     && row.get::<_, Value>("spec") == data
-                    && row.get::<_, String>("created_by") == p.principal,
+                    && row.get::<_, String>("created_by") == p.principal
+                    && row.get::<_, Option<String>>("replaces") == replaces
+                    && row.get::<_, Option<Value>>("app_grants") == grant_json,
                 Error::Conflict
             );
             let out = public(&row);
             tx.commit()?;
             return Ok(out);
+        }
+        if spec.role == Role::App {
+            ensure!(!tx.query_one("SELECT EXISTS(SELECT 1 FROM api_credentials WHERE spec->>'principal'=$1 AND spec->>'role'<>'app')",&[&spec.principal])?.get::<_,bool>(0), Error::Conflict);
+        } else {
+            if spec.principal.starts_with("app_") {
+                ensure!(
+                    !tx.query_one(
+                        "SELECT EXISTS(SELECT 1 FROM service_app_grants WHERE principal=$1)",
+                        &[&spec.principal]
+                    )?
+                    .get::<_, bool>(0),
+                    Error::Conflict
+                );
+            }
+        }
+        if let Some(g) = &grants {
+            g.validate()?;
+            tx.execute("INSERT INTO service_app_grants(principal,grants) VALUES($1,$2) ON CONFLICT(principal) DO NOTHING",&[&spec.principal,&json!(g)])?;
+            ensure!(
+                crate::app_agents::grants(&mut tx, &spec.principal)? == *g,
+                Error::Conflict
+            );
+        }
+        if let Some(previous) = &replaces {
+            let old = tx
+                .query_opt(
+                    "SELECT spec,revoked FROM api_credentials WHERE id=$1 FOR UPDATE",
+                    &[previous],
+                )?
+                .ok_or(Error::Invalid)?;
+            let old_spec: Spec = serde_json::from_value(old.get(0))?;
+            ensure!(
+                old_spec.role == Role::App
+                    && spec.role == Role::App
+                    && old_spec.principal == spec.principal
+                    && !old.get::<_, bool>(1),
+                Error::Conflict
+            );
+            tx.execute(
+                "UPDATE api_credentials SET revoked=TRUE WHERE id=$1",
+                &[previous],
+            )?;
+            record(
+                &mut tx,
+                Some(&p),
+                "credential.rotate",
+                None,
+                Some(&request),
+                "revoked",
+                Some(previous),
+            )?;
         }
         ensure!(
             tx.query_one("SELECT count(*) FROM api_credentials", &[])?
@@ -514,7 +634,7 @@ impl Database {
             );
         }
         let id = format!("key_{}", uuid::Uuid::new_v4().simple());
-        let row=tx.query_one("INSERT INTO api_credentials(id,request_id,token_hash,spec,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *",&[&id,&request,&digest,&data,&p.principal])?;
+        let row=tx.query_one("INSERT INTO api_credentials(id,request_id,token_hash,spec,created_by,replaces,app_grants) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",&[&id,&request,&digest,&data,&p.principal,&replaces,&grant_json])?;
         record(
             &mut tx,
             Some(&p),
@@ -571,7 +691,7 @@ impl Database {
         guard(&mut tx, self.auth.as_ref(), Action::Admin, None, None)?
             .ok_or(Error::Unauthorized)?;
         let rows = tx.query(
-            "SELECT * FROM api_credentials WHERE id>$1 ORDER BY id LIMIT 101",
+            "SELECT k.*,g.grants AS effective_grants FROM api_credentials k LEFT JOIN service_app_grants g ON g.principal=k.spec->>'principal' WHERE k.id>$1 ORDER BY k.id LIMIT 101",
             &[&after],
         )?;
         let more = rows.len() > 100;
@@ -612,6 +732,20 @@ impl PostgresStore {
         });
         Ok(store)
     }
+    /// Restore only the scoped credential recorded at admission of a durable job.
+    /// Trusted workers use this internally. Revocation and expiry still apply.
+    pub fn for_background_credential(&self, credential: &str) -> Result<Self> {
+        ensure!(self.auth.is_none(), Error::Forbidden);
+        let credential = credential.to_owned();
+        let digest = self.call(move |db| {
+            Ok(db.client.query_opt("SELECT token_hash FROM api_credentials WHERE id=$1 AND NOT revoked
+                AND ((spec->>'expires_at') IS NULL OR (spec->>'expires_at')::bigint > extract(epoch FROM clock_timestamp()))",
+                &[&credential])?.ok_or(Error::Unauthorized)?.get(0))
+        })?;
+        let mut store = self.clone();
+        store.auth = Some(Context { digest });
+        Ok(store)
+    }
     pub fn authorize(
         &self,
         action: Action,
@@ -643,7 +777,43 @@ impl PostgresStore {
         spec.validate()?;
         let digest = token_hash(token)?;
         let request = request.to_owned();
-        self.call(move |db| db.auth_issue(request, spec, digest))
+        self.call(move |db| db.auth_issue(request, spec, digest, None, None))
+    }
+    pub fn issue_app_token(
+        &self,
+        request: &str,
+        spec: Spec,
+        token: &str,
+        grants: crate::app_agents::Grants,
+    ) -> Result<Value> {
+        id(request, 100)?;
+        spec.validate()?;
+        grants.validate()?;
+        ensure!(
+            spec.role == Role::App && spec.expires_at.is_some(),
+            Error::Invalid
+        );
+        let digest = token_hash(token)?;
+        let request = request.to_owned();
+        self.call(move |db| db.auth_issue(request, spec, digest, None, Some(grants)))
+    }
+    pub fn rotate_app_token(
+        &self,
+        request: &str,
+        previous: &str,
+        spec: Spec,
+        token: &str,
+    ) -> Result<Value> {
+        id(request, 100)?;
+        id(previous, 80)?;
+        spec.validate()?;
+        ensure!(
+            spec.role == Role::App && spec.expires_at.is_some(),
+            Error::Invalid
+        );
+        let digest = token_hash(token)?;
+        let (request, previous) = (request.to_owned(), previous.to_owned());
+        self.call(move |db| db.auth_issue(request, spec, digest, Some(previous), None))
     }
     /// Infrastructure-admin recovery only. Keeps bootstrap tombstone and all audit history.
     pub fn auth_recover(

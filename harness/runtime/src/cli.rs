@@ -78,6 +78,8 @@ enum Command {
         #[arg(long)]
         servers: Option<PathBuf>,
     },
+    #[command(hide = true)]
+    SandboxLoop,
     Doctor {
         #[arg(long)]
         json: bool,
@@ -224,6 +226,13 @@ pub fn main_with_registry(registry: openworker_tools::ToolRegistry) {
 }
 async fn entry(args: Args, registry: openworker_tools::ToolRegistry) -> Result<()> {
     match args.command {
+        Command::SandboxLoop => {
+            return crate::loop_channel::serve(
+                tokio::io::BufReader::new(tokio::io::stdin()),
+                tokio::io::stdout(),
+            )
+            .await
+        }
         Command::PrepareDirectory { path } => {
             crate::platform::validate_path(&path)?;
             if !path.is_absolute() {

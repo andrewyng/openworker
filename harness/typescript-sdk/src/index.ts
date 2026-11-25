@@ -1,3 +1,9 @@
+import { validateIntegrationOptions } from "./integration-options.js";
+import {Attachment,attachmentArgument,stageInput,userInput,type UserInput} from "./attachments.js";
+export { Attachment } from "./attachments.js";
+export type { UserInput, InputContent, AttachmentSource } from "./attachments.js";
+import { Observability } from "./observability.js";
+export * from "./observability.js";
 import { normalizeSafety, type SafetyOptions, type SafetyHandler, type SafetyContext, type SafetyDecision } from "./safety.js";
 export * from "./safety.js";
 import { Service, type ServiceOptions } from "./service.js";
@@ -53,6 +59,21 @@ function aborted(signal?: AbortSignal): void {
       "Stopped waiting; agent execution was not cancelled",
     );
 }
+function approvalDecisionOf(value: unknown): import("./types.js").ApprovalDecision | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const v = record(value);
+  if (!["interaction_id", "call_id", "tool"].every(k => typeof v[k] === "string") ||
+      !["reviewer", "human", "app_policy", "session_grant", "subagent_creation_grant", "workspace_read_grant", "workspace_write_grant", "hard_policy", "bypass"].includes(String(v.origin)) ||
+      !["allow", "deny", "unsure"].includes(String(v.verdict))) return undefined;
+  const reason = typeof v.reason === "string" && [...v.reason].length <= 512 ? v.reason : undefined;
+  return {
+    interactionId: String(v.interaction_id), callId: String(v.call_id), tool: String(v.tool),
+    origin: v.origin as import("./types.js").ApprovalDecision["origin"],
+    verdict: v.verdict as import("./types.js").ApprovalDecision["verdict"],
+    ...(reason !== undefined ? {reason} : {}),
+  };
+}
+
 function resultOf(value: unknown): RunResult {
   const v = record(value);
   if (
@@ -101,6 +122,7 @@ function interruptionOf(value: unknown): Interruption {
 
 /** Node.js host owner. Agent logic, storage and permission enforcement remain in Rust. */
 export class Harness {
+  get observability(): Observability { return new Observability((method,args)=>this.request(method,args as Json)); }
   static connect(options: ServiceOptions): Promise<Service> {
     return Service.connect(options);
   }
@@ -241,6 +263,8 @@ export class Harness {
           sessionId: String(context.session_id),
           turnId: String(context.turn_id),
           callId: String(context.call_id),
+          qualifiedName: String(event.tool),
+          ...(typeof context.model_alias === "string" ? {modelAlias:context.model_alias} : {}),
           workspace: String(context.workspace),
           signal: controller.signal,
           progress: async (message, data = null) => {
@@ -305,10 +329,16 @@ export class Harness {
     }
   }
   static async start(options: HarnessOptions = {}): Promise<Harness> {
+    validateIntegrationOptions(options.integrations);
     const pending:{ref:{name:string;version:string};callback:SafetyHandler}[]=[];
     const safety=await normalizeSafety(options,async(ref,callback)=>{pending.push({ref,callback});});
     const {guardrails:_guards,hooks:_hooks,blockedOutputOptions:_blocked,...launchOptions}=options;
     const transport = await Transport.start(launchOptions,safety);
+    if (options.agents?.some(a=>a.subagents && !Array.isArray(a.subagents) && a.subagents.enabled)
+        && record(transport.info.capabilities).standalone_subagents !== true) {
+      await transport.stop();
+      throw new HarnessError("Setup","Update the runtime to enable standalone sub-agents");
+    }
     try {
       const listed = record(await transport.request("agent/list", {}));
       if (!Array.isArray(listed.agents))
@@ -364,6 +394,7 @@ export class Harness {
     });
   }
   async setModelProvider(provider: ModelProvider): Promise<void> {
+    validateIntegrationOptions(provider.integrations);
     const credentials = provider.credentials;
     if (provider.auth && credentials)
       throw new HarnessError(
@@ -392,6 +423,8 @@ export class Harness {
       throw new HarnessError("InvalidInput", "Provider key is unavailable");
     await this.request("provider/set", {
       name: provider.name,
+      inference_options: provider.inferenceOptions,
+      integrations: provider.integrations,
       api: provider.api,
       base_url: provider.baseUrl,
       stream_usage: provider.streamUsage,
@@ -507,6 +540,7 @@ export class Harness {
   }
   /** Creates a reusable handle. Await ready() or newSession() to confirm registration. */
   createAgent(definition: AgentDefinition): AgentHandle {
+    validateIntegrationOptions(definition.integrations);
     return new AgentHandle(this, structuredClone(definition));
   }
   async listAgents(): Promise<string[]> {
@@ -557,6 +591,11 @@ export class Harness {
     return team;
   }
   async session(agent: string, options: SessionOptions = {}): Promise<Session> {
+    validateIntegrationOptions(options.integrations);
+    if (options.integrations !== undefined && !this.capabilities.integrations)
+      throw new HarnessError("Setup", "Update the host to configure session integrations");
+    if ((options.autoApproverContext !== undefined || options.compaction !== undefined) && this.capabilities.application_guidance !== true)
+      throw new HarnessError("Setup", "Update the host to configure application guidance");
     if (options.initialHistory !== undefined && this.capabilities.initial_history !== true)
       throw new HarnessError("Setup", "Update the host to import conversation history");
     if (
@@ -580,12 +619,16 @@ export class Harness {
         safety: await this.safetyOptions(options),
         compliance: options.compliance,
         auto_skip_questions: options.autoSkipQuestions,
+        auto_approver_context: options.autoApproverContext,
+        compaction: options.compaction === undefined ? undefined : { additional_instructions: options.compaction.additionalInstructions },
+        integrations: options.integrations,
         initial_history: options.initialHistory,
         name: options.name,
         ...(options.model
           ? {
               model: {
                 connection: options.model.provider,
+                notify_on_session_state: options.model.notifyOnSessionState,
                 model: options.model.name,
               },
             }
@@ -651,7 +694,9 @@ export class AgentHandle {
     void this.registration.catch(() => {});
   }
   private async register(definition: AgentDefinition): Promise<void> {
-    const definitions = [definition, ...(definition.subagents ?? [])];
+    const definitions = [definition, ...(Array.isArray(definition.subagents) ? definition.subagents : [])];
+    if (definitions.some(a => a.subagents && !Array.isArray(a.subagents) && a.subagents.enabled) && this.harness.capabilities.standalone_subagents !== true)
+      throw new HarnessError("Setup", "Update the host to enable standalone sub-agents");
     if (definitions.some(a => a.builtinTools !== undefined) && this.harness.capabilities.builtin_tools !== true)
       throw new HarnessError("Setup", "Update the host to configure built-in tools");
     if (definitions.some(a => a.limits?.maxOutputTokensPerCall !== undefined) && this.harness.capabilities.per_call_output_limit !== true)
@@ -668,6 +713,7 @@ export class AgentHandle {
           ? {
               model: {
                 connection: defaultModel.provider,
+                notify_on_session_state: defaultModel.notifyOnSessionState,
                 model: defaultModel.name,
               },
             }
@@ -783,6 +829,8 @@ export class Session {
     options: RunOptions = {},
   ): Promise<Run | { accepted: true; runId: string | null }> {
     aborted(options.signal);
+    if ((options.autoApproverContext !== undefined || options.compaction !== undefined) && this.harness.capabilities.application_guidance !== true)
+      throw new HarnessError("Setup", "Update the host to configure application guidance");
     if ((options.instructionAddendum !== undefined || options.output !== undefined) && this.harness.capabilities.turn_context !== true)
       throw new HarnessError("Setup", "Update the host to configure turn context");
     if (options.limits?.maxOutputTokensPerCall !== undefined && this.harness.capabilities.per_call_output_limit !== true)
@@ -790,9 +838,13 @@ export class Session {
     if (options.limits && this.harness.capabilities.turn_limits !== true) {
       throw new HarnessError("Setup", "Host does not support turn limits");
     }
-    const value = typeof input === "string" ? { text: input } : input;
+    let value = typeof input === "string" ? { text: input } : input;
+    if ("content" in value) {
+      if(this.harness.capabilities.attachments!==true)throw new HarnessError("Setup","Host does not support attachments");
+      value={content:await stageInput(value as UserInput,this.id,(m,p)=>this.harness.request(m,p),options.signal)} as unknown as typeof value;
+    }
     const control = value.type === "approval" || value.type === "answer";
-    if (control && (options.limits !== undefined||options.guardrails||options.hooks||options.blockedOutputOptions||options.instructionAddendum !== undefined||options.output !== undefined)) {
+    if (control && (options.autoApproverContext !== undefined||options.compaction !== undefined||options.limits !== undefined||options.guardrails||options.hooks||options.blockedOutputOptions||options.instructionAddendum !== undefined||options.output !== undefined)) {
       throw new HarnessError(
         "InvalidInput",
         "Limits apply only to new message turns",
@@ -802,14 +854,14 @@ export class Session {
       ? value.type === "approval"
         ? ["type", "interactionId", "targetSessionId", "decision"]
         : ["type", "interactionId", "targetSessionId", "text"]
-      : ["type", "text"];
+      : ["type", "text", "content"];
     if (Object.keys(value).some((key) => !allowed.includes(key)))
       throw new HarnessError(
         "InvalidInput",
         "Mixed or unknown session input fields",
       );
     const submissionId = options.submissionId ?? randomUUID();
-    const wire = control
+    const wire = (value.type === "approval" || value.type === "answer")
       ? {
           ...value,
           interaction_id: value.interactionId,
@@ -827,6 +879,8 @@ export class Session {
         input: wire,
         limits: options.limits,
         instruction_addendum: options.instructionAddendum,
+        auto_approver_context: options.autoApproverContext,
+        compaction: options.compaction === undefined ? undefined : { additional_instructions: options.compaction.additionalInstructions },
         output: options.output,
         safety: control?undefined:await this.harness.safetyOptions(options),
       }),
@@ -841,10 +895,14 @@ export class Session {
       options,
     );
   }
-  async run(input: string, options: RunOptions = {}): Promise<RunResult> {
+  async run(input:string|UserInput,options?:RunOptions):Promise<RunResult>;
+  async run(input:string,attachments:Attachment|Attachment[],options?:RunOptions):Promise<RunResult>;
+  async run(input: string|UserInput, second:RunOptions|Attachment|Attachment[] = {}, third:RunOptions = {}): Promise<RunResult> {
+    const options=attachmentArgument(second)?third:second;
+    if(attachmentArgument(second)){if(typeof input!=="string")throw new HarnessError("InvalidInput","Attachments convenience form requires text");input=userInput(input,second);}
     const submissionId = options.submissionId ?? randomUUID();
     try {
-      await this.start(input, submissionId, options.signal);
+      await this.start(input, submissionId, options);
       return await this.resume({ ...options, submissionId });
     } catch (e) {
       if (e instanceof HarnessError) {
@@ -858,7 +916,7 @@ export class Session {
     }
   }
   async runWith(
-    input: string,
+    input: string|UserInput,
     handler: (i: Interruption) => Response | Promise<Response>,
     options: RunOptions = {},
   ): Promise<RunResult> {
@@ -878,12 +936,13 @@ export class Session {
     }
     return result;
   }
-  async runStreamed(
-    input: string,
-    options: RunOptions = {},
-  ): Promise<RunStream> {
+  async runStreamed(input:string|UserInput,options?:RunOptions):Promise<RunStream>;
+  async runStreamed(input:string,attachments:Attachment|Attachment[],options?:RunOptions):Promise<RunStream>;
+  async runStreamed(input:string|UserInput,second:RunOptions|Attachment|Attachment[]={},third:RunOptions={}):Promise<RunStream>{
+    const options=attachmentArgument(second)?third:second;
+    if(attachmentArgument(second)){if(typeof input!=="string")throw new HarnessError("InvalidInput","Attachments convenience form requires text");input=userInput(input,second);}
     const submissionId = options.submissionId ?? randomUUID();
-    const started = await this.start(input, submissionId, options.signal);
+    const started = await this.start(input, submissionId, options);
     return new RunStream(this.harness, this.id, started.cursors as Cursors, {
       ...options,
       submissionId,
@@ -922,17 +981,32 @@ export class Session {
     return new RunStream(this.harness, this.id, cursors, options);
   }
   private async start(
-    input: string,
+    input: string|UserInput,
     submissionId: string,
-    signal?: AbortSignal,
+    options:RunOptions = {},
   ): Promise<Record<string, unknown>> {
-    aborted(signal);
+    aborted(options.signal);
+    if ((options.autoApproverContext !== undefined || options.compaction !== undefined) && this.harness.capabilities.application_guidance !== true)
+      throw new HarnessError("Setup", "Update the host to configure application guidance");
+    let content:Record<string,unknown>[]|undefined;
+    if(typeof input!=="string"){
+      if(this.harness.capabilities.attachments!==true)throw new HarnessError("Setup","Host does not support attachments");
+      content=await stageInput(input,this.id,(m,p)=>this.harness.request(m,p),options.signal);
+    }
+    aborted(options.signal);
     try {
       return record(
         await this.harness.request("run/start", {
           session_id: this.id,
           submission_id: submissionId,
-          text: input,
+          text: typeof input==="string"?input:undefined,
+          content,
+          limits:options.limits,
+          instruction_addendum:options.instructionAddendum,
+          auto_approver_context:options.autoApproverContext,
+          compaction: options.compaction === undefined ? undefined : { additional_instructions: options.compaction.additionalInstructions },
+          output:options.output,
+          safety:await this.harness.safetyOptions(options),
         }),
       );
     } catch (e) {
@@ -1063,9 +1137,15 @@ export class RunStream implements AsyncIterable<RunEvent> {
           const wireSummary = record(item.summary);
           // Older hosts retain the ID in the journal but omit it from summaries.
           const callId = wireSummary.call_id ?? record(event.data).call_id;
-          summary = { ...summary, callId: typeof callId === "string" ? callId : "" };
+          summary = {
+            type: summary.type, tool: summary.tool,
+            callId: typeof callId === "string" ? callId : "",
+            ...(typeof wireSummary.qualified_name === "string" ? {qualifiedName: wireSummary.qualified_name} : {}),
+            ...(typeof wireSummary.model_alias === "string" ? {modelAlias: wireSummary.model_alias} : {}),
+            ...(summary.type === "tool_started" && Object.hasOwn(wireSummary,"arguments") ? {arguments: wireSummary.arguments as Json} : {}),
+          };
         }
-        if (summary && ["model_attempt_started", "model_attempt_finished", "assistant_delta", "reasoning_delta", "model_activity", "provider_error"].includes(summary.type)) {
+        if (summary && ["model_attempt_started", "model_attempt_finished", "assistant_delta", "reasoning_delta", "model_activity", "model_route", "model_usage", "provider_error"].includes(summary.type)) {
           const wire = record(item.summary);
           const attemptId = String(wire.attempt_id ?? "");
           switch (summary.type) {
@@ -1074,6 +1154,12 @@ export class RunStream implements AsyncIterable<RunEvent> {
             case "assistant_delta": summary = { type:summary.type, attemptId, text:String(wire.text ?? "") }; break;
             case "reasoning_delta": summary = { type:summary.type, attemptId, kind:wire.kind as "summary" | "thinking", text:String(wire.text ?? ""), blockIndex:Number(wire.block_index) }; break;
             case "model_activity": summary = { type:summary.type, attemptId, elapsedMs:Number(wire.elapsed_ms) }; break;
+            case "model_route": summary = { type:summary.type, attemptId,
+              ...(typeof wire.request_id === "string" ? {requestId:wire.request_id} : {}),
+              ...(typeof wire.route_locus === "string" ? {routeLocus:wire.route_locus} : {}),
+              ...(typeof wire.response_model === "string" ? {responseModel:wire.response_model} : {}),
+            }; break;
+            case "model_usage": summary = {type:summary.type,inputTokens:Number(wire.input_tokens),outputTokens:Number(wire.output_tokens),cachedInputTokens:Number(wire.cached_input_tokens)}; break;
             case "provider_error": {
               const diagnostic = providerDiagnostic(wire.diagnostic);
               summary = diagnostic ? { type:summary.type, attemptId, diagnostic } : null;
@@ -1081,12 +1167,15 @@ export class RunStream implements AsyncIterable<RunEvent> {
             }
           }
         }
+        const approvalDecision = approvalDecisionOf(item.approval_decision);
         yield {
+          ...(approvalDecision ? {approvalDecision} : {}),
           agent: String(item.agent),
           ...(typeof item.agent_id === "string"
             ? { agentId: item.agent_id }
             : {}),
           ...(typeof item.team_id === "string" ? { teamId: item.team_id } : {}),
+          ...(typeof item.parent_session_id === "string" ? { parentSessionId: item.parent_session_id } : {}),
           sessionId: sid,
           event: event as unknown as RunEvent["event"],
           summary,

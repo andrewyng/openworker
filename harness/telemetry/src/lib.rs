@@ -12,6 +12,7 @@ use std::{
 };
 mod accounting;
 pub mod attributes;
+pub mod config;
 mod observation;
 pub use accounting::{ModelPurpose, TokenUsage};
 #[cfg(feature = "otel")]
@@ -24,7 +25,13 @@ pub use observation::{Gauge, Observation};
 /// strings. Reserved typed fields cannot be overridden via metadata strings.
 pub fn metadata_attribute(key: &str, value: &str) -> bool {
     attributes::field(key).is_some_and(|f| f.capture == attributes::CaptureClass::Metadata)
-        && !value.is_empty()
+        && bounded_identifier(value)
+        && (key != attributes::POLICY_DIGEST
+            || value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+fn bounded_identifier(value: &str) -> bool {
+    !value.is_empty()
         && value.len() <= 256
         && !value.starts_with('/')
         && !value.contains("://")
@@ -32,11 +39,10 @@ pub fn metadata_attribute(key: &str, value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"_-./:".contains(&b))
         && redact(value) == value
-        && (key != attributes::POLICY_DIGEST
-            || value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 pub fn export_attribute(key: &str, value: &str) -> bool {
     metadata_attribute(key, value)
+        || (key == attributes::MODEL_REQUEST_ID && bounded_identifier(value))
         || attributes::field(key)
             .is_some_and(|f| f.capture == attributes::CaptureClass::Full && value.len() <= 65539)
 }
@@ -391,6 +397,7 @@ pub trait Sink: Send + 'static {
     }
 }
 enum Message {
+    Flush(mpsc::SyncSender<bool>),
     Record(Record),
     Observations([Observation; Gauge::ALL.len()], usize),
 }
@@ -485,11 +492,13 @@ impl Telemetry {
                         break;
                     }
                     if !batch.is_empty() {
+                        let mut acknowledgements = Vec::new();
                         let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             let mut records = Vec::new();
                             let mut observations = Vec::new();
                             for message in batch.drain(..) {
                                 match message {
+                                    Message::Flush(ack) => acknowledgements.push(ack),
                                     Message::Record(r) => records.push(r),
                                     Message::Observations(o, n) => {
                                         observations.extend_from_slice(&o[..n])
@@ -504,6 +513,9 @@ impl Telemetry {
                         .unwrap_or(false);
                         if !ok {
                             s.failures.fetch_add(1, Ordering::Relaxed);
+                        }
+                        for ack in acknowledgements {
+                            let _ = ack.try_send(ok);
                         }
                         batch.clear();
                     }
@@ -531,6 +543,19 @@ impl Telemetry {
                 deadline,
             },
         ))
+    }
+    /// Bounded barrier for records already enqueued. Success is not durable or
+    /// lossless delivery; inspect counters for earlier drops/rejections. Never retries.
+    pub fn flush(&self, budget: Duration) -> bool {
+        let Some(inner) = &self.0 else {
+            return true;
+        };
+        let (ack, rx) = mpsc::sync_channel(1);
+        if inner.stop.load(Ordering::Acquire) || inner.tx.try_send(Message::Flush(ack)).is_err() {
+            return false;
+        }
+        rx.recv_timeout(budget.min(Duration::from_secs(5)))
+            .unwrap_or(false)
     }
     pub fn enabled(&self) -> bool {
         self.0.is_some()
@@ -702,6 +727,17 @@ impl Span {
                 r.output_tokens = usage.output;
                 r.usage_details = usage;
             }
+        }
+    }
+    /// Provider correlation uses a bounded identifier and never becomes a metric label.
+    pub fn model_request_id(&mut self, id: &str) {
+        if self
+            .record
+            .as_ref()
+            .is_some_and(|r| r.operation == Operation::Model)
+            && bounded_identifier(id)
+        {
+            self.push_attribute(attributes::MODEL_REQUEST_ID, id.to_owned());
         }
     }
     pub fn purpose(&mut self, purpose: ModelPurpose) {

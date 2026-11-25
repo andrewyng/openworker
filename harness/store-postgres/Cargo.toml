@@ -10,6 +10,7 @@ license.workspace = true
 publish = ["crates-io"]
 
 [features]
+attachments = ["openworker-runtime/attachments"]
 compliance = ["openworker-runtime/compliance"]
 guardrails = ["openworker-runtime/guardrails"]
 test-support = ["dep:openworker-tools", "openworker-runtime/test-fixtures"]
@@ -26,9 +27,10 @@ path = "tests/support/recovery.rs"
 required-features = ["test-support"]
 
 [dependencies]
-openworker-artifacts = { version = "=0.1.0-beta.2", path = "../artifacts" }
-openworker-runtime = { version = "=0.1.0-beta.2", path = "../runtime", default-features = false }
-openworker-tools = { version = "=0.1.0-beta.2", path = "../tools-sdk", optional = true }
+openworker-observability = { version = "=0.1.0-beta.5", path = "../observability", features = ["evaluations"] }
+openworker-artifacts = { version = "=0.1.0-beta.5", path = "../artifacts" }
+openworker-runtime = { version = "=0.1.0-beta.5", path = "../runtime", default-features = false }
+openworker-tools = { version = "=0.1.0-beta.5", path = "../tools-sdk", optional = true }
 anyhow = "1"
 postgres = { version = "0.19", features = ["with-serde_json-1"] }
 postgres-native-tls = "0.5"

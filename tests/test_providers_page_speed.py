@@ -1,14 +1,20 @@
-"""T3-2: Models & Keys waited 2-15 s on local model servers that are not running. On Windows a
-refused loopback connection takes about 2 s, `localhost` tries two addresses, and the servers
-were asked one after another. Now the connect wait is short on loopback, the servers are asked
-at the same time, and every answer stays in the caches."""
+"""T3-2 / OPE-250: Models & Keys waited up to a minute on local model servers that are not
+running. On Windows a refused loopback connection takes about 2 s, `localhost` tries two
+addresses, the servers were asked one after another, each probe built its own HTTP client
+(about 2 s more, for the certificate store a plain http request never uses), and a server
+that did not answer was asked a second time for its models. Now the connect wait is short on
+loopback, the servers are asked at the same time, every probe shares one client, a dead
+server is not asked for its models, the defaults name 127.0.0.1, and every answer stays in
+the caches."""
 
 from __future__ import annotations
 
 import threading
 import time
 
-from coworker.providers import local_server
+import httpx
+
+from coworker.providers import local_server, ollama_facts, probe_http
 from coworker.server import SessionManager
 
 
@@ -61,3 +67,109 @@ def test_the_local_servers_are_asked_at_once_and_every_answer_is_kept(tmp_path, 
     assert all(rows[n]["alive"] is False for n in names if n in rows)
     if hasattr(manager, "observability"):
         manager.observability.close()
+
+
+def test_every_probe_goes_through_the_one_shared_client(tmp_path, monkeypatch):
+    """`httpx.get` builds a client per call (about 2 s on Windows: it loads the certificate
+    store). The liveness and model probes of Ollama and the OpenAI-compatible servers all
+    use probe_http's shared client, so a fake there answers every one of them and a probe
+    that built its own client would fail this test."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.path)
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "qwen3:8b"}]})
+        if request.url.path == "/api/show":
+            return httpx.Response(200, json={"capabilities": ["completion", "tools"]})
+        if request.url.path.endswith("/v1/models"):
+            return httpx.Response(200, json={"data": [{"id": "served-model"}]})
+        return httpx.Response(404)
+
+    def own_client(*_a, **_k):
+        raise AssertionError("a probe built its own HTTP client")
+
+    monkeypatch.setattr(httpx, "get", own_client)
+    monkeypatch.setattr(httpx, "post", own_client)
+    monkeypatch.setattr(probe_http, "_client", httpx.Client(transport=httpx.MockTransport(handler)))
+    ollama_facts.forget_all()
+    local_server.forget_all()
+
+    assert local_server.alive("vllm", None) is True
+    assert [r["name"] for r in local_server.model_facts("vllm", None)] == ["served-model"]
+    assert [r["name"] for r in ollama_facts.model_facts(None)] == ["qwen3:8b"]
+    manager = SessionManager(workspace=tmp_path)
+    assert manager._ollama_alive() is True
+    assert "/api/tags" in asked and "/api/show" in asked
+    if hasattr(manager, "observability"):
+        manager.observability.close()
+
+
+def test_a_server_that_does_not_answer_is_not_asked_for_its_models(tmp_path, monkeypatch):
+    """Only a server that is up is asked what it serves; the others get an empty list
+    without a second probe. Both the parallel warm-up and the get_providers rows obey it."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(workspace=tmp_path)
+    listed: list[str] = []
+
+    monkeypatch.setattr(local_server, "alive", lambda name, base_url, api_key=None: name == "vllm")
+
+    def facts(name, *_a, **_k):
+        listed.append(name)
+        return [{"model": f"{name}:served-model", "name": "served-model", "tools": True}]
+
+    monkeypatch.setattr(local_server, "model_facts", facts)
+    monkeypatch.setattr(manager, "_ollama_alive", lambda: False)
+    monkeypatch.setattr(manager, "_ollama_models", lambda: [])
+    rows = {r["name"]: r for r in manager.get_providers()}
+    assert set(listed) == {"vllm"}
+    assert rows["vllm"]["alive"] is True and rows["vllm"]["suggested_models"] == ["served-model"]
+    for name in local_server.LOCAL_SERVERS:
+        if name != "vllm":
+            assert rows[name]["alive"] is False and rows[name]["suggested_models"] == [], name
+    assert rows["ollama"]["alive"] is False and rows["ollama"]["suggested_models"] == []
+    if hasattr(manager, "observability"):
+        manager.observability.close()
+
+
+def test_an_ollama_profile_saved_as_the_old_default_becomes_127_0_0_1(tmp_path, monkeypatch):
+    """The Settings form saved the prefilled default, so profiles from before OPE-229 carry
+    `http://localhost:11434` without anyone having typed it. That exact value (a trailing
+    slash or `/v1` allowed) becomes the current default once; any other address stays as
+    typed, as OPE-229 decided."""
+    from coworker.secrets import SecretStore
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    store = SecretStore()
+
+    def after(saved: str) -> str:
+        store.put("provider:ollama", {"base_url": saved, "note": "kept"})
+        manager = SessionManager(workspace=tmp_path)
+        got = manager.secrets.get("provider:ollama")
+        assert got["note"] == "kept"  # the rest of the profile is untouched
+        if hasattr(manager, "observability"):
+            manager.observability.close()
+        return got["base_url"]
+
+    assert after("http://localhost:11434") == "http://127.0.0.1:11434"
+    assert after("http://localhost:11434/") == "http://127.0.0.1:11434"
+    assert after("http://LOCALHOST:11434/v1") == "http://127.0.0.1:11434/v1"
+    # Addresses someone chose are used as typed.
+    assert after("http://localhost:11435") == "http://localhost:11435"
+    assert after("http://localhost:11434/ollama") == "http://localhost:11434/ollama"
+    assert after("http://gpu-box.lan:11434") == "http://gpu-box.lan:11434"
+    # No profile at all: nothing is written.
+    store.delete("provider:ollama")
+    manager = SessionManager(workspace=tmp_path)
+    assert manager.secrets.get("provider:ollama") is None
+    if hasattr(manager, "observability"):
+        manager.observability.close()
+
+
+def test_local_server_defaults_name_127_0_0_1_not_localhost():
+    """`localhost` resolves to ::1 first on Windows, so a probe of a server that is not
+    running waited out two connects; the defaults name the address directly (as OPE-229
+    did for Ollama)."""
+    for name, spec in local_server.LOCAL_SERVERS.items():
+        assert "localhost" not in spec["default_base"], name

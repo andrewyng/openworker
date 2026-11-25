@@ -1,15 +1,22 @@
 # Deployment options
 
-Start with the simplest placement that fits your product.
+Start inside your app, then choose a shared service when you need one.
+
+Desktop packaging and a Node container on Railway use the managed SDK runtime.
+The `owcluster` CLI installs and operates a separate OpenWorker service cluster; it is
+not needed to deploy every SDK app.
+
+On a shared cluster, each app can use its own token, agent revisions and a named model profile. See [cluster app setup](cluster-apps.md).
 
 ## Choose a platform
 
-| Platform | Reference |
+| Platform | Status and starting point |
 |---|---|
-| [Private Kubernetes cluster](private-kubernetes.md) | Your cluster, PostgreSQL and OpenShell |
-| [AWS](aws.md) | EKS, PostgreSQL, S3 and OpenShell |
-| [GCP](gcp.md) | GKE Standard, Cloud SQL, Cloud Storage and OpenShell |
-| [Azure](azure.md) | AKS, PostgreSQL, Blob and OpenShell |
+| [Railway](railway.md) | Application hosting; single-service recipe tested live |
+| [Private Kubernetes cluster](private-kubernetes.md) | Bring an existing cluster; local qualification does not cover every remote environment |
+| [AWS](aws.md) | Experimental EKS service deployment |
+| [GCP](gcp.md) | Experimental; complete live qualification pending |
+| [Azure](azure.md) | Experimental AKS service deployment; fresh-install qualification ongoing |
 
 The application-facing service API stays the same. Cloud identity, networking,
 storage and lifecycle setup are provider-specific. [NVIDIA OpenShell](openshell.md)
@@ -30,8 +37,7 @@ also be selected through the Rust SDK. Database choice does not remove team/sess
 capabilities. Bind an execution environment explicitly when agents must share it;
 sharing does not resolve conflicting file edits or ports automatically.
 
-OpenShell runs tool execution in a sandbox while the current harness remains in
-the trusted service domain. RuntimeProfiles select the provider and allowed
+OpenShell runs workspace tools in a sandbox. The runtime profile can also place the model loop in its own sandbox. The service owns session history and approvals. RuntimeProfiles select the provider and allowed
 resources. A profile is configuration; a provisioned environment is an instance.
 
 Start with the [local service setup](../../../deploy/service/README.md) and
@@ -40,4 +46,4 @@ and cluster identity are operator-owned. Cloud deployment paths are experimental
 validate the configuration in the target environment before production use.
 
 Before upgrading, read [versions and compatibility](releases.md) and the
-[storage migration instructions](guardrails.md#upgrade-an-existing-installation).
+[storage migration instructions](upgrades.md).

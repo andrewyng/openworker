@@ -80,6 +80,20 @@ impl Registry {
     }
 }
 
+/// Versioned service-profile decision. Missing fields in older profiles run on a worker.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LoopPlacement {
+    #[default]
+    Service,
+    Sandbox,
+}
+impl LoopPlacement {
+    pub fn is_service(&self) -> bool {
+        *self == Self::Service
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Sharing {

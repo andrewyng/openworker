@@ -184,3 +184,20 @@ fn endpoints_do_not_accept_unencrypted_remote_hosts_or_embedded_secrets() {
         );
     }
 }
+
+#[tokio::test]
+async fn allowed_detection_is_reported_as_an_alert() {
+    let (url, server) = mock(
+        200,
+        json!({"action":"allow","category":"malicious","scanId":"scan-1"}).to_string(),
+        0,
+    )
+    .await;
+    let scanner = Scanner::new(config(url, Protocol::SelectedContext), Arc::new(Key)).unwrap();
+    let decision = scanner
+        .call(context(), CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(matches!(decision, Decision::Alert));
+    server.await.unwrap();
+}

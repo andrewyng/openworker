@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { startHarness, createAgents, streamAnswer } from "../dist/agent.js";
 import { createApplication } from "../web/server.mjs";
 import { makePdf, modelFixture } from "./fixtures.mjs";
-test(
-  "actual Rust SDK host streams summaries and isolated PDF answers through the web API",
+for (const pdfMode of ["native", "text"]) test(
+  `actual Rust SDK host streams summaries and isolated ${pdfMode} PDF answers through the web API`,
   { skip: !process.env.OPENWORKER_EXECUTABLE, timeout: 120000 },
   async (t) => {
     const fixture = await modelFixture();
@@ -47,9 +47,10 @@ test(
       'Summarize src/main.ts: export const greeting = "hello";',
       (event) => events.push(event),
     );
-    assert.ok(events.some((e) => e.type === "delta"));
+    assert.ok(events.some((e) => e.type === "snapshot"));
     assert.match(events.at(-1).text, /src\/main.ts/);
     app = await createApplication({
+      pdfMode,
       stateDir: join(root, "web"),
       accessToken: "test-access",
     });
@@ -97,7 +98,7 @@ test(
       });
       assert.equal(r.status, 200);
       const events = (await r.text()).trim().split("\n").map(JSON.parse);
-      assert.ok(events.some((e) => e.type === "delta"));
+      assert.ok(events.some((e) => e.type === "snapshot"));
       assert.equal(events.at(-1).type, "done");
       return events.at(-1).text;
     };
@@ -114,6 +115,18 @@ test(
       !JSON.stringify(fixture.requests[2]).includes("Orbit revenue"),
       "PDF sessions must not share document content",
     );
+    const nativeFiles = fixture.requests.flatMap(request => request.input ?? [])
+      .flatMap(item => item.content ?? []).filter(part => part.type === "input_file");
+    if (pdfMode === "native") assert.ok(nativeFiles.length >= 2, "PDFs must reach the provider as native file parts");
+    else assert.equal(nativeFiles.length, 0, "Text mode must use extracted text");
+    assert.ok(nativeFiles.every(part => part.file_data.startsWith("data:application/pdf;base64,")));
+    if (pdfMode === "native") {
+      const cedarInput = (fixture.requests[2].input ?? []).flatMap(item => item.content ?? [])
+        .filter(part => part.type === "input_file")
+        .map(part => Buffer.from(part.file_data.split(",").at(-1), "base64").toString("utf8")).join("");
+      assert.match(cedarInput, /Cedar budget/);
+      assert.ok(!cedarInput.includes("Orbit revenue"));
+    }
     for (const request of fixture.requests)
       assert.deepEqual(request.tools ?? [], []);
     const unknown = await fetch(url + "/api/ask", {

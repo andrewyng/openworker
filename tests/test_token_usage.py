@@ -365,11 +365,12 @@ def test_model_context_windows_covers_verified_entries_only():
 def test_deepseek_v4_context_windows_match_provider_limits():
     windows = model_context_windows()
     expected = {
-        "deepseek:deepseek-v4-flash": 1_000_000,
-        "deepseek:deepseek-v4-pro": 1_000_000,
+        # api.deepseek.com/models context_window, read 2026-11-09 (deepseek-flash is the V4 Flash id).
+        "deepseek:deepseek-flash": 1_048_576,
+        "deepseek:deepseek-v4-pro": 1_048_576,
         "together:deepseek-ai/DeepSeek-V4-Pro": 512_000,
-        # Fireworks lists "1040k tokens" for its deployment (read 2026-10-17).
-        "fireworks:accounts/fireworks/models/deepseek-v4-pro": 1_040_000,
+        # Fireworks /v1/models context_length for its V4.1 Flash deployment (read 2026-11-09).
+        "fireworks:accounts/fireworks/models/deepseek-v4p1-flash": 1_048_576,
         "openrouter:deepseek/deepseek-v4-pro": 1_048_576,
     }
 

@@ -63,6 +63,17 @@ fn zip(name: &[u8], data: &[u8]) -> Vec<u8> {
     u16b(&mut v, 0);
     v
 }
+// Previously qualified trial archive (source SHA256 abaeac734788348ce3b5f2d9de9faec429fac4cb348ceedc75bd9e8d368c0743).
+// Old journals may observe/finish their original guard; new persistent plans
+// require the current package so an old guard cannot ignore auto-expiry policy.
+pub(super) fn compatible(p: &Plan) -> bool {
+    p.infrastructure.as_ref().is_some_and(|i| {
+        i.guard_code.sha256 == archive_sha()
+            || (p.auto_expire.is_none()
+                && i.guard_code.sha256
+                    == "f3adf51e0bea8279c36788b5740964788d9c1e1fa4d16ef9c306f2b5038b216a")
+    })
+}
 pub(super) fn archive_sha() -> String {
     hash(&zip(
         b"index.js",

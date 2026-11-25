@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Website builder · OpenWorker</title>
+<style>
+*{box-sizing:border-box}body{font:1rem/1.55 system-ui;color:#203b38;background:#f8f8f4;margin:0}
+main{max-width:58rem;margin:auto;padding:4vw 1.4rem}h1{font:3rem Georgia,serif;margin-bottom:.25rem}
+label{display:block;margin:1rem 0 .25rem;font-weight:600}input,textarea,select,button{font:inherit;border-radius:.4rem;padding:.6rem;border:1px solid #a5b8af}
+textarea,iframe{width:100%}button{background:#194f45;color:white;cursor:pointer}button:disabled{opacity:.55}
+iframe{border:1px solid #c7d4ca;background:white;min-height:22rem}output,p{display:block;white-space:pre-wrap}details{margin:1rem 0}pre{white-space:pre-wrap}
+</style><main>
+<h1>Website builder</h1><p>Describe a page, then ask a reviewer to inspect the saved files.</p>
+<form id="login"><label for="token">Project access token</label><input id="token" type="password" required autocomplete="off"> <button>Open projects</button></form>
+<form id="task" hidden><label for="project">Project</label><select id="project"></select>
+<label for="mode">Agent</label><select id="mode"><option value="build">Builder</option><option value="review-shared">Reviewer · builder’s workspace</option><option value="review-separate">Reviewer · separate workspace, same data</option></select>
+<label for="brief">Brief</label><textarea id="brief" rows="3" required>Create a garden homepage in index.html. Read the saved file to show me the preview.</textarea>
+<button>Run agent</button></form>
+<output id="status" aria-live="polite"></output><details id="activity" hidden><summary>File activity</summary><pre></pre></details>
+<iframe title="Saved homepage preview" sandbox referrerpolicy="no-referrer" hidden></iframe></main>
+<script type="module">
+const el = id => document.getElementById(id);
+const frame = document.querySelector("iframe");
+let auth = "";
+async function request(path, body) {
+  const response = await fetch(path, {method: body ? "POST" : "GET",
+    headers: {Authorization: "Bearer " + auth, "Content-Type": "application/json"},
+    ...(body && {body: JSON.stringify(body)})});
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error);
+  return data;
+}
+el("login").onsubmit = async event => {
+  event.preventDefault(); auth = el("token").value;
+  try {
+    const projects = await request("/projects");
+    el("project").replaceChildren(...projects.map(p => new Option(p.title,p.id)));
+    el("token").value=""; el("login").hidden=true; el("task").hidden=false; el("status").textContent="";
+  } catch(e) { el("status").textContent=e.message; }
+};
+el("task").onsubmit = async event => {
+  event.preventDefault(); const button=el("task").querySelector("button"); button.disabled=true;
+  frame.hidden=true; frame.removeAttribute("srcdoc"); el("activity").hidden=true; el("status").textContent="Working…";
+  try {
+    const run=await request("/projects/"+el("project").value+"/runs",{mode:el("mode").value, brief:el("brief").value});
+    el("status").textContent=[run.status,run.message].filter(Boolean).join(" · ");
+    const files=run.tools; el("activity").hidden=!files.length;
+    el("activity").querySelector("pre").textContent=files.map(t => t.name+" · "+t.status).join("\n");
+    const page=files.findLast(t=>t.status==="finished" && t.output?.path==="index.html" && typeof t.output.text==="string");
+    if(page){ frame.srcdoc='<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; img-src data:; form-action &#39;none&#39;; base-uri &#39;none&#39;">'+page.output.text; frame.hidden=false; }
+  } catch(e) {el("status").textContent=e.message;} finally {button.disabled=false;}
+};
+</script></html>

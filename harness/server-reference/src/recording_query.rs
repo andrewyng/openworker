@@ -14,6 +14,7 @@ use openworker_observability::{
 };
 use openworker_store_postgres::{
     auth::Action,
+    guardrail_query,
     run_query::{self, Run},
 };
 use serde::{Deserialize, Serialize};
@@ -41,15 +42,18 @@ pub(crate) fn authority(method: &str, path: &str) -> bool {
         .unwrap_or_else(|| path.into());
     matches!(
         path.split('/').collect::<Vec<_>>().as_slice(),
-        ["", "observability", "runs" | "summary" | "health"]
-            | [
-                "",
-                "sessions",
-                _,
-                "observability",
-                _,
-                "timeline" | "summary"
-            ]
+        [
+            "",
+            "observability",
+            "runs" | "summary" | "health" | "guardrails"
+        ] | [
+            "",
+            "sessions",
+            _,
+            "observability",
+            _,
+            "timeline" | "summary" | "children" | "subtree-summary"
+        ]
     )
 }
 pub(crate) fn action(method: &str, path: &str) -> Option<Action> {
@@ -67,8 +71,20 @@ pub(crate) fn router(prefix: &str) -> Router<App> {
         .route(&format!("{prefix}/observability/runs"), get(search))
         .route(&format!("{prefix}/observability/summary"), get(grouped))
         .route(
+            &format!("{prefix}/observability/guardrails"),
+            get(guardrails),
+        )
+        .route(
             &format!("{prefix}/sessions/:sid/observability/:turn/timeline"),
             get(timeline),
+        )
+        .route(
+            &format!("{prefix}/sessions/:sid/observability/:turn/children"),
+            get(children),
+        )
+        .route(
+            &format!("{prefix}/sessions/:sid/observability/:turn/subtree-summary"),
+            get(subtree_summary),
         )
         .route(
             &format!("{prefix}/sessions/:sid/observability/:turn/summary"),
@@ -86,6 +102,49 @@ async fn health(Extension(app): Extension<App>) -> Result<Json<Value>, ApiError>
         "exporter":app.runtime.telemetry.snapshot()
     })))
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Guardrails {
+    session_id: Option<String>,
+    turn_id: Option<String>,
+    rule: Option<String>,
+    outcome: Option<guardrail_query::Outcome>,
+    from_ms: Option<i64>,
+    limit: Option<u16>,
+    after: Option<String>,
+}
+
+async fn guardrails(
+    Extension(app): Extension<App>,
+    Query(q): Query<Guardrails>,
+) -> Result<Json<Value>, ApiError> {
+    let after = q
+        .after
+        .as_deref()
+        .map(|value| {
+            if value.len() > 512 {
+                return Err(Error::Invalid);
+            }
+            let bytes = URL_SAFE_NO_PAD.decode(value).map_err(|_| Error::Invalid)?;
+            serde_json::from_slice::<guardrail_query::Cursor>(&bytes).map_err(|_| Error::Invalid)
+        })
+        .transpose()
+        .map_err(|error| ApiError(error.into()))?;
+    let page = app.store.guardrail_findings(guardrail_query::Search {
+        session_id: q.session_id,
+        turn_id: q.turn_id,
+        rule: q.rule,
+        outcome: q.outcome,
+        from_ms: q.from_ms,
+        limit: q.limit,
+        after,
+    })?;
+    let next = page
+        .next
+        .map(|cursor| URL_SAFE_NO_PAD.encode(serde_json::to_vec(&cursor).expect("typed cursor")));
+    Ok(Json(json!({"findings":page.findings,"next_cursor":next})))
+}
+
 #[derive(Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Search {
@@ -267,6 +326,45 @@ async fn summary(
     let summary = summary::build(&page, canonical(&run));
     Ok(Json(json!({"run":run,"summary":summary})))
 }
+async fn subtree_summary(
+    Extension(app): Extension<App>,
+    Path((sid, turn)): Path<(String, String)>,
+    Query(q): Query<Summary>,
+) -> Result<Json<Value>, ApiError> {
+    use openworker_runtime::observation_links::{subtree, Run as LinkRun};
+    app.store.observation_run(&sid, &turn)?;
+    let selection = subtree(
+        LinkRun {
+            session_id: sid,
+            turn_id: turn,
+        },
+        |r| app.store.observation_children(&r.session_id, &r.turn_id),
+    )?;
+    for run in &selection.runs {
+        app.store.observation_run(&run.session_id, &run.turn_id)?;
+    }
+    let page = read(
+        &app,
+        Read {
+            deployment: app.config.schema.clone(),
+            scopes: selection
+                .runs
+                .iter()
+                .map(|r| scope(&r.session_id, &r.turn_id))
+                .collect(),
+            after: 0,
+            through: q.through,
+            limit: openworker_observability::query::MAX_SUMMARY_STEPS,
+        },
+    )
+    .await?;
+    for run in &selection.runs {
+        app.store.observation_run(&run.session_id, &run.turn_id)?;
+    }
+    Ok(Json(
+        json!({"selection":selection,"summary":summary::build(&page,Canonical::default())}),
+    ))
+}
 async fn grouped(
     Extension(app): Extension<App>,
     Query(q): Query<Search>,
@@ -329,6 +427,18 @@ async fn grouped(
     ))
 }
 
+async fn children(
+    Extension(app): Extension<App>,
+    Path((sid, turn)): Path<(String, String)>,
+) -> Result<Json<Value>, ApiError> {
+    app.store.observation_run(&sid, &turn)?;
+    let children = app.store.observation_children(&sid, &turn)?;
+    app.store.observation_run(&sid, &turn)?;
+    Ok(Json(
+        json!({"children":children,"coverage":"authorized_captured_spawn_origins_only"}),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,6 +451,8 @@ mod tests {
                 "/observability/health",
                 "/sessions/s/observability/t/timeline",
                 "/sessions/s/observability/t/summary",
+                "/sessions/s/observability/t/children",
+                "/sessions/s/observability/t/subtree-summary",
             ] {
                 let path = format!("{prefix}{path}");
                 assert!(authority("GET", &path));

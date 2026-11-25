@@ -1,11 +1,11 @@
 //! Projection v1, rebuilt from bounded immutable raw records. It is not a bill,
 //! audit ledger, or proof that absent spans/counters never existed.
 use crate::{query::Page, Step};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 pub const VERSION: u8 = 1;
 pub const MAX_GROUPS: usize = 128;
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Measure {
     pub total: Option<u64>,
     pub known: u64,
@@ -30,7 +30,7 @@ impl Measure {
         }
     }
 }
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Usage {
     pub input: Measure,
     pub output: Measure,
@@ -47,7 +47,7 @@ impl Usage {
         self.reasoning.add(u.and_then(|u| u.reasoning));
     }
 }
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Group {
     pub name: Option<String>,
     pub purpose: Option<String>,
@@ -97,9 +97,9 @@ pub struct Canonical {
     pub last_span_id: Option<String>,
     pub pending_waits: Option<u64>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Coverage {
-    pub guarantee: &'static str,
+    pub guarantee: String,
     pub scanned_steps: usize,
     pub scan_truncated: bool,
     pub group_truncated: bool,
@@ -114,7 +114,7 @@ pub struct Coverage {
     pub clock_or_range_anomaly: bool,
     pub hierarchy_incomplete: bool,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Summary {
     pub projection_version: u8,
     pub through: u64,
@@ -124,7 +124,7 @@ pub struct Summary {
     pub active_segments_accumulated_us: Measure,
     pub model_accumulated_us: Measure,
     pub tool_accumulated_us: Measure,
-    pub exclusive_observed_us: BTreeMap<&'static str, u64>,
+    pub exclusive_observed_us: BTreeMap<String, u64>,
     pub usage: Usage,
     pub models: Vec<Group>,
     pub tools: Vec<Group>,
@@ -332,7 +332,7 @@ pub fn build(page: &Page, canonical: Canonical) -> Summary {
     for (at, delta) in changes {
         if let Some(prev) = previous {
             let length = at - prev;
-            *exclusive.entry(phase(&active)).or_insert(0) += length;
+            *exclusive.entry(phase(&active).to_owned()).or_insert(0) += length;
             window += length;
         }
         for n in 0..6 {
@@ -386,7 +386,7 @@ pub fn build(page: &Page, canonical: Canonical) -> Summary {
         projection_version: VERSION,
         through: page.through,
         coverage: Coverage {
-            guarantee: "best_effort",
+            guarantee: "best_effort".into(),
             scanned_steps: page
                 .steps
                 .len()

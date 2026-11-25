@@ -16,6 +16,8 @@ pub struct BuiltinTools {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub integrations: crate::integrations::Preferences,
     #[serde(default = "one")]
     pub schema_version: u32,
     pub id: String,
@@ -50,6 +52,8 @@ pub struct Manifest {
     pub limits: Option<crate::budget::Limits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub builtin_tools: Option<BuiltinTools>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standalone_subagents: Option<crate::subagents::Config>,
 }
 fn one() -> u32 {
     1
@@ -82,6 +86,13 @@ pub fn parse(text: &str) -> Result<(Manifest, String)> {
         serde_yaml::from_str(header).context("Invalid/unsupported native coworker manifest")?;
     if let Some(l) = &m.limits {
         l.validate()?;
+    }
+    if let Some(config) = &m.standalone_subagents {
+        config.validate()?;
+        anyhow::ensure!(
+            !config.enabled || m.team_role.is_none(),
+            "Standalone delegation cannot be combined with legacy board roles"
+        );
     }
     if m.schema_version != 1 {
         bail!("Unsupported coworker schema_version; expected 1");

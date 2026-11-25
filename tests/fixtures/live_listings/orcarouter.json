@@ -1,0 +1,106 @@
+{
+ "data": [
+  {
+   "id": "anthropic/claude-fable-5",
+   "object": "model",
+   "created": 1626777600,
+   "owned_by": "Anthropic",
+   "supported_endpoint_types": [
+    "anthropic",
+    "openai"
+   ],
+   "endpoint_capabilities": [
+    "anthropic_messages",
+    "chat_completions"
+   ],
+   "name": "Anthropic: Claude Fable 5",
+   "context_length": 1000000,
+   "max_completion_tokens": 128000,
+   "architecture": {
+    "modality": "text+image+file->text",
+    "input_modalities": [
+     "text",
+     "image",
+     "file"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "top_provider": {
+    "context_length": 1000000,
+    "max_completion_tokens": 128000
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_tokens",
+    "reasoning",
+    "response_format",
+    "stop",
+    "structured_outputs",
+    "tool_choice",
+    "tools",
+    "verbosity"
+   ]
+  },
+  {
+   "id": "deepseek/deepseek-chat",
+   "object": "model",
+   "created": 1626777600,
+   "owned_by": "DeepSeek",
+   "supported_endpoint_types": [
+    "openai"
+   ],
+   "endpoint_capabilities": [
+    "chat_completions"
+   ],
+   "name": "DeepSeek: DeepSeek V3",
+   "context_length": 1048576,
+   "max_completion_tokens": 384000,
+   "architecture": {
+    "modality": "text->text",
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "top_provider": {
+    "context_length": 1048576,
+    "max_completion_tokens": 384000
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "logprobs",
+    "max_tokens",
+    "reasoning",
+    "response_format",
+    "stop",
+    "stream",
+    "stream_options",
+    "temperature",
+    "thinking",
+    "tool_choice",
+    "tools",
+    "top_logprobs",
+    "top_p",
+    "user_id"
+   ]
+  },
+  {
+   "id": "orcarouter/pod",
+   "object": "model",
+   "created": 0,
+   "owned_by": "orcarouter",
+   "supported_endpoint_types": [
+    "openai",
+    "openai-response",
+    "anthropic",
+    "gemini"
+   ]
+  }
+ ],
+ "object": "list",
+ "success": true
+}

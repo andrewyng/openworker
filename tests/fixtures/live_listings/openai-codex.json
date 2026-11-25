@@ -1,0 +1,475 @@
+{
+ "models": [
+  {
+   "slug": "gpt-reserve",
+   "prefer_websockets": true,
+   "support_verbosity": true,
+   "default_verbosity": "low",
+   "apply_patch_tool_type": "freeform",
+   "input_modalities": [
+    "text",
+    "image"
+   ],
+   "supports_image_detail_original": true,
+   "supports_parallel_tool_calls": true,
+   "multi_agent_version": "v1",
+   "multi_agent_reasoning_effort": null,
+   "use_responses_lite": true,
+   "supports_reasoning_effort_updates": false,
+   "include_skills_usage_instructions": false,
+   "include_apps_usage_instructions": true,
+   "include_plugin_usage_instructions": true,
+   "node_repl_auto_review_required": false,
+   "node_repl_disabled": false,
+   "requires_sandboxed_review": false,
+   "allow_only_codex_cloud_agent_orchestrator": false,
+   "allow_only_chatgpt_workspace_executor": false,
+   "auto_review_model_override": null,
+   "model_specialty": null,
+   "context_window": 272000,
+   "max_context_window": 872000,
+   "auto_compact_token_limit": null,
+   "default_reasoning_summary": "none",
+   "display_name": "GPT-Reserve",
+   "default_reasoning_level": "medium",
+   "supported_reasoning_levels": [
+    {
+     "effort": "low",
+     "description": "Fast responses with lighter reasoning"
+    },
+    {
+     "effort": "medium",
+     "description": "Balances speed and reasoning depth for everyday tasks"
+    },
+    {
+     "effort": "high",
+     "description": "Greater reasoning depth for complex problems"
+    },
+    {
+     "effort": "xhigh",
+     "description": "Extra high reasoning depth for complex problems"
+    },
+    {
+     "effort": "max",
+     "description": "Maximum reasoning depth for the hardest problems"
+    }
+   ],
+   "visibility": "hide",
+   "minimal_client_version": "0.144.0",
+   "supported_in_api": true,
+   "priority": 1,
+   "available_in_plans": [
+    "business",
+    "edu",
+    "edu_plus",
+    "edu_pro",
+    "education",
+    "ent26",
+    "enterprise",
+    "enterprise_cbp_automation",
+    "enterprise_cbp_trial",
+    "enterprise_cbp_usage_based",
+    "finserv",
+    "free",
+    "free_workspace",
+    "go",
+    "hc",
+    "hc_consumption",
+    "k12",
+    "law",
+    "plus",
+    "pro",
+    "prolite",
+    "promax",
+    "quorum",
+    "rosalind_academic",
+    "sci",
+    "self_serve_business_prolite",
+    "self_serve_business_usage_based",
+    "team"
+   ],
+   "supports_search_tool": true,
+   "supports_experimental_context": false,
+   "default_service_tier": null,
+   "supports_reasoning_summary_parameter": true,
+   "supports_reasoning_summaries": true
+  },
+  {
+   "slug": "gpt-6-luna",
+   "prefer_websockets": true,
+   "support_verbosity": true,
+   "default_verbosity": "low",
+   "apply_patch_tool_type": "freeform",
+   "input_modalities": [
+    "text",
+    "image"
+   ],
+   "supports_image_detail_original": true,
+   "supports_parallel_tool_calls": true,
+   "multi_agent_version": "v2",
+   "multi_agent_reasoning_effort": null,
+   "use_responses_lite": true,
+   "supports_reasoning_effort_updates": true,
+   "include_skills_usage_instructions": false,
+   "include_apps_usage_instructions": false,
+   "include_plugin_usage_instructions": false,
+   "node_repl_auto_review_required": false,
+   "node_repl_disabled": false,
+   "requires_sandboxed_review": false,
+   "allow_only_codex_cloud_agent_orchestrator": false,
+   "allow_only_chatgpt_workspace_executor": false,
+   "auto_review_model_override": null,
+   "model_specialty": null,
+   "context_window": 272000,
+   "max_context_window": 872000,
+   "auto_compact_token_limit": null,
+   "default_reasoning_summary": "none",
+   "display_name": "GPT-6-Luna",
+   "default_reasoning_level": "medium",
+   "supported_reasoning_levels": [
+    {
+     "effort": "low",
+     "description": "Fast responses with lighter reasoning"
+    },
+    {
+     "effort": "medium",
+     "description": "Balances speed and reasoning depth for everyday tasks"
+    },
+    {
+     "effort": "high",
+     "description": "Greater reasoning depth for complex problems"
+    },
+    {
+     "effort": "xhigh",
+     "description": "Extra high reasoning depth for complex problems"
+    },
+    {
+     "effort": "max",
+     "description": "Maximum reasoning depth for the hardest problems"
+    }
+   ],
+   "visibility": "list",
+   "minimal_client_version": "0.155.0",
+   "supported_in_api": true,
+   "priority": 2,
+   "available_in_plans": [
+    "business",
+    "edu",
+    "edu_plus",
+    "edu_pro",
+    "education",
+    "ent26",
+    "enterprise",
+    "enterprise_cbp_automation",
+    "enterprise_cbp_trial",
+    "enterprise_cbp_usage_based",
+    "finserv",
+    "free",
+    "free_workspace",
+    "go",
+    "hc",
+    "hc_consumption",
+    "k12",
+    "law",
+    "plus",
+    "pro",
+    "prolite",
+    "promax",
+    "quorum",
+    "rosalind_academic",
+    "sci",
+    "self_serve_business_prolite",
+    "self_serve_business_usage_based",
+    "team"
+   ],
+   "supports_search_tool": true,
+   "supports_experimental_context": false,
+   "default_service_tier": null,
+   "supports_reasoning_summary_parameter": true,
+   "supports_reasoning_summaries": true
+  },
+  {
+   "slug": "gpt-5.6-terra",
+   "prefer_websockets": true,
+   "support_verbosity": true,
+   "default_verbosity": "low",
+   "apply_patch_tool_type": "freeform",
+   "input_modalities": [
+    "text",
+    "image"
+   ],
+   "supports_image_detail_original": true,
+   "supports_parallel_tool_calls": true,
+   "multi_agent_version": "v2",
+   "multi_agent_reasoning_effort": null,
+   "use_responses_lite": true,
+   "supports_reasoning_effort_updates": false,
+   "include_skills_usage_instructions": false,
+   "include_apps_usage_instructions": true,
+   "include_plugin_usage_instructions": true,
+   "node_repl_auto_review_required": false,
+   "node_repl_disabled": false,
+   "requires_sandboxed_review": false,
+   "allow_only_codex_cloud_agent_orchestrator": false,
+   "allow_only_chatgpt_workspace_executor": false,
+   "auto_review_model_override": null,
+   "model_specialty": null,
+   "context_window": 272000,
+   "max_context_window": 872000,
+   "auto_compact_token_limit": null,
+   "default_reasoning_summary": "none",
+   "display_name": "GPT-5.6-Terra",
+   "default_reasoning_level": "medium",
+   "supported_reasoning_levels": [
+    {
+     "effort": "low",
+     "description": "Fast responses with lighter reasoning"
+    },
+    {
+     "effort": "medium",
+     "description": "Balances speed and reasoning depth for everyday tasks"
+    },
+    {
+     "effort": "high",
+     "description": "Greater reasoning depth for complex problems"
+    },
+    {
+     "effort": "xhigh",
+     "description": "Extra high reasoning depth for complex problems"
+    },
+    {
+     "effort": "max",
+     "description": "Maximum reasoning depth for the hardest problems"
+    },
+    {
+     "effort": "ultra",
+     "description": "Maximum reasoning with automatic task delegation"
+    }
+   ],
+   "visibility": "list",
+   "minimal_client_version": "0.144.0",
+   "supported_in_api": true,
+   "priority": 3,
+   "available_in_plans": [
+    "business",
+    "edu",
+    "edu_plus",
+    "edu_pro",
+    "education",
+    "ent26",
+    "enterprise",
+    "enterprise_cbp_automation",
+    "enterprise_cbp_trial",
+    "enterprise_cbp_usage_based",
+    "finserv",
+    "free",
+    "free_workspace",
+    "go",
+    "hc",
+    "hc_consumption",
+    "k12",
+    "law",
+    "plus",
+    "pro",
+    "prolite",
+    "promax",
+    "quorum",
+    "rosalind_academic",
+    "sci",
+    "self_serve_business_prolite",
+    "self_serve_business_usage_based",
+    "team"
+   ],
+   "supports_search_tool": true,
+   "supports_experimental_context": false,
+   "default_service_tier": null,
+   "supports_reasoning_summary_parameter": true,
+   "supports_reasoning_summaries": true
+  },
+  {
+   "slug": "gpt-5.6-luna",
+   "prefer_websockets": true,
+   "support_verbosity": true,
+   "default_verbosity": "low",
+   "apply_patch_tool_type": "freeform",
+   "input_modalities": [
+    "text",
+    "image"
+   ],
+   "supports_image_detail_original": true,
+   "supports_parallel_tool_calls": true,
+   "multi_agent_version": "v1",
+   "multi_agent_reasoning_effort": null,
+   "use_responses_lite": true,
+   "supports_reasoning_effort_updates": false,
+   "include_skills_usage_instructions": false,
+   "include_apps_usage_instructions": true,
+   "include_plugin_usage_instructions": true,
+   "node_repl_auto_review_required": false,
+   "node_repl_disabled": false,
+   "requires_sandboxed_review": false,
+   "allow_only_codex_cloud_agent_orchestrator": false,
+   "allow_only_chatgpt_workspace_executor": false,
+   "auto_review_model_override": null,
+   "model_specialty": null,
+   "context_window": 272000,
+   "max_context_window": 872000,
+   "auto_compact_token_limit": null,
+   "default_reasoning_summary": "none",
+   "display_name": "GPT-5.6-Luna",
+   "default_reasoning_level": "medium",
+   "supported_reasoning_levels": [
+    {
+     "effort": "low",
+     "description": "Fast responses with lighter reasoning"
+    },
+    {
+     "effort": "medium",
+     "description": "Balances speed and reasoning depth for everyday tasks"
+    },
+    {
+     "effort": "high",
+     "description": "Greater reasoning depth for complex problems"
+    },
+    {
+     "effort": "xhigh",
+     "description": "Extra high reasoning depth for complex problems"
+    },
+    {
+     "effort": "max",
+     "description": "Maximum reasoning depth for the hardest problems"
+    }
+   ],
+   "visibility": "list",
+   "minimal_client_version": "0.144.0",
+   "supported_in_api": true,
+   "priority": 4,
+   "available_in_plans": [
+    "business",
+    "edu",
+    "edu_plus",
+    "edu_pro",
+    "education",
+    "ent26",
+    "enterprise",
+    "enterprise_cbp_automation",
+    "enterprise_cbp_trial",
+    "enterprise_cbp_usage_based",
+    "finserv",
+    "free",
+    "free_workspace",
+    "go",
+    "hc",
+    "hc_consumption",
+    "k12",
+    "law",
+    "plus",
+    "pro",
+    "prolite",
+    "promax",
+    "quorum",
+    "rosalind_academic",
+    "sci",
+    "self_serve_business_prolite",
+    "self_serve_business_usage_based",
+    "team"
+   ],
+   "supports_search_tool": true,
+   "supports_experimental_context": false,
+   "default_service_tier": null,
+   "supports_reasoning_summary_parameter": true,
+   "supports_reasoning_summaries": true
+  },
+  {
+   "slug": "codex-auto-review",
+   "prefer_websockets": true,
+   "support_verbosity": true,
+   "default_verbosity": "low",
+   "apply_patch_tool_type": "freeform",
+   "input_modalities": [
+    "text",
+    "image"
+   ],
+   "supports_image_detail_original": true,
+   "supports_parallel_tool_calls": true,
+   "multi_agent_version": "v1",
+   "multi_agent_reasoning_effort": null,
+   "use_responses_lite": true,
+   "supports_reasoning_effort_updates": false,
+   "include_skills_usage_instructions": false,
+   "include_apps_usage_instructions": false,
+   "include_plugin_usage_instructions": false,
+   "node_repl_auto_review_required": false,
+   "node_repl_disabled": false,
+   "requires_sandboxed_review": false,
+   "allow_only_codex_cloud_agent_orchestrator": false,
+   "allow_only_chatgpt_workspace_executor": false,
+   "auto_review_model_override": null,
+   "model_specialty": null,
+   "context_window": 272000,
+   "max_context_window": 872000,
+   "auto_compact_token_limit": null,
+   "default_reasoning_summary": "none",
+   "display_name": "Codex Auto Review",
+   "default_reasoning_level": "medium",
+   "supported_reasoning_levels": [
+    {
+     "effort": "low",
+     "description": "Fast responses with lighter reasoning"
+    },
+    {
+     "effort": "medium",
+     "description": "Balances speed and reasoning depth for everyday tasks"
+    },
+    {
+     "effort": "high",
+     "description": "Greater reasoning depth for complex problems"
+    },
+    {
+     "effort": "xhigh",
+     "description": "Extra high reasoning depth for complex problems"
+    },
+    {
+     "effort": "max",
+     "description": "Maximum reasoning depth for the hardest problems"
+    }
+   ],
+   "visibility": "hide",
+   "minimal_client_version": "0.98.0",
+   "supported_in_api": true,
+   "priority": 5,
+   "available_in_plans": [
+    "business",
+    "edu",
+    "edu_plus",
+    "edu_pro",
+    "education",
+    "ent26",
+    "enterprise",
+    "enterprise_cbp_automation",
+    "enterprise_cbp_trial",
+    "enterprise_cbp_usage_based",
+    "finserv",
+    "go",
+    "hc",
+    "hc_consumption",
+    "law",
+    "plus",
+    "pro",
+    "prolite",
+    "promax",
+    "quorum",
+    "rosalind_academic",
+    "sci",
+    "self_serve_business_prolite",
+    "self_serve_business_usage_based",
+    "team"
+   ],
+   "supports_search_tool": true,
+   "supports_experimental_context": false,
+   "default_service_tier": null,
+   "supports_reasoning_summary_parameter": true,
+   "supports_reasoning_summaries": true
+  }
+ ]
+}

@@ -1,0 +1,59 @@
+{
+  "generatedAt": "2026-11-16",
+  "assets": [
+    {
+      "file": "connector-damage.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "eb4691f8c123c8e0edf8275e527b97c23bd86bc60d48ff8ad6426f7384194a83",
+      "synthetic": true,
+      "generation": "built-in image_gen tool",
+      "purpose": "Illustrative automotive visual inspection demo; not ground truth or a benchmark."
+    },
+    {
+      "file": "door-reference.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "d17b9388f3b9bf43e90a928ebfebd4f232d5b9aa9aa5b8bbfb29e6913990748a",
+      "synthetic": true,
+      "generation": "built-in image_gen tool",
+      "purpose": "Illustrative automotive visual inspection demo; not ground truth or a benchmark."
+    },
+    {
+      "file": "door-scratch.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "abc955aed4430f0b8cbb668e90690391f8633faeaf19dc59065d5df92c0342d3",
+      "synthetic": true,
+      "generation": "built-in image_gen tool",
+      "purpose": "Illustrative automotive visual inspection demo; not ground truth or a benchmark."
+    },
+    {
+      "file": "panel-gap.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "e5b0e4358f1ba0766a84a021de7300b9367f460dc006d26d7967d669bb8e43cb",
+      "synthetic": true,
+      "generation": "built-in image_gen tool",
+      "purpose": "Illustrative automotive visual inspection demo; not ground truth or a benchmark."
+    },
+    {
+      "file": "weld-porosity.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "0ccbd1e525e9e1428bcb065e3ca3c443d96add3834d7648718b88d2b3a3224e2",
+      "synthetic": true,
+      "generation": "built-in image_gen tool",
+      "purpose": "Illustrative automotive visual inspection demo; not ground truth or a benchmark."
+    },
+    {
+      "file": "weld-reference.png",
+      "width": 1536,
+      "height": 1024,
+      "sha256": "7f17be548657e4e6b735915c5e99d216fe7f3aef751d687281288da3a0860350",
+      "synthetic": true,
+      "generation": "built-in image_gen tool",
+      "purpose": "Illustrative automotive visual inspection demo; not ground truth or a benchmark."
+    }
+  ]
+}

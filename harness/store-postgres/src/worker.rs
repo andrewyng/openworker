@@ -91,7 +91,7 @@ impl Selector {
         crate::submissions::validate_id(&self.bundle_digest, 128)?;
         crate::submissions::validate_id(&self.fallback_model, 200)?;
         anyhow::ensure!(
-            self.model_connections.len() <= 16,
+            self.model_connections.len() <= 32,
             "Too many model connection identities"
         );
         for (id, identity) in &self.model_connections {
@@ -599,10 +599,12 @@ async fn execute_inner(
                     Err(e) => return Err(e),
                 };
                 if let Some(next) = next {
-                    if let Err(error) = runtime
-                        .dispatch("turn/start", serde_json::to_value(next)?)
-                        .await
-                    {
+                    let content = store.submission_input(sid, &next.submission_id)?;
+                    let mut request = serde_json::to_value(next)?;
+                    if let Some(content) = content {
+                        request["content"] = serde_json::to_value(content)?;
+                    }
+                    if let Err(error) = runtime.dispatch("turn/start", request).await {
                         // A control can arrive after the peek. Acceptance has
                         // committed nothing: re-read the priority path next tick,
                         // without restarting this worker or changing task IDs.

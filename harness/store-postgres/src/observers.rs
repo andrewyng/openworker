@@ -1,16 +1,9 @@
 use crate::db;
 use anyhow::{Context, Result};
-#[cfg(feature = "guardrails")]
 use serde_json::json;
 use serde_json::Value;
 impl db::Database {
     pub(crate) fn pending_observers(&mut self, sid: &str) -> Result<Vec<Value>> {
-        #[cfg(not(feature = "guardrails"))]
-        {
-            let _ = sid;
-            Ok(vec![])
-        }
-        #[cfg(feature = "guardrails")]
         {
             let epoch = self.epoch(sid)?;
             let mut tx = self.client.transaction()?;

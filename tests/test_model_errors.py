@@ -64,6 +64,26 @@ def test_quota_errors_are_translated():
     assert msg and "out of quota" in msg
 
 
+def test_withdrawn_no_tools_plan_and_busy_errors_say_to_pick_another_model():
+    """Real bodies from Google and MiniMax, 2026-11-10. Each sentence ends by pointing the
+    user at another model; nothing is remembered from it."""
+    google_gone = RuntimeError("404 NOT_FOUND. " + '{"error": {"code": 404, "message": "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements.", "status": "NOT_FOUND"}}')
+    msg = friendly_model_error("gemini:gemini-2.5-flash", google_gone)
+    assert msg and "no longer available to your account" in msg and "Pick a different model" in msg
+    minimax_gone = RuntimeError("Error code: 404 - " + '{"type":"error","error":{"type":"not_found_error","message":"The model \\"MiniMax-M2.5\\" is no longer available. (2069)"}}')
+    assert "no longer available" in friendly_model_error("minimax:MiniMax-M2.5", minimax_gone)
+    no_tools = RuntimeError("400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'Function calling is not enabled for models/antigravity-preview-latest'}}")
+    assert "can't use tools" in friendly_model_error("gemini:antigravity-preview-latest", no_tools)
+    free_tier = RuntimeError("429 RESOURCE_EXHAUSTED. " + '{"error": {"code": 429, "message": "You exceeded your current quota, please check your plan and billing details. * Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: computer-use-preview", "status": "RESOURCE_EXHAUSTED"}}')
+    assert "plan doesn't include" in friendly_model_error("gemini:gemini-2.5-computer-use-preview-10-2025", free_tier)
+    busy = RuntimeError("503 UNAVAILABLE. " + '{"error": {"code": 503, "message": "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.", "status": "UNAVAILABLE"}}')
+    msg = friendly_model_error("gemini:gemini-3.8-flash", busy)
+    assert msg and "busy at the provider" in msg and "pick a different model" in msg
+    # any provider: a 404 that names the model and says it is not found
+    other = RuntimeError("Error code: 404 - {'error': {'message': 'Model new-vendor-x1 not found'}}")
+    assert "isn't available to your account" in friendly_model_error("newvendor:new-vendor-x1", other)
+
+
 def test_unrelated_errors_pass_through_raw():
     # a plain rate-limit (429 without a quota code) must NOT be dressed up
     assert (

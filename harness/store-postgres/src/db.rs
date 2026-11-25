@@ -71,7 +71,7 @@ fn connect(config: &Config) -> Result<Client> {
         }
     };
     let millis = config.timeout.as_millis().saturating_mul(3) / 4;
-    client.batch_execute(&format!("SET statement_timeout={millis}; SET lock_timeout={millis}; SET idle_in_transaction_session_timeout={millis}; SET ow.runtime_schema='6'; SET search_path={},pg_catalog",config.schema))?;
+    client.batch_execute(&format!("SET statement_timeout={millis}; SET lock_timeout={millis}; SET idle_in_transaction_session_timeout={millis}; SET ow.runtime_schema='7'; SET search_path={},pg_catalog",config.schema))?;
     Ok(client)
 }
 pub(crate) fn migrate(config: &Config) -> Result<()> {
@@ -87,10 +87,10 @@ pub(crate) fn migrate(config: &Config) -> Result<()> {
         .get(0);
     if exists {
         let rows = tx.query("SELECT version FROM version WHERE singleton", &[])?;
-        if rows.len() != 1 || !matches!(rows[0].get::<_, i32>(0), 5 | 6) {
+        if rows.len() != 1 || !matches!(rows[0].get::<_, i32>(0), 5..=7) {
             bail!("Unsupported PostgreSQL schema version; migration required");
         }
-        if rows[0].get::<_, i32>(0) == 5 {
+        if rows[0].get::<_, i32>(0) != 7 {
             // Stop/drain all old API and worker processes before this upgrade. Never
             // revoke live execution ownership while an external action may be running.
             let active: bool = tx
@@ -100,9 +100,9 @@ pub(crate) fn migrate(config: &Config) -> Result<()> {
                 )?
                 .get(0);
             if active {
-                bail!("Stop old API/worker/SDK processes and release or expire their leases before upgrading schema 5 to 6");
+                bail!("Stop old API/worker/SDK processes and release or expire their leases before upgrading schema 5/6 to 7");
             }
-            tx.execute("UPDATE version SET version=6 WHERE singleton", &[])?;
+            tx.execute("UPDATE version SET version=7 WHERE singleton", &[])?;
         }
     } else {
         // Do not adopt/reset an unrelated partially populated schema.
@@ -116,14 +116,18 @@ pub(crate) fn migrate(config: &Config) -> Result<()> {
             bail!("Refusing to initialize a nonempty unversioned PostgreSQL schema");
         }
         tx.batch_execute(include_str!("schema.sql"))?;
-        tx.execute("INSERT INTO version VALUES(TRUE,6)", &[])?;
+        tx.execute("INSERT INTO version VALUES(TRUE,7)", &[])?;
     }
     // Optional query accelerators; explicit migration only.
     tx.batch_execute("CREATE INDEX IF NOT EXISTS submissions_recent ON submissions(created DESC,session_id DESC,sequence DESC); CREATE INDEX IF NOT EXISTS submissions_session_recent ON submissions(session_id,created DESC,sequence DESC)")?;
     // Nullable for existing submissions; queued overrides require explicit migration.
-    tx.batch_execute("ALTER TABLE submissions ADD COLUMN IF NOT EXISTS limits JSONB")?;
+    tx.batch_execute("ALTER TABLE submissions ADD COLUMN IF NOT EXISTS limits JSONB; ALTER TABLE submissions ADD COLUMN IF NOT EXISTS input_content JSONB")?;
     crate::artifacts::migrate(&mut tx)?;
     crate::auth::migrate(&mut tx)?;
+    crate::app_agents::migrate(&mut tx)?;
+    crate::evals::migrate(&mut tx)?;
+    crate::guardrail_query::migrate(&mut tx)?;
+    tx.batch_execute("ALTER TABLE api_credentials ADD COLUMN IF NOT EXISTS replaces TEXT UNIQUE REFERENCES api_credentials(id), ADD COLUMN IF NOT EXISTS app_grants JSONB")?;
     crate::compliance::migrate(&mut tx)?;
     crate::pools::migrate(&mut tx)?;
     crate::teams::migrate(&mut tx)?;
@@ -131,6 +135,7 @@ pub(crate) fn migrate(config: &Config) -> Result<()> {
     crate::agent_team::migrate(&mut tx)?;
     crate::service::migrate(&mut tx)?;
     crate::service_catalog::migrate(&mut tx)?;
+    crate::model_registry::migrate(&mut tx)?;
     crate::service_team_placements::migrate(&mut tx)?;
     crate::service_team_sources::migrate(&mut tx)?;
     crate::service_team_imports::migrate(&mut tx)?;
@@ -138,6 +143,7 @@ pub(crate) fn migrate(config: &Config) -> Result<()> {
     crate::service_team_submissions::migrate(&mut tx)?;
     crate::service_team_publications::migrate(&mut tx)?;
     tx.batch_execute("CREATE TABLE IF NOT EXISTS sdk_host_mode(singleton BOOLEAN PRIMARY KEY CHECK(singleton), mode TEXT NOT NULL CHECK(mode='sdk'))")?;
+    tx.batch_execute("CREATE TABLE IF NOT EXISTS input_attachments(session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,id TEXT NOT NULL,metadata JSONB NOT NULL,data BYTEA NOT NULL,sealed BOOLEAN NOT NULL DEFAULT false,created TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),referenced BOOLEAN NOT NULL DEFAULT false,PRIMARY KEY(session_id,id))")?;
     tx.batch_execute(include_str!("compatibility.sql"))?;
     tx.commit()?;
     Ok(())
@@ -325,7 +331,7 @@ impl Database {
     pub fn open(config: Config) -> Result<Self> {
         let mut client = connect(&config)?;
         let rows = client.query("SELECT version FROM version WHERE singleton", &[])?;
-        if rows.len() != 1 || rows[0].get::<_, i32>(0) != 6 {
+        if rows.len() != 1 || rows[0].get::<_, i32>(0) != 7 {
             bail!("Unsupported PostgreSQL schema; run explicit migration");
         }
         let owner = uuid::Uuid::new_v4().to_string();
@@ -498,7 +504,10 @@ impl Database {
             if old.storage_revision != s.storage_revision {
                 bail!("Stale session revision refused");
             }
-            if old.environment != s.environment {
+            if old.environment != s.environment
+                || old.loop_environment != s.loop_environment
+                || old.allow_workspace_reads != s.allow_workspace_reads
+            {
                 bail!("Environment binding is immutable; create a new session");
             }
             epoch
@@ -509,8 +518,26 @@ impl Database {
             if tx.execute("INSERT INTO sessions(id,data,owner,epoch,expires) VALUES($1,'{}',$2,1,clock_timestamp()+$3::bigint*interval '1 millisecond') ON CONFLICT DO NOTHING", &[&s.id,&self.owner,&self.lease_ms])?!=1 {bail!("Session already exists; claim it explicitly");}
             1
         };
+        // Controllers acquire team -> environment. Terminal reconciliation also
+        // needs the team row, so take it BEFORE write_metadata locks the bound
+        // environment. Otherwise a child save and a reception controller can
+        // deadlock (environment -> team versus team -> environment). This is a
+        // lock-order fix, not permission to retry any uncertain external action.
+        if s.closed
+            || s.turn
+                .as_ref()
+                .is_some_and(|t| openworker_runtime::store::terminal(&t.status))
+        {
+            if let Some(member) = &s.agent_team {
+                tx.query_one(
+                    "SELECT data FROM agent_teams WHERE id=$1 FOR UPDATE",
+                    &[&member.team_id],
+                )?;
+            }
+        }
         append_history(&mut tx, s)?;
         write_metadata(&mut tx, s)?;
+        openworker_runtime::subagents::terminal_saved(&mut crate::agent_team::Tx(&mut tx), s)?;
         let e = event(&mut tx, s, &self.owner, epoch, kind, data)?;
         tx.commit()?;
         self.leases.insert(s.id.clone(), epoch);
@@ -817,10 +844,13 @@ impl Database {
         let epoch = self.epoch(sid)?;
         let mut tx = self.client.transaction()?;
         let mut s = locked(&mut tx, sid, Some((&self.owner, epoch)))?;
+        if let Some(parts) = &context.content {
+            crate::input_attachments::validate_references(&mut tx, sid, parts)?;
+        }
         crate::submissions::verify(&mut tx, sid)?;
         read_history(&mut tx, &mut s)?;
         let existing = tx.query_opt(
-            "SELECT text,turn_id,status,limits FROM submissions WHERE session_id=$1 AND id=$2",
+            "SELECT text,turn_id,status,limits,input_content FROM submissions WHERE session_id=$1 AND id=$2",
             &[&sid, &key],
         )?;
         if let Some(row) = &existing {
@@ -831,6 +861,17 @@ impl Database {
                     != limits.as_ref().map(serde_json::to_value).transpose()?
             {
                 return Err(crate::SubmissionError::Conflict.into());
+            }
+            if row.get::<_, String>(2) == "queued" {
+                anyhow::ensure!(
+                    row.get::<_, Option<Value>>(4)
+                        == context
+                            .content
+                            .as_ref()
+                            .map(serde_json::to_value)
+                            .transpose()?,
+                    "Queued input content conflict"
+                );
             }
             if row.get::<_, String>(2) != "queued" {
                 let old_context_digest = tx.query_opt("SELECT data->>'context_digest' FROM events WHERE session_id=$1 AND turn_id=$2 AND kind='turn_accepted' ORDER BY cursor LIMIT 1", &[&sid,&tid])?.and_then(|r|r.get::<_,Option<String>>(0)).unwrap_or(openworker_runtime::turn_options::Context::default().digest()?);
@@ -847,6 +888,8 @@ impl Database {
                     s.turn = Some(Turn {
                         provider_error: None,
                         instruction_addendum: context.instruction_addendum.clone(),
+                        auto_approver_context: context.auto_approver_context.clone(),
+                        compaction: context.compaction.clone(),
                         output: context.output.clone(),
                         pending_safety_result: None,
                         safety: s.safety.merge(&safety.clone().unwrap_or_default())?,
@@ -912,7 +955,10 @@ impl Database {
                 s.history.push(json!({"type":"function_call_output","call_id":c["call_id"],"output":"Previous turn interrupted; action outcome unknown, do not assume success."}));
             }
         }
-        let mut input = json!({"role":"user","content":text});
+        if let Some(parts) = &context.content {
+            crate::input_attachments::retain(&mut tx, sid, parts)?;
+        }
+        let mut input = json!({"role":"user","content":context.content.as_ref().map(|p|openworker_runtime::attachments::history(p)).unwrap_or_else(||json!(text))});
         if openworker_runtime::assistant_tools::admit(
             &mut s,
             key,
@@ -934,6 +980,8 @@ impl Database {
         s.turn = Some(Turn {
             provider_error: None,
             instruction_addendum: context.instruction_addendum.clone(),
+            auto_approver_context: context.auto_approver_context.clone(),
+            compaction: context.compaction.clone(),
             output: context.output.clone(),
             pending_safety_result: None,
             safety: s.safety.merge(&safety.clone().unwrap_or_default())?,

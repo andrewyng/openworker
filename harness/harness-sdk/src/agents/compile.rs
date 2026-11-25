@@ -17,6 +17,10 @@ pub(crate) struct AgentProfile {
     pub approvals: Approvals,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub auto_skip_questions: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub never_allow_read_write_outside_workspace: bool,
+    pub auto_approver_context: Option<String>,
+    pub compaction: Option<crate::CompactionOptions>,
     pub subagents: Vec<String>,
     /// Defined only as a subagent: sessions come from its lead.
     pub worker_only: bool,
@@ -30,6 +34,9 @@ impl AgentProfile {
             description: String::new(),
             approvals: Approvals::Always,
             auto_skip_questions: false,
+            never_allow_read_write_outside_workspace: false,
+            auto_approver_context: None,
+            compaction: None,
             subagents: vec![],
             worker_only: false,
         }
@@ -103,6 +110,10 @@ pub(crate) fn compile(
                 description: agent.description.clone(),
                 approvals: agent.approvals.clone(),
                 auto_skip_questions: agent.auto_skip_questions,
+                never_allow_read_write_outside_workspace: agent
+                    .never_allow_read_write_outside_workspace,
+                auto_approver_context: agent.auto_approver_context.clone(),
+                compaction: agent.compaction.clone(),
                 subagents: agent.subagents.iter().map(|s| s.id.clone()).collect(),
                 worker_only: *role == Some(Role::Worker),
             },

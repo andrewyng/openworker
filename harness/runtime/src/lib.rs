@@ -17,11 +17,14 @@ pub mod environment_openshell;
 pub mod execution;
 pub mod history_import;
 pub mod http_mcp;
+pub mod inference_options;
+pub mod integrations;
 #[cfg(not(windows))]
 pub mod io;
 #[cfg(windows)]
 #[path = "io_windows.rs"]
 pub mod io;
+pub mod loop_channel;
 pub mod model;
 pub mod model_api;
 pub mod package;
@@ -30,7 +33,9 @@ pub mod planning;
 pub mod platform;
 pub mod protocol;
 pub mod provider;
+pub mod provider_adapters;
 pub mod provider_auth;
+pub mod replay_fixture;
 pub mod resource_policy;
 pub mod runner;
 pub mod runtime;
@@ -69,3 +74,10 @@ pub mod agent_team;
 pub use openworker_compliance as compliance;
 
 pub mod compliance_export;
+
+pub mod subagents;
+
+pub mod observation_links;
+
+pub mod attachments;
+pub mod workspaces;

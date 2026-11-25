@@ -1,0 +1,154 @@
+{
+ "data": [
+  {
+   "id": "Qwen/Qwen3.8-27B",
+   "object": "model",
+   "created": 1785918179,
+   "owned_by": "Qwen",
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "image"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "providers": [
+    {
+     "provider": "novita",
+     "status": "live",
+     "context_length": 1000000,
+     "pricing": {
+      "input": 0.42,
+      "output": 3
+     },
+     "is_free": false,
+     "supports_tools": true,
+     "supports_structured_output": false,
+     "first_token_latency_ms": 916.4,
+     "throughput": 38.307356626248534,
+     "is_model_author": false
+    },
+    {
+     "provider": "cerebras",
+     "status": "live",
+     "context_length": 65536,
+     "pricing": {
+      "input": 0.99,
+      "output": 1.49
+     },
+     "is_free": false,
+     "supports_tools": true,
+     "supports_structured_output": true,
+     "first_token_latency_ms": 265,
+     "throughput": 854.7446830446606,
+     "is_model_author": false
+    },
+    {
+     "provider": "nscale",
+     "status": "live",
+     "context_length": 1048576,
+     "pricing": {
+      "input": 0.2,
+      "output": 2.5
+     },
+     "is_free": false,
+     "supports_tools": true,
+     "supports_structured_output": true,
+     "first_token_latency_ms": 443,
+     "throughput": 116.92365221731718,
+     "is_model_author": false
+    },
+    {
+     "provider": "featherless-ai",
+     "status": "live",
+     "is_free": false,
+     "is_model_author": false
+    },
+    {
+     "provider": "ovhcloud",
+     "status": "live",
+     "context_length": 262144,
+     "pricing": {
+      "input": 0.47,
+      "output": 3.19
+     },
+     "is_free": false,
+     "supports_tools": true,
+     "supports_structured_output": false,
+     "first_token_latency_ms": 2189,
+     "throughput": 116.33075894283502,
+     "is_model_author": false
+    },
+    {
+     "provider": "deepinfra",
+     "status": "live",
+     "context_length": 262144,
+     "pricing": {
+      "input": 0.2,
+      "output": 2.5
+     },
+     "is_free": false,
+     "supports_tools": true,
+     "supports_structured_output": true,
+     "first_token_latency_ms": 385.6,
+     "throughput": 48.04278810392826,
+     "is_model_author": false
+    }
+   ]
+  },
+  {
+   "id": "meta-llama/Llama-3.1-8B-Instruct",
+   "object": "model",
+   "created": 1721292960,
+   "owned_by": "meta-llama",
+   "architecture": {
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "providers": [
+    {
+     "provider": "novita",
+     "status": "live",
+     "context_length": 16384,
+     "pricing": {
+      "input": 0.02,
+      "output": 0.05
+     },
+     "is_free": false,
+     "supports_tools": false,
+     "supports_structured_output": false,
+     "first_token_latency_ms": 497.8,
+     "throughput": 158.88592385418295,
+     "is_model_author": false
+    },
+    {
+     "provider": "featherless-ai",
+     "status": "live",
+     "is_free": false,
+     "is_model_author": false
+    },
+    {
+     "provider": "deepinfra",
+     "status": "live",
+     "context_length": 131072,
+     "pricing": {
+      "input": 0.02,
+      "output": 0.05
+     },
+     "is_free": false,
+     "supports_tools": true,
+     "supports_structured_output": false,
+     "first_token_latency_ms": 481.4,
+     "throughput": 31.467277022291437,
+     "is_model_author": false
+    }
+   ]
+  }
+ ]
+}

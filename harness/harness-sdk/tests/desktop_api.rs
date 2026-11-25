@@ -566,3 +566,145 @@ async fn managed_callback_crash_is_not_replayed_and_binding_recovers() {
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     h.shutdown().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn application_guidance_defaults_overrides_and_restart_cross_both_transports() {
+    for process in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let h = start(&root, process, Storage::Sqlite, true).await;
+        register(&h, Arc::new(AtomicUsize::new(0))).await;
+        let agent = h
+            .create_agent(
+                Agent::new("guided")
+                    .instructions("Help.")
+                    .tool("app.preview")
+                    .approvals(Approvals::Never)
+                    .auto_approver_context("AGENT_REVIEW")
+                    .compaction(CompactionOptions::additional_instructions("AGENT_SUMMARY")),
+            )
+            .await
+            .unwrap();
+        let defaults = agent.new_session().await.unwrap().snapshot().await.unwrap();
+        assert_eq!(defaults["session"]["auto_approver_context"], "AGENT_REVIEW");
+        assert_eq!(
+            defaults["session"]["compaction_config"]["additional_instructions"],
+            "AGENT_SUMMARY"
+        );
+        assert_eq!(
+            defaults["session"]["compaction_config"]["threshold_pct"],
+            0.7
+        );
+        let session = agent
+            .new_session_with(
+                SessionOptions::default()
+                    .auto_approver_context("SESSION_REVIEW")
+                    .compaction(CompactionOptions::additional_instructions(
+                        "SESSION_SUMMARY",
+                    )),
+            )
+            .await
+            .unwrap();
+        let text = format!(
+            "TEST_RESOURCE_GRANTS {}",
+            json!([{"name":"app__preview","arguments":{}}])
+        );
+        let options = TurnOptions {
+            submission_id: Some("guided-turn".into()),
+            auto_approver_context: Some("TURN_REVIEW".into()),
+            compaction: Some(CompactionOptions::additional_instructions("TURN_SUMMARY")),
+            ..Default::default()
+        };
+        assert_eq!(
+            session
+                .send_with_options(&text, options.clone())
+                .await
+                .unwrap()
+                .result()
+                .await
+                .unwrap()
+                .status,
+            RunStatus::Completed
+        );
+        assert_eq!(
+            session.snapshot().await.unwrap()["turn"]["auto_approver_context"],
+            "TURN_REVIEW"
+        );
+        assert!(session
+            .send_with_options(
+                &text,
+                TurnOptions {
+                    auto_approver_context: Some("different".into()),
+                    ..options.clone()
+                }
+            )
+            .await
+            .is_err());
+        assert!(session
+            .send_with_options(
+                &text,
+                TurnOptions {
+                    compaction: Some(CompactionOptions::additional_instructions("different")),
+                    ..options
+                }
+            )
+            .await
+            .is_err());
+        let reference = session.reference().clone();
+        h.shutdown().await.unwrap();
+        let h = start(&root, process, Storage::Sqlite, true).await;
+        register(&h, Arc::new(AtomicUsize::new(0))).await;
+        let session = h.resume(reference).await.unwrap();
+        let restored = session.snapshot().await.unwrap();
+        assert_eq!(
+            restored["session"]["auto_approver_context"],
+            "SESSION_REVIEW"
+        );
+        assert_eq!(
+            restored["session"]["compaction_config"]["additional_instructions"],
+            "SESSION_SUMMARY"
+        );
+        assert_eq!(
+            restored["turn"]["compaction"]["additional_instructions"],
+            "TURN_SUMMARY"
+        );
+        assert_eq!(
+            session
+                .send_with_options(
+                    &text,
+                    TurnOptions {
+                        auto_approver_context: Some(String::new()),
+                        compaction: Some(CompactionOptions::additional_instructions("")),
+                        ..Default::default()
+                    }
+                )
+                .await
+                .unwrap()
+                .result()
+                .await
+                .unwrap()
+                .status,
+            RunStatus::Completed
+        );
+        assert_eq!(
+            session.snapshot().await.unwrap()["turn"]["auto_approver_context"],
+            ""
+        );
+        assert_eq!(
+            session
+                .send_with_options(&text, TurnOptions::default())
+                .await
+                .unwrap()
+                .result()
+                .await
+                .unwrap()
+                .status,
+            RunStatus::Completed
+        );
+        let next = session.snapshot().await.unwrap();
+        assert!(next["turn"]["auto_approver_context"].is_null());
+        assert!(next["turn"]["compaction"].is_null());
+        assert_eq!(next["session"]["auto_approver_context"], "SESSION_REVIEW");
+        h.shutdown().await.unwrap();
+    }
+}

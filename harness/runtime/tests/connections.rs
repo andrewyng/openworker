@@ -11,6 +11,7 @@ fn memory_keys_are_not_persisted_or_listed() {
         .unwrap();
     let chosen = m
         .resolve(&Choice {
+            notify_on_session_state: None,
             connection: "test".into(),
             model: "gpt-6-sol".into(),
         })
@@ -35,6 +36,7 @@ fn rotation_preserves_identity_but_removal_and_recreation_does_not() {
     m.set(key("test", "secret-one", "memory")).unwrap();
     let chosen = m
         .resolve(&Choice {
+            notify_on_session_state: None,
             connection: "test".into(),
             model: "gpt-6-sol".into(),
         })
@@ -61,6 +63,7 @@ fn defaults_are_separate_validated_and_durable() {
         )
         .is_err());
     assert!(Choice {
+        notify_on_session_state: None,
         connection: "test".into(),
         model: "bad model".into()
     }
@@ -88,6 +91,7 @@ fn anthropic_connection_is_pinned_and_cannot_be_retyped_or_cross_wired() {
     m.set(v.clone()).unwrap();
     let selected = m
         .resolve(&Choice {
+            notify_on_session_state: None,
             connection: "claude".into(),
             model: "claude-test".into(),
         })
@@ -119,6 +123,7 @@ fn server_connections_share_identity_across_nodes_without_persisting_keys() {
         .unwrap();
     let reference = ma
         .resolve(&Choice {
+            notify_on_session_state: None,
             connection: "claude".into(),
             model: "claude-test".into(),
         })
@@ -133,6 +138,7 @@ fn server_connections_share_identity_across_nodes_without_persisting_keys() {
     .unwrap();
     let selection = ma
         .resolve(&Choice {
+            notify_on_session_state: None,
             connection: "claude".into(),
             model: "claude-test".into(),
         })
@@ -186,6 +192,7 @@ fn windows_secure_roundtrip_no_plaintext_and_scope_binding() {
         .unwrap();
     let chosen = m
         .resolve(&Choice {
+            notify_on_session_state: None,
             connection: "test".into(),
             model: "gpt-6-sol".into(),
         })
@@ -464,4 +471,45 @@ fn macos_keychain_roundtrip_and_removal() {
         .windows(b"keychain-synthetic-test-key".len())
         .any(|w| w == b"keychain-synthetic-test-key"));
     assert!(m.key(&selected).is_err());
+}
+
+#[test]
+fn concurrent_controller_connection_cache_initialization() {
+    // Two service controllers can prepare the same immutable child definition.
+    // Their local connection-cache schema must be initialized atomically.
+    for _ in 0..12 {
+        let root = tempfile::tempdir().unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+        std::thread::scope(|scope| {
+            let tasks = (0..4)
+                .map(|_| {
+                    let barrier = barrier.clone();
+                    let path = root.path();
+                    scope.spawn(move || {
+                        barrier.wait();
+                        openworker_runtime::connections::Manager::open(path)
+                            .map(|m| m.list().unwrap())
+                    })
+                })
+                .collect::<Vec<_>>();
+            for task in tasks {
+                task.join().unwrap().unwrap();
+            }
+        });
+    }
+}
+
+#[test]
+fn inference_extensions_survive_reopen() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = Manager::open(root.path()).unwrap();
+    let hint = json!({"latency":"interactive"});
+    manager.set_provider(json!({"name":"native","api":"chat-completions","base_url":"http://127.0.0.1:1/v1","inference_options":{"body":{"request_hint":hint}}})).unwrap();
+    drop(manager);
+    let manager = Manager::open(root.path()).unwrap();
+    let selected = manager.resolve(&Choice::new("native", "local")).unwrap();
+    assert_eq!(
+        manager.inference_options(&selected).unwrap().body["request_hint"],
+        hint
+    );
 }

@@ -13,9 +13,11 @@ mod guard;
 #[path = "deployment_infrastructure.rs"]
 mod infrastructure;
 #[path = "deployment_local.rs"]
-mod local;
+pub(crate) mod local;
 #[path = "deployment_preflight.rs"]
 mod preflight;
+#[path = "deployment_up.rs"]
+mod up;
 use anyhow::{bail, ensure, Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -31,6 +33,21 @@ use std::{
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Install from one YAML into an existing local kind cluster; requires kubeconfig.
+    LocalK8s {
+        #[command(subcommand)]
+        command: local::single_file::Command,
+    },
+    /// Roadmap: one-file Docker orchestration; existing Compose scripts remain available.
+    LocalDocker {
+        #[command(subcommand)]
+        command: RoadmapCommand,
+    },
+    /// Roadmap: customer-managed remote Kubernetes; not qualified yet.
+    RemoteK8s {
+        #[command(subcommand)]
+        command: RoadmapCommand,
+    },
     Guard {
         #[command(subcommand)]
         command: guard::Command,
@@ -88,7 +105,22 @@ pub enum Command {
     },
 }
 #[derive(Subcommand)]
+pub enum RoadmapCommand {
+    /// Unavailable until the mode is implemented/qualified. Never creates resources.
+    Up {
+        #[arg(long)]
+        config: PathBuf,
+    },
+    /// Show that the mode is roadmap; does not validate a runnable deployment.
+    Plan {
+        #[arg(long)]
+        config: PathBuf,
+    },
+}
+#[derive(Subcommand)]
 pub enum AwsCommand {
+    /// Provision and install from one reviewed deployment.yaml; resumes original state.
+    Up(up::Options),
     Plan(AwsPlan),
     /// Experimental lifecycle; explicit opt-in, role profile and fresh preflight.
     Lifecycle {
@@ -143,6 +175,8 @@ pub enum GcpCommand {
 }
 #[derive(Subcommand)]
 pub enum AzureCommand {
+    /// Provision and install from one reviewed deployment.yaml; resumes original state.
+    Up(up::Options),
     Plan(AzurePlan),
     /// Export reviewed identity-only bootstrap; never runs Azure commands.
     Bootstrap(azure::Bootstrap),
@@ -188,6 +222,8 @@ pub struct AzurePlan {
 }
 #[derive(Args)]
 struct PlanOptions {
+    #[arg(long, default_value_t = 2)]
+    node_count: u16,
     #[arg(long)]
     name: String,
     #[arg(long, default_value_t = 100)]
@@ -218,6 +254,9 @@ enum Target {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Budget {
     authorized_usd: u32,
+    /// New high-level deployments use plan-mode estimates, not a runtime budget.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    estimate_check_disabled: bool,
     hard_cap: bool,
     estimate: Option<u64>,
 }
@@ -240,6 +279,10 @@ struct Plan {
     target: Target,
     created_at_unix: u64,
     expires_at_unix: u64,
+    /// None preserves legacy trial semantics; false means provisioning deadline
+    /// only, never permission to destroy a persistent deployment's data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    auto_expire: Option<bool>,
     budget: Budget,
     topology: Topology,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -292,6 +335,9 @@ fn region_ok(s: &str) -> bool {
         && !parts[2].starts_with('0')
 }
 impl Plan {
+    fn expires_workload(&self) -> bool {
+        self.auto_expire.unwrap_or(true)
+    }
     fn validate(&self) -> Result<()> {
         ensure!(
             [1, 2, 3].contains(&self.schema_version),
@@ -414,16 +460,24 @@ impl Plan {
             "Expiry must be within 72 hours of plan creation"
         );
         ensure!(
-            (1..=100_000).contains(&self.budget.authorized_usd)
+            ((1..=100_000).contains(&self.budget.authorized_usd)
+                || (self.budget.estimate_check_disabled
+                    && self.budget.authorized_usd == 0
+                    && !matches!(self.target, Target::Gcp { .. })))
                 && !self.budget.hard_cap
                 && self.budget.estimate.is_none(),
             "Offline plans require a positive budget, unknown estimate, and no hard-cap claim"
         );
         ensure!(
+            (1..=16).contains(&self.topology.node_count)
+                && (!matches!(self.target, Target::Gcp { .. }) || self.topology.node_count == 2),
+            "Use 1..16 fixed AWS/Azure nodes; the GCP reference still requires two"
+        );
+        ensure!(
             self.topology
                 == Topology {
                     cluster_mode: "new".into(),
-                    node_count: 2,
+                    node_count: self.topology.node_count,
                     max_worker_replicas: 2,
                     architecture: if matches!(self.target, Target::Aws { .. }) {
                         "arm64"
@@ -455,6 +509,14 @@ impl Planner for AwsPlanner {
         let prefix = p.prefix();
         let review=format!("# {} deployment review\n\nDeployment: `{}`\nAWS account: `{}`\nRegion: `{}`\nResource prefix: `{}`\n\n## Proposed experiment\n\nNew EKS cluster; two ARM64 nodes; at most two harness worker replicas.\nPrivate access. No automatic node autoscaler. PostgreSQL and OpenShell are\nrequired dependencies. Nodes and worker replicas are separate capacity settings.\n\nBudget authorization: ${} USD. **No verified cost estimate; not a hard cap.**\nCreated (Unix seconds): {}. Fixed expiry (Unix seconds): {}.\n\n## Readiness\n\nThis is an offline plan. No AWS call or resource change has occurred.\nIt cannot be applied yet. Still required: complete scoped bootstrap policies,\ncaller/role identity, live price/quota/version checks, pinned service/UI/runner\nimages, infrastructure templates, network/storage inputs, secret references,\ncloud-side expiry guard, and a qualified cloud executor.\n\n`permissions-request.json` describes required authority; it is NOT an IAM policy.\nNo bootstrap.sh is emitted until its permissions and operations are implemented.\nThe bundle digest detects changes; it is not a digital signature.\n",
             p.name,p.deployment_id,account,region,prefix,p.budget.authorized_usd,p.created_at_unix,p.expires_at_unix);
+        let review = if p.auto_expire.is_some() || p.topology.node_count != 2 {
+            review.replace(
+                "two ARM64 nodes",
+                &format!("{} fixed ARM64 nodes", p.topology.node_count),
+            )
+        } else {
+            review
+        };
         let permissions = json!({"schemaVersion":1,"format":"ows.permission-requirements.v1","deploymentId":p.deployment_id,"target":p.target,"resourcePrefix":prefix,
           "setup":{"suggestedRoleName":format!("{prefix}-setup"),"trust":"explicit operator principal required","temporaryCredentials":true,"operations":["manage owned CloudFormation infrastructure","configure scoped EKS access and platform dependencies","install namespace-bound Helm releases"],"policyReady":false},
           "workload":{"suggestedRoleName":format!("{prefix}-artifacts"),"identity":"EKS Pod Identity","operations":["access only the deployment artifact bucket/prefix if enabled"],"sharedWithAgents":false,"policyReady":false},
@@ -501,6 +563,12 @@ fn artifacts(plan: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
     }
     if plan.azure_infrastructure.is_some() {
         files.extend(azure::infrastructure_artifacts(plan)?);
+        if plan.auto_expire.is_some() {
+            files.insert(
+                "azure-up-grants.json".into(),
+                json_bytes(&azure::up_grants(plan)?)?,
+            );
+        }
     }
     if plan.gcp_infrastructure.is_some() {
         files.extend(gcp::infrastructure_artifacts(plan)?);
@@ -597,6 +665,27 @@ fn result(p: &Plan, m: &Manifest) -> Value {
         "identityBootstrap": if p.azure_bootstrap.is_some() { "exported_azure_identity_only" } else if p.gcp_bootstrap.is_some() { "exported_gcp_identity_only" } else if p.infrastructure.is_some() { "exported_generated_execution_roles" } else if p.bootstrap.is_some() { "exported_existing_execution_role_required" } else { "not_generated" }})
 }
 pub async fn dispatch(command: &Command) -> Result<()> {
+    match command {
+        Command::LocalK8s { command } => return local::single_file::run(command).await,
+        Command::LocalDocker { .. } | Command::RemoteK8s { .. } => {
+            let mode = if matches!(command, Command::LocalDocker { .. }) {
+                "local-docker"
+            } else {
+                "remote-k8s"
+            };
+            crate::output(
+                json!({"mode":mode,"phase":"roadmap","supported":false,"mutations":0,"clusterCreated":false}),
+            )?;
+            bail!("{mode} is roadmap, not a qualified deployment mode. No resources were created. See deploy/service/examples/README.md");
+        }
+        Command::Aws {
+            command: AwsCommand::Up(o),
+        } => return up::run("aws", o).await,
+        Command::Azure {
+            command: AzureCommand::Up(o),
+        } => return up::run("azure", o).await,
+        _ => {}
+    }
     if let Command::Azure {
         command: AzureCommand::Installation { command },
     } = command
@@ -667,6 +756,12 @@ pub async fn dispatch(command: &Command) -> Result<()> {
 }
 pub fn run(command: &Command) -> Result<()> {
     match command {
+        Command::Aws {
+            command: AwsCommand::Up(_),
+        }
+        | Command::Azure {
+            command: AzureCommand::Up(_),
+        } => bail!("Deployment up requires asynchronous dispatch"),
         Command::Azure {
             command:
                 AzureCommand::Lifecycle { .. }
@@ -701,7 +796,10 @@ pub fn run(command: &Command) -> Result<()> {
             command: AwsCommand::Lifecycle { .. },
         } => bail!("Cloud lifecycle requires asynchronous dispatch"),
         Command::Guard { command } => guard::run(command),
-        Command::Local { .. } => bail!("Local installer requires asynchronous dispatch"),
+        Command::Local { .. }
+        | Command::LocalK8s { .. }
+        | Command::LocalDocker { .. }
+        | Command::RemoteK8s { .. } => bail!("Deployment mode requires asynchronous dispatch"),
         Command::Cluster { .. } => bail!("Cluster installer requires asynchronous dispatch"),
         Command::Aws {
             command: AwsCommand::Preflight(_),
@@ -839,14 +937,16 @@ fn create(
         expires_at_unix: created
             .checked_add(u64::from(a.ttl_hours) * 3600)
             .context("Expiry overflow")?,
+        auto_expire: None,
         budget: Budget {
             authorized_usd: a.budget,
+            estimate_check_disabled: false,
             hard_cap: false,
             estimate: None,
         },
         topology: Topology {
             cluster_mode: "new".into(),
-            node_count: 2,
+            node_count: a.node_count,
             max_worker_replicas: 2,
             architecture: architecture.into(),
             access: "private".into(),
@@ -939,8 +1039,10 @@ mod tests {
             },
             created_at_unix: 100,
             expires_at_unix: 200,
+            auto_expire: None,
             budget: Budget {
                 authorized_usd: 100,
+                estimate_check_disabled: false,
                 hard_cap: false,
                 estimate: None,
             },

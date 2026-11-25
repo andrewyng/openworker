@@ -289,3 +289,81 @@ test("coding defaults and submitted-source selection preserve independent checko
     await team.submissions({after:"hs_original",limit:5});assert.deepEqual(requests[2],{operation:"team_list_submissions",arguments:{after:"hs_original",limit:5}});
   }finally{service.disconnect();}
 });
+
+test("service attachments use bounded authenticated uploads before submitting references",async t=>{
+  const {Attachment}=await import("../dist/index.js");const uploads=[];let submitted;
+  const url=await server(t,(req,res)=>{
+    headers(res);
+    if(req.url==="/v1/capabilities"){res.end(JSON.stringify({apiVersion:"1",namespace:"test",serviceId:"service-one",agent:"reader",features:{attachments:true}}));return;}
+    if(handshake(req,res))return;
+    if(req.url==="/v1/agents/reader"){res.end('{"id":"reader"}');return;}
+    if(req.url==="/v1/sessions/s_one"&&req.method==="GET"){res.end('{"session":{"environment":{"environment_id":"env"}}}');return;}
+    assert.equal(req.headers.authorization,`Bearer ${token}`);
+    let raw="";req.on("data",c=>raw+=c);req.on("end",()=>{
+      const body=JSON.parse(raw);assert.ok(Buffer.byteLength(raw)<400000);
+      if(req.url.startsWith("/v1/sessions/s_one/attachments/")){uploads.push(body);res.end('{}');}
+      else {assert.equal(req.url,"/v1/sessions/s_one/turns");assert.equal(req.headers["idempotency-key"],"original-input");submitted=body;res.end('{"runId":"run-one","submissionId":"receipt-one"}');}
+    });
+  });
+  const service=await Harness.connect(options(url));
+  try{
+    const session=await service.resume({serviceId:"service-one",namespace:"test",sessionId:"s_one",agent:"reader",environmentId:"env"});
+    const run=await session.send({content:[{type:"text",text:"Before"},Attachment.fromBytes({name:"notes.txt",mediaType:"text/plain",data:Buffer.from("hello")}),{type:"text",text:"After"}]},{idempotencyKey:"original-input"});
+    assert.equal(run.id,"run-one");assert.deepEqual(uploads.map(v=>v.operation),["begin","chunk","commit"]);assert.deepEqual(submitted.content.map(v=>v.type),["text","document","text"]);assert.ok(submitted.content[1].attachment_id.startsWith("att_"));assert.ok(!JSON.stringify(submitted).includes("aGVsbG8="));
+  }finally{service.disconnect();}
+});
+
+
+test("session-scoped resume verifies the release and private loop using the session snapshot", async (t) => {
+  const url = await server(t, (req, res) => {
+    if (handshake(req, res)) return;
+    if (req.url !== "/v1/sessions/s_owned") {
+      res.writeHead(403).end();
+      return;
+    }
+    res.end(JSON.stringify({
+      service: { releaseId: "builder@1", runtimeProfile: "loop@1" },
+      session: { loopPlacement: "sandbox", loopEnvironmentId: "private", environment: { environment_id: "tools" } },
+    }));
+  });
+  const service = await Harness.connect(options(url));
+  t.after(() => service.disconnect());
+  const ref = { serviceId: "service-one", namespace: "test", sessionId: "s_owned",
+    agent: "builder@1", runtimeProfile: "loop@1", loopPlacement: "sandbox",
+    loopEnvironmentId: "private", environmentId: "tools" };
+  assert.equal((await service.resume(ref)).id, ref.sessionId);
+  await assert.rejects(service.resume({ ...ref, agent: "other" }), /release_identity_mismatch/);
+  await assert.rejects(service.resume({ ...ref, loopEnvironmentId: "other" }), /loop_identity_mismatch/);
+});
+
+test("cluster model profiles and app-owned agent revisions use scoped service routes", async (t) => {
+  const writes = [];
+  const url = await server(t, async (req, res) => {
+    if (handshake(req, res)) return;
+    headers(res);
+    if (req.method === "GET") {
+      res.end(JSON.stringify(req.url === "/v1/app-agents"
+        ? {agents:[{owner:"tester",name:"builder",releaseId:"app-catalog@2",revision:2}]}
+        : {providers:[{name:"spark",enabled:true}],profiles:[]}));
+      return;
+    }
+    let text = "";
+    for await (const chunk of req) text += chunk;
+    writes.push([req.method,req.url,req.headers["idempotency-key"],JSON.parse(text)]);
+    res.end(JSON.stringify({id:"app-catalog@2"}));
+  });
+  const s = await Harness.connect(options(url));t.after(()=>s.disconnect());
+  const provider={name:"spark",api:"chat-completions",baseUrl:"https://model.example/v1",contextLimit:8192,
+    inferenceOptions:{body:{deployment:"local"}},integrations:{scheduler:{}}};
+  await s.registerModelProvider(provider,"test-only-model-key",{idempotencyKey:"register"});
+  await s.setModelProfile("coding",{connection:"spark",model:"local-code"},{idempotencyKey:"default"});
+  const definition={instructions:"Build",tools:["coding.read_file"],runtimeProfiles:["project@1"],modelProfile:"coding"};
+  assert.equal((await s.publishAppAgent("builder",definition,{idempotencyKey:"revision"})).id,"app-catalog@2");
+  assert.equal((await s.appAgent("builder")).id,"app-catalog@2");
+  assert.equal((await s.getModelProvider("spark")).enabled,true);
+  assert.deepEqual(writes,[
+    ["POST","/v1/model-providers","register",{provider,apiKey:"test-only-model-key"}],
+    ["PUT","/v1/model-profiles/coding","default",{connection:"spark",model:"local-code"}],
+    ["POST","/v1/app-agents/builder","revision",definition],
+  ]);
+});

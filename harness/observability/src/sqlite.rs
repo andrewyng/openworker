@@ -41,6 +41,7 @@ impl Sqlite {
                 | OpenFlags::SQLITE_OPEN_NOFOLLOW,
         )?;
         db.busy_timeout(Duration::from_millis(500))?;
+        ensure!(db.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('sessions','events','submissions')", [], |r| r.get::<_, i64>(0))? == 0, "Recording database must be separate from execution storage");
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
           CREATE TABLE IF NOT EXISTS ow_observation_version(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL);")?;
         let version: Option<i64> = db
@@ -75,6 +76,299 @@ impl Sqlite {
     }
 }
 impl Store for Sqlite {
+    #[cfg(feature = "evaluations")]
+    fn register_evaluation_sink(
+        &mut self,
+        deployment: &str,
+        sink: &str,
+        binding: &str,
+    ) -> Result<()> {
+        crate::evaluations::delivery_key(deployment, sink, binding, "registration")?;
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS ow_evaluation_delivery(deployment TEXT NOT NULL,sink TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(deployment,sink))")?;
+        tx.execute(
+            "INSERT INTO ow_evaluation_delivery VALUES(?,?,?) ON CONFLICT DO NOTHING",
+            params![
+                deployment,
+                sink,
+                serde_json::to_string(&openworker_compliance::delivery::Checkpoint::new(
+                    binding.into()
+                ))?
+            ],
+        )?;
+        let raw: String = tx.query_row(
+            "SELECT data FROM ow_evaluation_delivery WHERE deployment=? AND sink=?",
+            params![deployment, sink],
+            |r| r.get(0),
+        )?;
+        let c: openworker_compliance::delivery::Checkpoint = serde_json::from_str(&raw)?;
+        ensure!(
+            c.binding == binding,
+            "Evaluation destination changed; choose a new sink name"
+        );
+        tx.commit()?;
+        Ok(())
+    }
+
+    #[cfg(feature = "evaluations")]
+    fn prune_evaluations(&mut self, deployment: &str, before_ms: u64, limit: u16) -> Result<u64> {
+        crate::query(deployment, None, 0, limit)?;
+        ensure!(before_ms <= i64::MAX as u64, "Invalid cutoff");
+        if self.db.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE name='ow_observation_evaluations'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? == 0
+        {
+            return Ok(0);
+        }
+        self.db.execute_batch("CREATE TABLE IF NOT EXISTS ow_evaluation_delivery(deployment TEXT NOT NULL,sink TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(deployment,sink))")?;
+        Ok(self.db.execute("DELETE FROM ow_observation_evaluations WHERE cursor IN(SELECT e.cursor FROM ow_observation_evaluations e WHERE e.deployment=?1 AND e.recorded_ms<?2 AND NOT EXISTS(SELECT 1 FROM ow_evaluation_delivery d WHERE d.deployment=e.deployment AND json_extract(d.data,'$.cursor')<e.cursor) ORDER BY e.cursor LIMIT ?3)",params![deployment,before_ms as i64,i64::from(limit)])? as u64)
+    }
+
+    #[cfg(feature = "evaluations")]
+    fn claim_evaluation_export(
+        &mut self,
+        deployment: &str,
+        sink: &str,
+        binding: &str,
+        token: &str,
+        now: u64,
+    ) -> Result<Option<crate::evaluations::Delivery>> {
+        use openworker_compliance::delivery::Checkpoint;
+        crate::evaluations::delivery_key(deployment, sink, binding, token)?;
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS ow_evaluation_delivery(deployment TEXT NOT NULL,sink TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(deployment,sink))")?;
+        let raw: Option<String> = tx
+            .query_row(
+                "SELECT data FROM ow_evaluation_delivery WHERE deployment=? AND sink=?",
+                params![deployment, sink],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let mut checkpoint = raw
+            .map(|s| serde_json::from_str::<Checkpoint>(&s))
+            .transpose()?
+            .unwrap_or_else(|| Checkpoint::new(binding.into()));
+        ensure!(
+            checkpoint.binding == binding,
+            "Export destination changed; choose a new sink name"
+        );
+        tx.execute(
+            "INSERT INTO ow_evaluation_delivery VALUES(?,?,?) ON CONFLICT DO NOTHING",
+            params![deployment, sink, serde_json::to_string(&checkpoint)?],
+        )?;
+        if tx.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE name='ow_observation_evaluations'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? == 0
+        {
+            tx.commit()?;
+            return Ok(None);
+        }
+        let row:Option<(i64,String)>=tx.query_row("SELECT cursor,data FROM ow_observation_evaluations WHERE deployment=? AND cursor>? ORDER BY cursor LIMIT 1",params![deployment,checkpoint.cursor],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+        let Some((cursor, data)) = row else {
+            tx.commit()?;
+            return Ok(None);
+        };
+        let claimed = checkpoint.claim(binding, token, now, cursor)?;
+        let evaluation: crate::evaluations::Evaluation = serde_json::from_str(&data)?;
+        evaluation.validate()?;
+        ensure!(
+            evaluation.deployment == deployment,
+            "Evaluation export scope mismatch"
+        );
+        tx.execute(
+            "UPDATE ow_evaluation_delivery SET data=? WHERE deployment=? AND sink=?",
+            params![serde_json::to_string(&checkpoint)?, deployment, sink],
+        )?;
+        tx.commit()?;
+        Ok(claimed.then(|| crate::evaluations::Delivery {
+            token: token.into(),
+            row: crate::evaluations::Row {
+                cursor: cursor as u64,
+                evaluation,
+            },
+        }))
+    }
+    #[cfg(feature = "evaluations")]
+    fn settle_evaluation_export(
+        &mut self,
+        deployment: &str,
+        sink: &str,
+        token: &str,
+        now: u64,
+        success: bool,
+    ) -> Result<()> {
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let raw: String = tx.query_row(
+            "SELECT data FROM ow_evaluation_delivery WHERE deployment=? AND sink=?",
+            params![deployment, sink],
+            |r| r.get(0),
+        )?;
+        let mut c: openworker_compliance::delivery::Checkpoint = serde_json::from_str(&raw)?;
+        c.settle(token, now, success)?;
+        tx.execute(
+            "UPDATE ow_evaluation_delivery SET data=? WHERE deployment=? AND sink=?",
+            params![serde_json::to_string(&c)?, deployment, sink],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    #[cfg(feature = "evaluations")]
+    fn evaluation(
+        &mut self,
+        deployment: &str,
+        id: &str,
+    ) -> Result<Option<crate::evaluations::Evaluation>> {
+        ensure!(
+            crate::identifier(deployment) && crate::label(id),
+            "Invalid evaluation identity"
+        );
+        if self.db.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE name='ow_observation_evaluations'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? == 0
+        {
+            return Ok(None);
+        }
+        let raw: Option<String> = self
+            .db
+            .query_row(
+                "SELECT data FROM ow_observation_evaluations WHERE deployment=? AND id=?",
+                params![deployment, id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        raw.map(|raw| {
+            let e: crate::evaluations::Evaluation = serde_json::from_str(&raw)?;
+            e.validate()?;
+            ensure!(
+                e.deployment == deployment && e.result.id == id,
+                "Evaluation identity mismatch"
+            );
+            Ok(e)
+        })
+        .transpose()
+    }
+    #[cfg(feature = "evaluations")]
+    fn record_evaluation_bounded(
+        &mut self,
+        value: &crate::evaluations::Evaluation,
+        max_pending: u32,
+    ) -> Result<Write> {
+        ensure!(
+            (1..=1_000_000).contains(&max_pending),
+            "Invalid evaluation export backlog limit"
+        );
+        use rusqlite::OptionalExtension;
+        value.validate()?;
+        let value = value.clone().redacted();
+        value.validate()?;
+        let data = serde_json::to_string(&value)?;
+        // Existing corrections remain idempotent even after their predecessor expires.
+        if let Some(old) = self.evaluation(&value.deployment, &value.result.id)? {
+            ensure!(old == value, "Evaluation identity conflict");
+            return Ok(Write::Duplicate);
+        }
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS ow_evaluation_delivery(deployment TEXT NOT NULL,sink TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(deployment,sink)); CREATE TABLE IF NOT EXISTS ow_observation_evaluations(cursor INTEGER PRIMARY KEY AUTOINCREMENT,deployment TEXT NOT NULL,id TEXT NOT NULL,session_hash TEXT NOT NULL,turn_hash TEXT NOT NULL,data TEXT NOT NULL,recorded_ms INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)*1000),UNIQUE(deployment,id)); CREATE INDEX IF NOT EXISTS ow_evaluation_scope ON ow_observation_evaluations(deployment,session_hash,turn_hash,cursor)")?;
+        let retained: i64 = tx.query_row(
+            "SELECT count(*) FROM ow_observation_evaluations e WHERE deployment=? AND EXISTS(SELECT 1 FROM ow_evaluation_delivery d WHERE d.deployment=e.deployment AND json_extract(d.data,'$.cursor')<e.cursor)",
+            [&value.deployment],
+            |r| r.get(0),
+        )?;
+        let exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM ow_observation_evaluations WHERE deployment=? AND id=?)",
+            params![value.deployment, value.result.id],
+            |r| r.get(0),
+        )?;
+        ensure!(
+            exists || retained < i64::from(max_pending),
+            "Pending evaluation export limit reached; restore delivery or raise the configured limit"
+        );
+        if let Some(id) = &value.result.supersedes {
+            let prior: Option<String> = tx
+                .query_row(
+                    "SELECT data FROM ow_observation_evaluations WHERE deployment=? AND id=?",
+                    params![value.deployment, id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let prior: crate::evaluations::Evaluation =
+                serde_json::from_str(&prior.context("Superseded evaluation missing")?)?;
+            ensure!(
+                prior.target == value.target,
+                "Correction must retain its target"
+            );
+        }
+        let inserted=tx.execute("INSERT INTO ow_observation_evaluations(deployment,id,session_hash,turn_hash,data) VALUES(?,?,?,?,?) ON CONFLICT(deployment,id) DO NOTHING",params![value.deployment,value.result.id,value.target.session_hash,value.target.turn_hash,data])?;
+        if inserted == 0 {
+            let old: String = tx.query_row(
+                "SELECT data FROM ow_observation_evaluations WHERE deployment=? AND id=?",
+                params![value.deployment, value.result.id],
+                |r| r.get(0),
+            )?;
+            ensure!(
+                serde_json::from_str::<crate::evaluations::Evaluation>(&old)? == value,
+                "Evaluation identity conflict"
+            );
+        }
+        tx.commit()?;
+        Ok(if inserted == 0 {
+            Write::Duplicate
+        } else {
+            Write::Inserted
+        })
+    }
+    #[cfg(feature = "evaluations")]
+    fn evaluations(&mut self, q: &crate::evaluations::Query) -> Result<crate::evaluations::Page> {
+        q.validate()?;
+        if self.db.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE name='ow_observation_evaluations'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? == 0
+        {
+            return Ok(crate::evaluations::Page {
+                results: vec![],
+                next: None,
+            });
+        }
+        let mut stmt=self.db.prepare("SELECT cursor,data FROM ow_observation_evaluations WHERE deployment=? AND session_hash=? AND turn_hash=? AND cursor>? ORDER BY cursor LIMIT ?")?;
+        let rows = stmt.query_map(
+            params![
+                q.deployment,
+                q.session_hash,
+                q.turn_hash,
+                q.after as i64,
+                i64::from(q.limit) + 1
+            ],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+        )?;
+        let rows = rows
+            .map(|r| {
+                let (cursor, data) = r?;
+                Ok(crate::evaluations::Row {
+                    cursor: cursor as u64,
+                    evaluation: serde_json::from_str(&data)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        crate::evaluations::page(rows, q)
+    }
+
     fn timeline(&mut self, q: &crate::query::Query) -> Result<crate::query::Page> {
         q.validate()?;
         let tx = self.db.transaction()?;

@@ -1,5 +1,6 @@
-//! Thin service client: no agent loop, provider credentials or local tool runner.
+// Thin service client: no agent loop, provider credentials or local tool runner.
 mod deployment;
+mod model_registry;
 mod settings;
 use anyhow::{ensure, Context, Result};
 use clap::{Parser, Subcommand};
@@ -9,7 +10,8 @@ use serde_json::{json, Value};
 use std::{path::PathBuf, time::Duration};
 #[derive(Parser)]
 #[command(
-    name = "ows",
+    name = "owcluster",
+    bin_name = "owcluster",
     version,
     about = "Manage and submit agents to OpenWorker Service"
 )]
@@ -33,10 +35,27 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Manage cluster model endpoints and named model defaults.
+    ModelProvider {
+        #[arg(long, global = true)]
+        idempotency_key: Option<String>,
+        #[command(subcommand)]
+        command: model_registry::Command,
+    },
     /// Plan/inspect cloud deployments and manage local installations without service authentication.
     Deploy {
         #[command(subcommand)]
         command: deployment::Command,
+    },
+    /// Configure the optional browser UI on an installed cluster.
+    ManagementUi {
+        #[command(subcommand)]
+        command: deployment::local::features::UICommand,
+    },
+    /// Configure optional trace storage; disabling never deletes stored traces.
+    Observability {
+        #[command(subcommand)]
+        command: deployment::local::features::ObservationCommand,
     },
     Context {
         #[command(subcommand)]
@@ -62,6 +81,11 @@ enum Command {
         after: i64,
     },
     Capabilities,
+    /// Inspect the installed catalog and manage session activation policy.
+    Integrations {
+        #[command(subcommand)]
+        command: IntegrationsCommand,
+    },
     Profile {
         #[command(subcommand)]
         command: CatalogCommand,
@@ -161,6 +185,22 @@ enum Command {
         session: String,
         #[arg(long)]
         receipt: String,
+    },
+}
+#[derive(Subcommand)]
+enum IntegrationsCommand {
+    List,
+    Policy {
+        #[command(subcommand)]
+        command: IntegrationPolicyCommand,
+    },
+}
+#[derive(Subcommand)]
+enum IntegrationPolicyCommand {
+    Set {
+        id: String,
+        #[arg(long,value_parser=["on-by-default","off-by-default","required","forbidden"])]
+        mode: String,
     },
 }
 #[derive(Subcommand)]
@@ -369,6 +409,13 @@ async fn run(args: Args) -> Result<()> {
     if let Command::Deploy { command } = &args.command {
         return deployment::dispatch(command).await;
     }
+    match &args.command {
+        Command::ManagementUi { command } => return deployment::local::features::ui(command).await,
+        Command::Observability { command } => {
+            return deployment::local::features::observability(command).await
+        }
+        _ => {}
+    }
     let mut settings = settings::Settings::load(args.config.as_ref())?;
     if let Command::Context { command } = &args.command {
         return match command {
@@ -393,7 +440,9 @@ async fn run(args: Args) -> Result<()> {
         return output(service.identity());
     }
     match args.command {
+        Command::ModelProvider{command,idempotency_key}=>model_registry::run(&service,command,key(&idempotency_key)).await?,
         Command::Whoami => output(service.identity())?,
+        Command::Integrations { command } => integrations(&service,command).await?,
         Command::Capabilities => output(service.capabilities())?,
         Command::Profile { command } => catalog(&service, "profile", command).await?,
         Command::Agent { command } => catalog(&service, "agent", command).await?,
@@ -649,7 +698,7 @@ async fn run(args: Args) -> Result<()> {
                 .control_receipt(&receipt)
                 .await?,
         )?,
-        Command::Context { .. } | Command::Login | Command::Deploy { .. } => unreachable!(),
+        Command::Context { .. } | Command::Login | Command::Deploy { .. } | Command::ManagementUi { .. } | Command::Observability { .. } => unreachable!(),
     }
     service.disconnect();
     Ok(())
@@ -713,6 +762,40 @@ async fn catalog(service: &Service, kind: &str, command: CatalogCommand) -> Resu
         }
     }
     Ok(())
+}
+
+async fn integrations(service: &Service, command: IntegrationsCommand) -> Result<()> {
+    let catalog = service
+        .capabilities()
+        .get("integrations")
+        .context("Cluster does not support runtime integrations")?;
+    let current = service.json("GET", "/v1/configuration", None, None).await?;
+    match command {
+        IntegrationsCommand::List => output(json!({
+            "registered":catalog,
+            "configured":service.capabilities()["configuredIntegrations"],
+            "policies":current["configuration"].get("integrationPolicies").cloned().unwrap_or_else(||json!({})),
+            "revision":current["revision"]
+        })),
+        IntegrationsCommand::Policy {
+            command: IntegrationPolicyCommand::Set { id, mode },
+        } => {
+            ensure!(catalog.get(&id).is_some(), "Unknown integration {id}");
+            let mut updated = current["configuration"].clone();
+            updated["integrationPolicies"][&id] = json!(mode);
+            let body = json!({"expectedRevision":current["revision"],"configuration":updated});
+            output(
+                service
+                    .json(
+                        "PUT",
+                        "/v1/configuration",
+                        Some(body),
+                        Some(&openworker_sdk::service::new_idempotency_key()),
+                    )
+                    .await?,
+            )
+        }
+    }
 }
 
 #[cfg(test)]

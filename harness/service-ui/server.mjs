@@ -34,11 +34,29 @@ export function allowed(method, path) {
   // Search text is URL encoded; path IDs remain strictly unencoded. This is
   // deliberately not a generic proxy or an arbitrary query passthrough.
   if (method === "GET" && (allowedRecording(path)||allowedCompliance(path))) return true;
+  if (path === "/v1/compliance/export") return method === "POST";
+  if (path === "/v1/compliance/delivery") return method === "GET" || method === "POST";
+  if (method === "GET" && /^\/v1\/evals\/(datasets|runs)(?:\?|$)/.test(path)) return allowedEvalList(path);
+  if (method === "GET" && /^\/v1\/evals\/(candidates|evaluators)(?:\?|$)/.test(path)) return allowedEvalSelection(path);
   if (!/^\/v1\/[A-Za-z0-9_@./?=&-]+$/.test(path) || path.includes(".."))
     return false;
   const u = new URL(path, "http://local");
   if (u.pathname + u.search !== path) return false;
   const p = u.pathname;
+  if (p.startsWith("/v1/evals/")) {
+    if (u.search) return method === "GET" && (
+      new RegExp(`^/v1/evals/datasets/${id}$`).test(p) && /^\?version=\d{1,10}$/.test(u.search) ||
+      new RegExp(`^/v1/evals/evidence/${id}/${id}$`).test(p) && new RegExp(`^\\?batch_id=${id}$`).test(u.search));
+    const tags = new RegExp(`^/v1/evals/tags/${id}(?:/${id})?$`).test(p);
+    if (method === "GET") {
+      return tags || ["/v1/evals/judge-profiles","/v1/evals/replays","/v1/evals/schedules"].includes(p)
+        || new RegExp(`^/v1/evals/(datasets/${id}(?:/(?:cases|jobs)/${id})?|evidence/${id}/${id}|(?:batches|replays)/${id})$`).test(p);
+    }
+    return method === "POST" && (tags || ["/v1/evals/cases", "/v1/evals/evaluators", "/v1/evals/batches", "/v1/evals/schedules"].includes(p) ||
+      new RegExp(`^/v1/evals/schedules/${id}$`).test(p) ||
+      new RegExp(`^/v1/evals/batches/${id}/retry$`).test(p) ||
+      new RegExp(`^/v1/evals/datasets/${id}/(?:replays|jobs|cases/${id})$`).test(p));
+  }
   if (method === "GET") {
     const list = ["/v1/sessions", "/v1/credentials", "/v1/audit"];
     const events = new RegExp(`^/v1/sessions/${id}/events(/page)?$`).test(p);
@@ -64,7 +82,7 @@ export function allowed(method, path) {
       return false;
     }
     return (
-      /^\/v1\/(capabilities|auth\/me|sessions|profiles|releases|configuration|worker-pools|credentials|audit|environments)$/.test(
+      /^\/v1\/(capabilities|auth\/me|sessions|profiles|releases|app-agents|model-providers|configuration|worker-pools|credentials|audit|environments)$/.test(
         p,
       ) ||
       new RegExp(
@@ -76,21 +94,90 @@ export function allowed(method, path) {
     );
   }
   if (u.search) return false;
-  if (method === "PUT") return p === "/v1/configuration";
+  if (method === "PUT") return p === "/v1/configuration" ||
+    new RegExp(`^/v1/(?:app-agents/${id}/sharing|model-profiles/${id})$`).test(p);
   return (
     method === "POST" &&
     (/^\/v1\/(releases|profiles|submissions|sessions|credentials)$/.test(p) ||
       new RegExp(`^/v1/(releases|profiles)/${id}/activate$`).test(p) ||
       new RegExp(`^/v1/worker-pools/${id}/scale$`).test(p) ||
-      new RegExp(`^/v1/credentials/${id}/revoke$`).test(p) ||
+      new RegExp(`^/v1/credentials/${id}/(revoke|rotate)$`).test(p) ||
       new RegExp(`^/v1/environments/${id}/delete$`).test(p) ||
       new RegExp(`^/v1/sessions/${id}/(turns|controls|close)$`).test(p))
   );
 }
+function allowedEvalSelection(path) {
+  if (path.length > 1024 || path.includes("#")) return false;
+  const url = new URL(path, "http://local");
+  if (url.pathname + url.search !== path) return false;
+  const candidates = url.pathname.endsWith("/candidates");
+  const seen = new Set();
+  for (const [key, value] of url.searchParams) {
+    if (seen.has(key)) return false;
+    seen.add(key);
+    if (candidates) {
+      if (key === "tag" && /^(?:[a-z0-9._-]{1,64}|guardrail:[A-Za-z0-9._-]{1,128})$/.test(value)) continue;
+      if (key === "from_ms" && /^\d{1,15}$/.test(value) && Number(value) <= 253402300799000) continue;
+    } else {
+      if (key === "q" && Buffer.byteLength(value) <= 100 && !/\p{Cc}/u.test(value)) continue;
+      if (key === "after" && new RegExp(`^${id}$`).test(value)) continue;
+    }
+    return false;
+  }
+  return !candidates || seen.has("tag");
+}
+function allowedEvalList(path) {
+  if (path.length > 1600 || path.includes("#")) return false;
+  const url = new URL(path, "http://local");
+  if (url.pathname + url.search !== path) return false;
+  const runs = url.pathname === "/v1/evals/runs";
+  const identifier = new RegExp(`^${id}$`);
+  const seen = new Set();
+  for (const [key, value] of url.searchParams) {
+    if (seen.has(key)) return false;
+    seen.add(key);
+    if (key === "limit" && /^(?:[1-9]|[1-4][0-9]|50)$/.test(value)) continue;
+    if (key === "after" && identifier.test(value)) continue;
+    if (key === "q" && Buffer.byteLength(value) <= 400 && !/\p{Cc}/u.test(value)) continue;
+    if (!runs && key === "owner" && value.length <= 64 && identifier.test(value)) continue;
+    if (runs && key === "dataset" && identifier.test(value)) continue;
+    if (runs && key === "status" && ["queued", "completed"].includes(value)) continue;
+    if (runs && key === "since" && /^\d{1,15}$/.test(value) && Number(value) <= 253402300799000) continue;
+    return false;
+  }
+  return true;
+}
 function allowedCompliance(path){
  if(path.length>1000||path.includes("#"))return false;
  const u=new URL(path,"http://local");
- if(u.pathname+u.search!==path||!new RegExp(`^/v1/compliance/sessions/${id}/(activities|delivery)$`).test(u.pathname))return false;
+ if(u.pathname+u.search!==path)return false;
+ const catalog = /^\/v1\/compliance\/(decisions|agents|audit|coverage)$/.exec(u.pathname)?.[1];
+ if (catalog) {
+   const keys = new Set();
+   for (const [key, value] of u.searchParams) {
+     if (keys.has(key)) return false;
+     keys.add(key);
+     if (["from_ms", "until_ms"].includes(key) && /^\d{1,15}$/.test(value)) continue;
+     if (catalog === "coverage") {
+       if (key === "release" && value.length <= 80 && /^[\w.-]+@[\w.-]+$/.test(value)) continue;
+       return false;
+     }
+     if (catalog === "agents" && key === "after" && /^[\w.@-]{0,128}:[\w.@-]{0,128}$/.test(value)) continue;
+     if (catalog === "agents") return false;
+     if (key === "q" && Buffer.byteLength(value) <= 160 && !/\p{Cc}/u.test(value)) continue;
+     if (key === "limit" && /^([1-9]\d?|100)$/.test(value)) continue;
+     if (key === "app" && /^[\w.@-]{1,128}$/.test(value)) continue;
+     if (catalog === "audit" && key === "before" && /^[1-9]\d{0,14}$/.test(value)) continue;
+     if (catalog === "audit") return false;
+     if (["agent","policy"].includes(key) && /^[\w.@:-]{1,128}$/.test(value)) continue;
+     if (key === "before_us" && /^\d{1,18}$/.test(value)) continue;
+     if (key === "before_id" && /^[\w.@-]{1,128}:[1-9]\d{0,17}$/.test(value)) continue;
+     if (key === "outcome" && ["blocked","redacted","matched","unavailable","approved","denied","alerted","would_block","shadow_unavailable"].includes(value)) continue;
+     return false;
+   }
+   return keys.has("before_id") === keys.has("before_us");
+ }
+ if(!new RegExp(`^/v1/compliance/sessions/${id}/(activities|delivery)$`).test(u.pathname))return false;
  if(u.pathname.endsWith("/delivery"))return !u.search;
  const keys=new Set();for(const [k,v] of u.searchParams){if(keys.has(k))return false;keys.add(k);if(k==="after"&&/^\d{1,15}$/.test(v))continue;if(k==="limit"&&/^[1-9]\d{0,2}$/.test(v)&&Number(v)<=500)continue;return false;}
  return true;
@@ -100,14 +187,17 @@ function allowedRecording(path) {
   const u = new URL(path, "http://local");
   if (u.pathname + u.search !== path) return false;
   const listing = /^\/v1\/observability\/(runs|summary)$/.test(u.pathname);
+  const guardrails = u.pathname === "/v1/observability/guardrails";
   const timeline = new RegExp(
     `^/v1/sessions/${id}/observability/${id}/timeline$`,
   ).test(u.pathname);
   const summary = new RegExp(
-    `^/v1/sessions/${id}/observability/${id}/summary$`,
+    `^/v1/sessions/${id}/observability/${id}/(?:summary|subtree-summary)$`,
   ).test(u.pathname);
+  const children = new RegExp(`^/v1/sessions/${id}/observability/${id}/children$`).test(u.pathname);
+  if(children) return !u.search;
   const health = u.pathname === "/v1/observability/health";
-  if (!listing && !timeline && !summary && !health) return false;
+  if (!listing && !timeline && !summary && !health && !guardrails) return false;
   try {
     decodeURIComponent(u.search.replaceAll("+", " "));
   } catch {
@@ -117,6 +207,15 @@ function allowedRecording(path) {
   for (const [key, value] of u.searchParams) {
     if (seen.has(key)) return false;
     seen.add(key);
+    if (guardrails) {
+      if (["session_id", "turn_id"].includes(key) && new RegExp(`^${id}$`).test(value) && value.length <= 80) continue;
+      if (key === "rule" && value.length > 0 && Buffer.byteLength(value) <= 128 && !/\p{Cc}/u.test(value)) continue;
+      if (key === "outcome" && ["redacted", "blocked", "matched", "unavailable", "alerted", "would_block", "shadow_unavailable"].includes(value)) continue;
+      if (key === "after" && /^[A-Za-z0-9_-]{1,512}$/.test(value)) continue;
+      if (key === "limit" && /^[1-9]\d{0,2}$/.test(value) && Number(value) <= 100) continue;
+      if (key === "from_ms" && /^\d{1,15}$/.test(value) && Number(value) <= 253402300799000) continue;
+      return false;
+    }
     if (listing) {
       if (
         key === "q" &&
@@ -484,6 +583,19 @@ export async function start(config) {
         "/index.html": ["index.html", "text/html"],
         "/app.js": ["app.js", "text/javascript"],
         "/compliance.js": ["compliance.js", "text/javascript"],
+        "/compliance-catalog.js": ["compliance-catalog.js", "text/javascript"],
+        "/policy-coverage.js": ["policy-coverage.js", "text/javascript"],
+        "/compliance.css": ["compliance.css", "text/css"],
+        "/tracing.js": ["tracing.js", "text/javascript"],
+        "/policy-rollouts.js": ["policy-rollouts.js", "text/javascript"],
+        "/guardrail-view.js": ["guardrail-view.js", "text/javascript"],
+        "/tracing.css": ["tracing.css", "text/css"],
+        "/evals.js": ["evals.js", "text/javascript"],
+        "/eval-selection.js": ["eval-selection.js", "text/javascript"],
+        "/eval-replay.js": ["eval-replay.js", "text/javascript"],
+        "/eval-schedule.js": ["eval-schedule.js", "text/javascript"],
+        "/eval-lists.js": ["eval-lists.js", "text/javascript"],
+        "/evals.css": ["evals.css", "text/css"],
         "/observability.js": ["observability.js", "text/javascript"],
         "/observability-data.js": ["observability-data.js", "text/javascript"],
         "/style.css": ["style.css", "text/css"],

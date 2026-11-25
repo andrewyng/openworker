@@ -7,6 +7,7 @@ use crate::{
 use anyhow::{ensure, Result};
 use openworker_runtime::store::TurnObservation;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -81,6 +82,8 @@ pub struct Run {
     pub model: String,
     pub status: String,
     pub created_ms: i64,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub guardrail_hit: bool,
     #[serde(skip)]
     pub observation: Option<TurnObservation>,
     #[serde(skip)]
@@ -106,6 +109,7 @@ fn run(row: &postgres::Row) -> Run {
         model: row.get::<_, Option<String>>(5).unwrap_or_default(),
         status: row.get(6),
         created_ms: row.get::<_, i64>(7) / 1000,
+        guardrail_hit: false,
         observation: None,
         pending_waits: 0,
     }
@@ -171,7 +175,17 @@ impl Database {
         } else {
             None
         };
-        let runs = rows.iter().map(run).collect();
+        let mut runs: Vec<_> = rows.iter().map(run).collect();
+        if !runs.is_empty() {
+            let sessions: BTreeSet<_> = runs.iter().map(|r| r.session_id.as_str()).collect();
+            let hits = crate::guardrail_query::hit_sessions(
+                &mut tx,
+                &sessions.into_iter().collect::<Vec<_>>(),
+            )?;
+            for run in &mut runs {
+                run.guardrail_hit = hits.contains(&run.session_id);
+            }
+        }
         tx.commit()?;
         Ok(Page {
             runs,
@@ -207,5 +221,54 @@ impl PostgresStore {
         crate::submissions::validate_id(tid, 80)?;
         let (sid, tid) = (sid.to_owned(), tid.to_owned());
         self.call(move |db| db.observation_run(&sid, &tid))
+    }
+}
+
+impl Database {
+    pub(crate) fn observation_children(
+        &mut self,
+        sid: &str,
+        tid: &str,
+    ) -> Result<Vec<openworker_runtime::observation_links::ChildLink>> {
+        let mut tx = self.client.transaction()?;
+        auth::guard(&mut tx, self.auth.as_ref(), Action::Read, Some(sid), None)?;
+        let row=tx.query_opt("SELECT t.data FROM sessions s JOIN agent_teams t ON t.id=s.data->'agent_team'->>'team_id' WHERE s.id=$1",&[&sid])?;
+        let mut visible = Vec::new();
+        if let Some(row) = row {
+            let doc = serde_json::from_value(row.get(0))?;
+            for mut child in openworker_runtime::observation_links::children(&doc, sid, tid) {
+                // Parent visibility never grants access to a child's identifiers or usage.
+                match auth::guard(
+                    &mut tx,
+                    self.auth.as_ref(),
+                    Action::Read,
+                    Some(&child.child_session_id),
+                    None,
+                ) {
+                    Ok(_) => {
+                        child.child_turn_id=tx.query_opt("SELECT turn_id FROM submissions WHERE session_id=$1 AND turn_id IS NOT NULL ORDER BY sequence LIMIT 1", &[&child.child_session_id])?.and_then(|r|r.get(0));
+                        visible.push(child);
+                    }
+                    Err(e)
+                        if matches!(
+                            e.downcast_ref::<auth::Error>(),
+                            Some(auth::Error::Forbidden)
+                        ) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(visible)
+    }
+}
+impl PostgresStore {
+    pub fn observation_children(
+        &self,
+        sid: &str,
+        tid: &str,
+    ) -> Result<Vec<openworker_runtime::observation_links::ChildLink>> {
+        let (sid, tid) = (sid.to_owned(), tid.to_owned());
+        self.call(move |db| db.observation_children(&sid, &tid))
     }
 }

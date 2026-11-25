@@ -20,6 +20,7 @@ pub struct HarnessBuilder {
     sandbox: Sandbox,
     scripted: bool,
     telemetry: Option<TelemetryConfig>,
+    recording: Option<crate::RecordingConfig>,
     options: ClientOptions,
 }
 
@@ -40,6 +41,23 @@ impl HarnessBuilder {
     }
     pub fn safety(mut self, config: crate::guardrails::Config) -> Self {
         self.desktop.safety = config;
+        self
+    }
+    pub fn integration(mut self, id: impl Into<String>, settings: serde_json::Value) -> Self {
+        self.desktop.integrations.insert(id.into(), settings);
+        self
+    }
+    pub fn integration_policy(
+        mut self,
+        id: impl Into<String>,
+        mode: crate::integrations::Mode,
+    ) -> Self {
+        self.desktop.integration_policies.insert(id.into(), mode);
+        self
+    }
+    /// Custom crates execute in the embedded host. Managed hosts register their own compiled crates.
+    pub fn integration_registry(mut self, registry: crate::integrations::Registry) -> Self {
+        self.desktop.integration_registry = registry;
         self
     }
     pub fn model_provider(mut self, provider: crate::ModelProvider) -> Self {
@@ -129,7 +147,8 @@ impl HarnessBuilder {
     ///         TelemetryHeader::literal("x-langfuse-ingestion-version", "4"),
     ///     ],
     ///     signals: vec![TelemetrySignal::Traces],
-    ///     content: ContentPolicy { capture: Capture::Full, ..ContentPolicy::default() },
+    ///     acknowledgement: TelemetryAcknowledgement::LangfuseV4,
+    ///     content: ContentPolicy { capture: Capture::Metadata, ..ContentPolicy::default() },
     ///     ..TelemetryConfig::default()
     /// });
     /// # }
@@ -138,23 +157,33 @@ impl HarnessBuilder {
         self.telemetry = Some(config);
         self
     }
+    /// Record diagnostics independently of execution storage and external export.
+    pub fn recording(mut self, config: crate::RecordingConfig) -> Self {
+        self.recording = Some(config);
+        self
+    }
     pub fn options(mut self, options: ClientOptions) -> Self {
         self.options = options;
         self
     }
 
-    fn prepare(&self) -> Result<HostConfig> {
+    fn prepare(&self, managed: bool) -> Result<HostConfig> {
         let state_dir = self
             .state_dir
             .clone()
             .map(Ok)
             .unwrap_or_else(crate::desktop::default_state_dir)?;
-        let runner = self
-            .runner
-            .clone()
-            .map(Ok)
-            .unwrap_or_else(crate::desktop::default_executable)?;
-        if !state_dir.is_absolute() || !runner.is_absolute() {
+        let tool_free = super::compile::flatten(&self.agents)?
+            .iter()
+            .all(|(_, (agent, _))| agent.tools.is_empty());
+        let runner = match &self.runner {
+            Some(path) => Some(path.clone()),
+            None if !managed && self.sandbox == Sandbox::Off && tool_free => {
+                crate::desktop::optional_default_executable()?
+            }
+            None => Some(crate::desktop::default_executable()?),
+        };
+        if !state_dir.is_absolute() || runner.as_ref().is_some_and(|p| !p.is_absolute()) {
             return Err(Error::InvalidInput(
                 "State directory and runner paths must be absolute".into(),
             ));
@@ -175,15 +204,27 @@ impl HarnessBuilder {
             sandbox: self.sandbox,
             scripted: self.scripted,
             telemetry: self.telemetry.clone(),
+            recording: self.recording.clone(),
             agents: self.agents.clone(),
         })
     }
 
     /// Run the engine inside this process (your Tokio runtime, your tools).
     pub async fn embedded(self) -> Result<Harness> {
-        let host = self.prepare()?;
+        let host = self.prepare(false)?;
         let client = HarnessClient::embedded_host(host, self.registry, self.options).await?;
         let harness = Harness::connect(client).await?;
+        if self
+            .agents
+            .iter()
+            .any(|a| a.standalone_subagents.as_ref().is_some_and(|c| c.enabled))
+            && harness.client.info()["capabilities"]["standalone_subagents"] != true
+        {
+            let _ = harness.shutdown().await;
+            return Err(Error::Setup(
+                "Update the host to enable standalone sub-agents".into(),
+            ));
+        }
         for provider in self.providers {
             if let Err(error) = harness.set_model_provider(provider).await {
                 let _ = harness.shutdown().await;
@@ -195,7 +236,12 @@ impl HarnessBuilder {
 
     /// Run the engine in an SDK-owned child process with bounded restarts.
     pub async fn managed(self, program: PathBuf, restart: RestartPolicy) -> Result<Harness> {
-        let host = self.prepare()?;
+        if !self.desktop.integration_registry.catalog().is_empty() {
+            return Err(Error::Setup(
+                "Register custom integration crates in the managed host executable".into(),
+            ));
+        }
+        let host = self.prepare(true)?;
         let client = HarnessClient::managed_host(
             HostProcessConfig {
                 program,
@@ -206,6 +252,17 @@ impl HarnessBuilder {
         )
         .await?;
         let harness = Harness::connect(client).await?;
+        if self
+            .agents
+            .iter()
+            .any(|a| a.standalone_subagents.as_ref().is_some_and(|c| c.enabled))
+            && harness.client.info()["capabilities"]["standalone_subagents"] != true
+        {
+            let _ = harness.shutdown().await;
+            return Err(Error::Setup(
+                "Update the host to enable standalone sub-agents".into(),
+            ));
+        }
         for provider in self.providers {
             if let Err(error) = harness.set_model_provider(provider).await {
                 let _ = harness.shutdown().await;
@@ -235,6 +292,13 @@ impl Harness {
     /// Register an agent after startup. Exact repeats are safe; changes need a new ID.
     pub async fn create_agent(&self, definition: Agent) -> Result<AgentHandle> {
         for a in std::iter::once(&definition).chain(definition.subagents.iter()) {
+            if a.standalone_subagents.as_ref().is_some_and(|c| c.enabled)
+                && self.client.info()["capabilities"]["standalone_subagents"] != true
+            {
+                return Err(Error::Setup(
+                    "Update the host to enable standalone sub-agents".into(),
+                ));
+            }
             if a.builtin_tools.is_some()
                 && self.client.info()["capabilities"]["builtin_tools"] != true
             {
@@ -281,6 +345,7 @@ impl Harness {
             sandbox: Sandbox::default(),
             scripted: false,
             telemetry: None,
+            recording: None,
             options: ClientOptions::default(),
         }
     }
@@ -309,6 +374,9 @@ impl Harness {
         })
     }
     /// The underlying protocol client, for anything this layer does not wrap.
+    pub fn observability(&self) -> crate::recording::Observability {
+        crate::recording::Observability::new(self.client.clone())
+    }
     pub fn client(&self) -> &HarnessClient {
         &self.client
     }

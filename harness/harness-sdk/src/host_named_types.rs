@@ -24,11 +24,28 @@ pub(super) fn scoped_agent(
     agent.description.clear();
     agent.tools = definition.tools.iter().cloned().collect();
     agent.subagents.clear();
+    agent.standalone_subagents = None;
+    if lead
+        .package
+        .standalone_subagents
+        .as_ref()
+        .is_some_and(|c| c.enabled)
+    {
+        agent.builtin_tools = Some(openworker_runtime::package::BuiltinTools {
+            ask_user: Some(false),
+            read_history: Some(false),
+        });
+        if let crate::agents::Approvals::Only(names) = &mut agent.approvals {
+            names.retain(|n| agent.tools.contains(n));
+        }
+    }
     agent.planning = false;
     agent.memory = false;
     agent.memory_scope = None;
     agent.scheduling = false;
     agent.auto_skip_questions = lead.permissions.auto_skip_questions;
+    agent.never_allow_read_write_outside_workspace =
+        lead.permissions.never_allow_read_write_outside_workspace;
     agent.model = definition.model.clone().or_else(|| {
         lead.model_selection
             .as_ref()
@@ -93,6 +110,44 @@ impl Host {
         }
         Ok(())
     }
+    pub(super) async fn runtime_for_session(&self, session: &Session) -> Result<Arc<Runtime>> {
+        let missing = match self.runtime(&session.coworker) {
+            Ok(runtime) => return Ok(runtime),
+            Err(error) => error,
+        };
+        let Some(member) = &session.agent_team else {
+            return Err(missing);
+        };
+        let lead = {
+            let mut store = self.store.lock().unwrap();
+            let doc: Document = serde_json::from_value(store.agent_team(
+                &session.id,
+                "snapshot",
+                &json!({}),
+                None,
+            )?)?;
+            let instance = doc
+                .roster
+                .instance(&member.agent_id)
+                .context("Missing runtime for a session outside the team roster")?;
+            ensure!(
+                doc.id == member.team_id
+                    && instance.session_id == session.id
+                    && openworker_runtime::agent_team::runtime_type(&doc, instance)?
+                        == session.coworker,
+                "Session runtime does not match its pinned team type"
+            );
+            let lead = doc
+                .roster
+                .instance(&doc.lead)
+                .context("Missing team lead")?;
+            store.metadata(&lead.session_id)?
+        };
+        self.refresh_named_types(&[lead]).await?;
+        self.runtime(&session.coworker)
+            .context("Session runtime did not register from its approved team type")
+    }
+
     pub(super) async fn refresh_named_types(&self, sessions: &[Session]) -> Result<()> {
         for lead in sessions.iter().filter(|s| s.agent_team.is_some()) {
             let doc: Document = serde_json::from_value(self.store.lock().unwrap().agent_team(
@@ -149,6 +204,7 @@ impl Host {
                 let store = self.store.clone();
                 let tools = self.tools.read().unwrap().clone();
                 let telemetry = self.instrumentation.clone();
+                let integrations = self.integrations.clone();
                 let connections = self.connections.clone();
                 let safety_handlers = self.safety_callbacks.registry.clone();
                 let prepared = agent.clone();
@@ -166,10 +222,10 @@ impl Host {
                     let bundle = openworker_runtime::bundle::Bundle::load_with_registry(
                         &c.bundle, &registry,
                     )?;
-                    let mut runtime = Runtime::open_instrumented(
+                    let mut runtime = Runtime::open_instrumented_optional_runner(
                         &config.state_dir.join("profiles").join(&bundle.id),
                         &c.bundle,
-                        &config.runner,
+                        config.runner.as_deref(),
                         Model::new(c.model, config.scripted).with_provider(c.provider),
                         config.sandbox,
                         c.tool_policy.as_deref(),
@@ -186,9 +242,10 @@ impl Host {
                         config.desktop.safety.clone(),
                         safety_handlers,
                     )?;
-                    Arc::get_mut(&mut runtime)
-                        .context("Scoped runtime already published")?
-                        .connections = connections;
+                    let bindings =
+                        Arc::get_mut(&mut runtime).context("Runtime shared during setup")?;
+                    bindings.integrations = integrations;
+                    bindings.connections = connections;
                     Ok((
                         runtime,
                         profiles

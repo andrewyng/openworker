@@ -24,7 +24,7 @@ pub(crate) async fn inspect(
 ) -> Result<String, ApiError> {
     inspect_with(app, sid, request, text, None).await
 }
-async fn inspect_with(
+pub(crate) async fn inspect_with(
     app: &App,
     sid: Option<&str>,
     request: &str,
@@ -36,9 +36,39 @@ async fn inspect_with(
             openworker_store_postgres::SubmissionError::InvalidRequest.into(),
         ));
     }
+    inspect_policy(app, sid, request, text, extra).await
+}
+/// UTF-8 documents have their own bounded upload limit, independent of the
+/// 32 KB conversational-text limit. Admission never claims a worker lease.
+pub(crate) async fn inspect_attachment_text(
+    app: &App,
+    sid: &str,
+    request: &str,
+    text: &str,
+) -> Result<String, ApiError> {
+    if text.len() > openworker_runtime::attachments::MAX_FILE {
+        return Err(ApiError(
+            openworker_store_postgres::SubmissionError::InvalidRequest.into(),
+        ));
+    }
+    inspect_policy(app, Some(sid), request, text, None).await
+}
+async fn inspect_policy(
+    app: &App,
+    sid: Option<&str>,
+    request: &str,
+    text: &str,
+    extra: Option<&Config>,
+) -> Result<String, ApiError> {
     let (config, pins) = if let Some(sid) = sid {
-        let (session, pins) = app.store.input_safety_policy(sid)?;
-        (app.config.safety.merge(&session)?, pins)
+        let (session, pins, admission) = app.store.input_safety_policy(sid)?;
+        (
+            app.config.safety.merge(&session)?.merge(
+                &app.runtime
+                    .integration_checks_for_session(sid, &admission)?,
+            )?,
+            pins,
+        )
     } else {
         let config: Config = app.config.safety.clone();
         let pins = app.runtime.pin_safety_models(&config)?;
@@ -48,10 +78,30 @@ async fn inspect_with(
     if !config.protects(Phase::UserInput, None) {
         return Ok(text.into());
     }
-    let _permit = app
-        .safety_readers
-        .try_acquire()
-        .map_err(|_| ApiError(InputError::Unavailable.into()))?;
+    let _permit = match app.safety_readers.try_acquire() {
+        Ok(permit) => permit,
+        Err(_) if !config.enforces(Phase::UserInput, None) => {
+            let evaluation_id = openworker_runtime::id("admission-check");
+            let findings = config
+                .matching_hooks(Phase::UserInput, None)
+                .map(|hook| openworker_runtime::safety::Finding {
+                    call_id: None,
+                    tool: None,
+                    evaluation_id: evaluation_id.clone(),
+                    phase: Phase::UserInput,
+                    check: hook.name.clone(),
+                    version: hook.version.clone(),
+                    outcome: "shadow_unavailable".into(),
+                    code: Some("GUARDRAIL_UNAVAILABLE".into()),
+                    match_count: 0,
+                    duration_ms: 0,
+                })
+                .collect::<Vec<_>>();
+            app.store.record_input_safety(sid, request, &findings)?;
+            return Ok(text.into());
+        }
+        Err(_) => return Err(ApiError(InputError::Unavailable.into())),
+    };
     let result = app
         .runtime
         .inspect_ingress(sid.unwrap_or(request), &config, &pins, text)

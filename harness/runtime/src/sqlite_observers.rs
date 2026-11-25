@@ -1,7 +1,14 @@
 use super::*;
 pub(super) fn initialize(db: &Connection) -> Result<()> {
+    install_hook_selector(db, Default::default())?;
+    install_trigger(db)
+}
+pub(super) fn install_hook_selector(
+    db: &Connection,
+    modes: crate::integrations::Policies,
+) -> Result<()> {
     use rusqlite::functions::FunctionFlags;
-    db.create_scalar_function("ow_observer_hooks", 2, FunctionFlags::SQLITE_UTF8, |ctx| {
+    db.create_scalar_function("ow_observer_hooks", 3, FunctionFlags::SQLITE_UTF8, move |ctx| {
         let raw: String = ctx.get(0)?;
         let s: Session = serde_json::from_str(&raw)
             .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
@@ -9,21 +16,38 @@ pub(super) fn initialize(db: &Connection) -> Result<()> {
         let config = s
             .safety
             .merge(
-                &s.turn
+                &s.turn.as_ref()
                     .filter(|t| Some(&t.id) == turn_id.as_ref())
-                    .map(|t| t.safety)
+                    .map(|t| t.safety.clone())
                     .unwrap_or_default(),
             )
             .map_err(|_| {
                 rusqlite::Error::UserFunctionError("Required observer unavailable".into())
             })?;
-        Ok(json!(config
-            .hooks
-            .into_iter()
-            .filter(|h| h.when == crate::safety::HookPhase::OnEvent)
-            .collect::<Vec<_>>())
-        .to_string())
+        let mut hooks = config.hooks.into_iter()
+            .filter(|hook| hook.when == crate::safety::HookPhase::OnEvent)
+            .map(serde_json::to_value)
+            .collect::<serde_json::Result<Vec<_>>>()
+            .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
+        let event_kind: String = ctx.get(2)?;
+        if crate::integrations::lifecycle_kind(&event_kind) {
+            for id in &s.integrations.observers {
+                let enabled = match modes.get(id) {
+                    Some(crate::integrations::Mode::Required) => true,
+                    Some(crate::integrations::Mode::Forbidden) => false,
+                    _ => s.integrations.choices.get(id).is_some_and(|choice|choice.enabled),
+                };
+                if enabled {
+                    hooks.push(json!({"name":format!("integration/{id}"),"version":"1","integration":id}));
+                }
+            }
+        }
+        Ok(Value::Array(hooks).to_string())
     })?;
+    Ok(())
+}
+fn install_trigger(db: &Connection) -> Result<()> {
+    use rusqlite::functions::FunctionFlags;
     db.create_scalar_function(
         "ow_observer_project",
         3,
@@ -39,7 +63,6 @@ pub(super) fn initialize(db: &Connection) -> Result<()> {
             Ok(crate::compliance::project(&parse(&s)?, &k, &parse(&d)?).to_string())
         },
     )?;
-    #[cfg(feature="guardrails")]
     db.execute_batch("CREATE TABLE IF NOT EXISTS safety_observers(session_id TEXT NOT NULL,cursor INTEGER NOT NULL,hook_name TEXT NOT NULL,hook_version TEXT NOT NULL,hook TEXT NOT NULL,record TEXT NOT NULL,turn_id TEXT,next_ms INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(session_id,cursor,hook_name,hook_version));
     DROP TRIGGER IF EXISTS safety_observer_capture;
     CREATE TRIGGER safety_observer_capture AFTER INSERT ON events
@@ -47,21 +70,15 @@ pub(super) fn initialize(db: &Connection) -> Result<()> {
     BEGIN
       INSERT OR IGNORE INTO safety_observers(session_id,cursor,hook_name,hook_version,hook,record,turn_id)
       SELECT NEW.session_id,NEW.id,json_extract(h.value,'$.name'),json_extract(h.value,'$.version'),h.value,ow_observer_project(s.data,NEW.kind,NEW.data),NEW.turn_id
-      FROM sessions s,json_each(ow_observer_hooks(s.data,NEW.turn_id)) h WHERE s.id=NEW.session_id;
+      FROM sessions s,json_each(ow_observer_hooks(s.data,NEW.turn_id,NEW.kind)) h WHERE s.id=NEW.session_id;
     END;")?;
     Ok(())
 }
 impl Store {
     pub fn pending_observers(&self, sid: &str) -> Result<Vec<Value>> {
-        #[cfg(not(feature = "guardrails"))]
-        {
-            let _ = sid;
-            Ok(vec![])
-        }
-        #[cfg(feature = "guardrails")]
         {
             self.metadata(sid)?;
-            let mut q=self.db.prepare("SELECT cursor,hook_name,hook_version,hook,record,turn_id,attempts,next_ms FROM safety_observers WHERE session_id=?1 ORDER BY next_ms,cursor,hook_name LIMIT 64")?;
+            let mut q=self.db.prepare("SELECT cursor,hook_name,hook_version,hook,record,turn_id,attempts,next_ms FROM safety_observers o WHERE session_id=?1 ORDER BY next_ms,cursor,hook_name LIMIT 64")?;
             let rows = q.query_map(params![sid], |r| {
                 Ok((
                     r.get::<_, i64>(0)?,

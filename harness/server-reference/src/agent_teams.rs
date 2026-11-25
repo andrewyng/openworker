@@ -54,6 +54,7 @@ async fn create_inner(app: App, sid: String, body: Create) -> Result<Value> {
         .context("Missing profile")?;
     let profile = app.store.catalog_get("profile", profile_id)?;
     let p: Profile = serde_json::from_value(profile.definition.clone())?;
+    ensure!(p.loop_placement.is_service(), "Team members require individually provisioned loop environments; use a service-loop profile for teams");
     ensure!(
         profile.activated && p.sharing == openworker_runtime::environment::Sharing::Shared,
         "Teams require an activated shared RuntimeProfile"
@@ -74,6 +75,7 @@ async fn create_inner(app: App, sid: String, body: Create) -> Result<Value> {
     let repository_access =
         app.config
             .repository_catalog(&app.store, &p, body.delegation.as_ref())?;
+    crate::model_registry::refresh(&app)?;
     let mut models = BTreeMap::new();
     if let Some(d) = &body.delegation {
         let release = app.store.catalog_get(
@@ -106,7 +108,11 @@ async fn create_inner(app: App, sid: String, body: Create) -> Result<Value> {
             app.store.clone(),
         )?;
         let mut parameters = json!({"coworker":rt.coworker(),"workspace":snapshot["session"]["workspace"],"environment_id":snapshot["session"]["environment"]["environment_id"],"name":kind,"permissions":{"mode":p.approval_mode,"auto_skip_questions":p.auto_skip_questions}});
-        if let Some(model) = release.default_model {
+        let chosen = match &release.model_profile {
+            Some(n) => Some(app.store.current_profile_model(n)?),
+            None => release.default_model,
+        };
+        if let Some(model) = chosen {
             parameters["model"] = json!(model);
         }
         if let Some(model) = release.reviewer_model {
@@ -173,4 +179,11 @@ pub(crate) async fn history(
         "team_read_board",
         serde_json::to_value(query).map_err(anyhow::Error::from)?,
     )?))
+}
+
+pub(crate) async fn reauthorize(
+    Extension(app): Extension<App>,
+    Path(sid): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(app.store.reauthorize_team(&sid)?))
 }

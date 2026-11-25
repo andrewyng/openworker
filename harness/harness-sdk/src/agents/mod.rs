@@ -41,6 +41,11 @@
 //! # Ok(())
 //! # }
 //! ```
+/// Observed decisions; distinct from ApprovalDecision responses sent by an app.
+pub use openworker_runtime::permissions::{
+    ApprovalDecision as ApprovalVerdict, VerdictKind as ApprovalVerdictKind,
+};
+
 mod agent_team;
 mod bundle;
 pub mod coding;
@@ -51,8 +56,8 @@ mod team;
 
 pub use crate::{
     AccessToken, ApprovalDecision, Capture, ContentPolicy, Credentials, Model, ModelChoice,
-    ModelProvider, ProviderKind, Sandbox, Storage, TelemetryConfig, TelemetryHeader,
-    TelemetrySignal, TokenRefreshReason, ToolRegistry,
+    ModelProvider, ProviderKind, Sandbox, Storage, TelemetryAcknowledgement, TelemetryConfig,
+    TelemetryHeader, TelemetrySignal, TokenRefreshReason, ToolRegistry,
 };
 pub use agent_team::{
     AgentTeam, AgentTeamRef, ChildContext, ChildOptions, ChildWorkspace, Communication,
@@ -60,8 +65,8 @@ pub use agent_team::{
 };
 pub use harness::{AgentHandle, Harness, HarnessBuilder};
 pub use session::{
-    Interruption, InterruptionKind, Response, Run, RunEvent, RunResult, RunStatus, RunStream,
-    Session, SessionInput, SessionRef, TeamRef, WorkerRef,
+    Interruption, InterruptionKind, Response, Run, RunCheckpoint, RunEvent, RunResult, RunStatus,
+    RunStream, Session, SessionInput, SessionRef, TeamRef, WorkerRef,
 };
 pub use team::{ItemSpec, ItemStatus, Team};
 
@@ -107,7 +112,9 @@ impl Approvals {
     pub(crate) fn auto_approves(&self, alias: &str) -> bool {
         // A reusable custom type needs its own exact-definition decision. An
         // interrupt_on exclusion must not silently approve arbitrary new roles.
-        if alias == openworker_runtime::team_type_catalog::TOOL {
+        if alias == openworker_runtime::team_type_catalog::TOOL
+            || alias == openworker_runtime::subagents::CREATE
+        {
             return false;
         }
         match self {
@@ -126,6 +133,8 @@ impl Approvals {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Agent {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub(crate) integrations: crate::integrations::Preferences,
     pub(crate) id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) name: Option<String>,
@@ -156,8 +165,16 @@ pub struct Agent {
     pub(crate) approvals: Approvals,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) auto_skip_questions: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) never_allow_read_write_outside_workspace: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) auto_approver_context: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) compaction: Option<crate::CompactionOptions>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) subagents: Vec<Agent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) standalone_subagents: Option<openworker_runtime::subagents::Config>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) servers: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -170,10 +187,19 @@ fn default_fallback_model() -> String {
 }
 
 impl Agent {
+    pub fn integration(
+        mut self,
+        id: impl Into<String>,
+        options: impl Into<crate::integrations::Preference>,
+    ) -> Self {
+        self.integrations.insert(id.into(), options.into());
+        self
+    }
     /// `id` is the stable identifier sessions are pinned to: ASCII letters,
     /// digits, `-` or `_`, at most 64 characters.
     pub fn new(id: impl Into<String>) -> Self {
         Self {
+            integrations: Default::default(),
             id: id.into(),
             name: None,
             description: String::new(),
@@ -190,7 +216,11 @@ impl Agent {
             scheduling: false,
             approvals: Approvals::default(),
             auto_skip_questions: false,
+            never_allow_read_write_outside_workspace: false,
+            auto_approver_context: None,
+            compaction: None,
             subagents: vec![],
+            standalone_subagents: None,
             servers: None,
             tool_policy: None,
             runtime_policy: None,
@@ -241,6 +271,7 @@ impl Agent {
     /// Default model through a named model connection (see `connection/set`).
     pub fn model(mut self, connection: impl Into<String>, model: impl Into<String>) -> Self {
         self.model = Some(ModelChoice {
+            notify_on_session_state: None,
             connection: connection.into(),
             model: model.into(),
         });
@@ -273,6 +304,14 @@ impl Agent {
         self.approvals = Approvals::Only(tools.into_iter().map(Into::into).collect());
         self
     }
+    pub fn auto_approver_context(mut self, text: impl Into<String>) -> Self {
+        self.auto_approver_context = Some(text.into());
+        self
+    }
+    pub fn compaction(mut self, options: crate::CompactionOptions) -> Self {
+        self.compaction = Some(options);
+        self
+    }
     pub fn approvals(mut self, approvals: Approvals) -> Self {
         self.approvals = approvals;
         self
@@ -292,10 +331,27 @@ impl Agent {
         self.scheduling = enabled;
         self
     }
+    /// Reject outside-workspace first-party file operations before review.
+    pub fn never_allow_read_write_outside_workspace(mut self, enabled: bool) -> Self {
+        self.never_allow_read_write_outside_workspace = enabled;
+        self
+    }
     /// Return a recorded "no human answer available" result instead of parking
     /// ask_user. This does not approve tools or invent an answer.
     pub fn auto_skip_questions(mut self, enabled: bool) -> Self {
         self.auto_skip_questions = enabled;
+        self
+    }
+    /// Allow model-created children with fresh context and delegated tools.
+    pub fn allow_subagents(mut self, enabled: bool) -> Self {
+        self.standalone_subagents = Some(openworker_runtime::subagents::Config {
+            enabled,
+            ..Default::default()
+        });
+        self
+    }
+    pub fn subagent_options(mut self, options: openworker_runtime::subagents::Config) -> Self {
+        self.standalone_subagents = Some(options);
         self
     }
     /// Add a subagent. A session of this agent becomes a team lead with one
@@ -338,6 +394,16 @@ impl Agent {
         if self.tools.len() > 64 {
             return bad(format!("Agent {} supports at most 64 tools", self.id));
         }
+        openworker_runtime::turn_options::validate_guidance(
+            "autoApproverContext",
+            self.auto_approver_context.as_deref(),
+        )
+        .map_err(|e| Error::InvalidInput(e.to_string()))?;
+        if let Some(options) = &self.compaction {
+            options
+                .validate()
+                .map_err(|e| Error::InvalidInput(e.to_string()))?;
+        }
         let mut seen = BTreeSet::new();
         for tool in &self.tools {
             openworker_tools::qualified_parts(tool)
@@ -364,6 +430,16 @@ impl Agent {
         {
             if !path.is_absolute() {
                 return bad(format!("Agent {}: policy paths must be absolute", self.id));
+            }
+        }
+        if let Some(config) = &self.standalone_subagents {
+            config
+                .validate()
+                .map_err(|e| Error::InvalidInput(e.to_string()))?;
+            if config.enabled && (nested || !self.subagents.is_empty()) {
+                return bad(
+                    "Standalone delegation cannot be combined with legacy board subagents".into(),
+                );
             }
         }
         if nested && !self.subagents.is_empty() {
@@ -398,6 +474,12 @@ impl Agent {
         Ok(())
     }
 }
+
+/// Configuration for model-created standalone children.
+pub use openworker_runtime::subagents::{
+    Config as SubagentOptions, CreationGrant as SubagentCreationGrant,
+    WorkspaceGrant as SubagentWorkspaceGrant,
+};
 
 #[cfg(test)]
 mod tool_free_tests {

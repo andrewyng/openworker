@@ -81,6 +81,8 @@ pub fn project(session: &Value, kind: &str, data: &Value) -> Value {
         "callId",
         "tool",
         "interaction_id",
+        "state_change",
+        "decision",
         "attempt_id",
         "submission_id",
         "evaluationId",

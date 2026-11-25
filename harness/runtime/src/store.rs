@@ -24,6 +24,10 @@ impl std::error::Error for HistoryCursorError {}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Interaction {
+    /// Already-checked, bounded denial context needed after recovery. No raw
+    /// policy error or tool arguments are copied here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requested_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -53,6 +57,10 @@ pub struct Turn {
     pub provider_error: Option<crate::provider::Diagnostic>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instruction_addendum: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_approver_context: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<crate::compaction::Instructions>,
     #[serde(default)]
     pub output: crate::turn_options::OutputOptions,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -95,6 +103,20 @@ pub fn now_ms() -> u64 {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Session {
+    /// Private execution binding selected only by service admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_environment: Option<crate::environment::Binding>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_workspace_reads: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_workspace_writes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::integrations::Admission::is_empty"
+    )]
+    pub integrations: crate::integrations::Admission,
     #[serde(default)]
     pub safety_models: std::collections::BTreeMap<String, crate::connections::Selection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -124,6 +146,8 @@ pub struct Session {
     pub model_selection: Option<crate::connections::Selection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reviewer_selection: Option<crate::connections::Selection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_approver_context: Option<String>,
     #[serde(default)]
     pub scripted: bool,
     pub workspace: String,
@@ -136,6 +160,9 @@ pub struct Session {
     pub interactions: Vec<Interaction>,
     pub turn: Option<Turn>,
     pub sandbox: Option<String>,
+    /// Trusted parent ownership for a shared legacy local OpenShell sandbox.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_parent: Option<String>,
     pub closed: bool,
     #[serde(default)]
     pub compaction_config: crate::compaction::Config,
@@ -210,6 +237,35 @@ pub struct Event {
 /// the runtime safe for shared workers. `recover` may only touch sessions owned
 /// exclusively by this store instance. No automatic replay of tool effects.
 pub trait StateStore: Send {
+    /// Stable, store-assigned app owner for cluster policies.
+    fn session_app(&self, _sid: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+
+    fn supports_input_attachments(&self) -> bool {
+        false
+    }
+
+    fn input_attachment(
+        &mut self,
+        _sid: &str,
+        _id: &str,
+        _request: crate::attachments::Upload,
+    ) -> Result<crate::attachments::Blob> {
+        bail!("Input attachments unsupported by this store")
+    }
+
+    fn has_turn(&self, sid: &str, tid: &str) -> Result<bool> {
+        Ok(self.metadata(sid)?.turn.is_some_and(|t| t.id == tid))
+    }
+
+    fn observation_children(
+        &self,
+        _sid: &str,
+        _tid: &str,
+    ) -> Result<Vec<crate::observation_links::ChildLink>> {
+        bail!("Spawn trace queries unsupported")
+    }
     fn pending_observers(&self, _sid: &str) -> Result<Vec<Value>> {
         Ok(vec![])
     }
@@ -461,7 +517,7 @@ impl Store {
                 [],
                 |r| r.get(0),
             )?;
-            if !(matches!(version, 7 | 8) || version == 0 && tables == 0) {
+            if !(matches!(version, 7..=9) || version == 0 && tables == 0) {
                 bail!("Incompatible runtime state schema {version}; use a fresh state directory. M1 migration is intentionally unsupported; existing data was not reset.");
             }
         }
@@ -481,6 +537,12 @@ impl Store {
     pub fn memory() -> Result<Self> {
         Self::initialize(Connection::open_in_memory()?, None)
     }
+    pub fn configure_observer_capture(
+        &self,
+        policies: crate::integrations::Policies,
+    ) -> Result<()> {
+        sqlite_observers::install_hook_selector(&self.db, policies)
+    }
     fn initialize(db: Connection, lock: Option<std::fs::File>) -> Result<Self> {
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
             BEGIN IMMEDIATE;
@@ -490,8 +552,11 @@ impl Store {
             CREATE TABLE IF NOT EXISTS submissions(session_id TEXT, submission_id TEXT, text TEXT, turn_id TEXT, PRIMARY KEY(session_id,submission_id));
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL, turn_id TEXT,kind TEXT NOT NULL,data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS session_events ON events(session_id,id);
-            PRAGMA user_version=8;
+            PRAGMA user_version=9;
             COMMIT;")?;
+        if cfg!(feature = "attachments") {
+            db.execute_batch("CREATE TABLE IF NOT EXISTS input_attachments(session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,id TEXT NOT NULL,metadata TEXT NOT NULL,data BLOB NOT NULL,sealed INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL,referenced INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(session_id,id))")?;
+        }
         sqlite_teams::migrate(&db)?;
         sqlite_assistant::migrate(&db)?;
         sqlite_agent_team::migrate(&db)?;
@@ -591,6 +656,7 @@ impl Store {
             params![s.id, serde_json::to_string(s)?],
         )?;
         sqlite_teams::finished(&tx, s)?;
+        sqlite_agent_team::terminal_saved(&tx, s)?;
         let tid = s.turn.as_ref().map(|t| t.id.clone());
         tx.execute(
             "INSERT INTO events(session_id,turn_id,kind,data) VALUES(?,?,?,?)",
@@ -822,6 +888,13 @@ impl Store {
         context: crate::turn_options::Context,
     ) -> Result<(Session, bool, Option<Event>)> {
         context.validate()?;
+        if let Some(parts) = &context.content {
+            crate::attachments::validate_references(parts, |id| {
+                let blob = self.input_blob(sid, id, crate::attachments::Upload::Stat)?;
+                anyhow::ensure!(blob.sealed, "Attachment upload is incomplete");
+                Ok(blob.metadata)
+            })?;
+        }
         let context_digest = context.digest()?;
         if let Some(config) = &safety {
             config.validate()?;
@@ -858,6 +931,8 @@ impl Store {
             s.turn = Some(Turn {
                 provider_error: None,
                 instruction_addendum: context.instruction_addendum.clone(),
+                auto_approver_context: context.auto_approver_context.clone(),
+                compaction: context.compaction.clone(),
                 output: context.output.clone(),
                 pending_safety_result: None,
                 safety: s.safety.merge(&safety.clone().unwrap_or_default())?,
@@ -896,7 +971,7 @@ impl Store {
                 s.history.push(json!({"type":"function_call_output","call_id":c["call_id"],"output":"Previous turn interrupted; action outcome unknown, do not assume success."}));
             }
         }
-        let mut input = json!({"role":"user","content":text});
+        let mut input = json!({"role":"user","content":context.content.as_ref().map(|p|crate::attachments::history(p)).unwrap_or_else(||json!(text))});
         if crate::assistant_tools::admit(&mut s, key, text, crate::assistant_tools::now())? {
             input["_runtime_notice"] = json!("scheduled_task");
         }
@@ -919,6 +994,8 @@ impl Store {
         s.turn = Some(Turn {
             provider_error: None,
             instruction_addendum: context.instruction_addendum.clone(),
+            auto_approver_context: context.auto_approver_context.clone(),
+            compaction: context.compaction.clone(),
             output: context.output.clone(),
             pending_safety_result: None,
             safety: s.safety.merge(&safety.clone().unwrap_or_default())?,
@@ -938,6 +1015,18 @@ impl Store {
         });
         let tx = self.db.transaction()?;
         sqlite_agent_team::ensure_admission(&tx, &s)?;
+        if let Some(parts) = &context.content {
+            for part in parts {
+                if let crate::attachments::Part::Image { attachment_id }
+                | crate::attachments::Part::Document { attachment_id } = part
+                {
+                    tx.execute(
+                        "UPDATE input_attachments SET referenced=1 WHERE session_id=? AND id=?",
+                        params![sid, attachment_id],
+                    )?;
+                }
+            }
+        }
         Self::append_history(&tx, &s)?;
         tx.execute("UPDATE team_queue SET status='accepted' WHERE session_id=? AND id=? AND status='queued'", params![sid,key])?;
         tx.execute(
@@ -1064,6 +1153,53 @@ impl Store {
 }
 
 impl StateStore for Store {
+    fn supports_input_attachments(&self) -> bool {
+        cfg!(feature = "attachments")
+    }
+
+    fn input_attachment(
+        &mut self,
+        sid: &str,
+        id: &str,
+        request: crate::attachments::Upload,
+    ) -> Result<crate::attachments::Blob> {
+        self.input_blob(sid, id, request)
+    }
+
+    fn has_turn(&self, sid: &str, tid: &str) -> Result<bool> {
+        self.metadata(sid)?;
+        Ok(self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM submissions WHERE session_id=? AND turn_id=?)",
+            params![sid, tid],
+            |r| r.get(0),
+        )?)
+    }
+
+    fn observation_children(
+        &self,
+        sid: &str,
+        tid: &str,
+    ) -> Result<Vec<crate::observation_links::ChildLink>> {
+        let session = self.metadata(sid)?;
+        let Some(member) = session.agent_team else {
+            return Ok(vec![]);
+        };
+        let raw: String = self.db.query_row(
+            "SELECT data FROM agent_teams WHERE id=?",
+            [member.team_id],
+            |r| r.get(0),
+        )?;
+        let mut children =
+            crate::observation_links::children(&serde_json::from_str(&raw)?, sid, tid);
+        for child in &mut children {
+            child.child_turn_id = self.db.query_row(
+                "SELECT turn_id FROM events WHERE session_id=? AND kind='turn_accepted' ORDER BY id LIMIT 1",
+                [&child.child_session_id], |r| r.get(0),
+            ).optional()?.flatten();
+        }
+        Ok(children)
+    }
+
     fn pending_observers(&self, sid: &str) -> Result<Vec<Value>> {
         Store::pending_observers(self, sid)
     }
@@ -1255,5 +1391,80 @@ impl StateStore for Store {
     }
     fn recover(&mut self) -> Result<()> {
         Store::recover(self)
+    }
+}
+
+impl Store {
+    fn input_blob(
+        &mut self,
+        sid: &str,
+        id: &str,
+        request: crate::attachments::Upload,
+    ) -> Result<crate::attachments::Blob> {
+        use crate::attachments::*;
+        anyhow::ensure!(cfg!(feature = "attachments"), "Attachments disabled");
+        let session = self.metadata(sid)?;
+        let stat = matches!(&request, Upload::Stat);
+        let writable = !stat && !session.closed;
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if writable {
+            tx.execute(
+                "DELETE FROM input_attachments WHERE session_id=? AND referenced=0 AND created<?",
+                params![sid, now_ms().saturating_sub(86400000)],
+            )?;
+        }
+        let old = tx
+            .query_row(
+                "SELECT metadata,data,sealed FROM input_attachments WHERE session_id=? AND id=?",
+                params![sid, id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, Vec<u8>>(1)?,
+                        r.get::<_, bool>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .map(|(m, bytes, sealed)| -> Result<_> {
+                Ok(Blob {
+                    metadata: serde_json::from_str(&m)?,
+                    bytes,
+                    sealed,
+                })
+            })
+            .transpose()?;
+        if session.closed && !stat {
+            anyhow::ensure!(
+                matches!(&request, Upload::Begin { .. }) && old.as_ref().is_some_and(|b| b.sealed),
+                "Session closed"
+            );
+        }
+        if old.is_none() {
+            if let Upload::Begin { metadata } = &request {
+                let count: usize = tx.query_row(
+                    "SELECT count(*) FROM input_attachments WHERE session_id=?",
+                    [sid],
+                    |r| r.get(0),
+                )?;
+                anyhow::ensure!(
+                    count < MAX_SESSION_FILES,
+                    "Session attachment count limit exceeded"
+                );
+                let total:usize=tx.query_row("SELECT COALESCE(SUM(json_extract(metadata,'$.size')),0) FROM input_attachments WHERE session_id=?",[sid],|r|r.get(0))?;
+                anyhow::ensure!(
+                    total.saturating_add(metadata.size) <= MAX_SESSION,
+                    "Session attachment quota exceeded"
+                );
+            }
+        }
+        let blob = apply(id, old, request)?;
+        if writable {
+            tx.execute("INSERT INTO input_attachments(session_id,id,metadata,data,sealed,created) VALUES(?,?,?,?,?,?) ON CONFLICT(session_id,id) DO UPDATE SET data=excluded.data,sealed=excluded.sealed",params![sid,id,serde_json::to_string(&blob.metadata)?,blob.bytes,blob.sealed,now_ms()])?;
+        }
+        tx.commit()?;
+        Ok(blob)
     }
 }

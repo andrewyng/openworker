@@ -1,18 +1,27 @@
 //! Development Rust API for the same engine embedded or over managed private stdio.
 //! No request is automatically resubmitted after transport failure.
 pub mod agents;
+#[cfg(feature = "evaluation-export")]
+mod evaluation_export;
+mod instrumentation;
+pub mod recording;
+pub use recording::{RecordingConfig, RecordingDatabase, TraceQuery};
 mod application_tools;
 mod callbacks;
 mod provider_callbacks;
 mod safety_callbacks;
 pub use application_tools::{Tool, ToolContext};
+pub use openworker_runtime::inference_options::{InferenceOptions, ModelTimeouts};
+pub use openworker_runtime::integrations;
 pub use openworker_runtime::safety as guardrails;
 pub mod cli;
 mod desktop;
 mod mcp;
 pub use agents::Approvals;
 pub use mcp::McpServer;
+mod definition_error;
 mod driver;
+pub use definition_error::AgentDefinitionConflict;
 pub mod host;
 mod providers;
 pub use agents::{
@@ -20,6 +29,7 @@ pub use agents::{
 };
 pub use agents::{Run, Session, SessionInput, TurnLimits};
 pub use desktop::{DesktopOptions, SessionOptions, TurnOptions};
+pub use openworker_runtime::compaction::Instructions as CompactionOptions;
 pub use openworker_runtime::history_import::HistoryItem;
 pub use openworker_runtime::package::BuiltinTools;
 pub use openworker_runtime::turn_options::OutputOptions;
@@ -34,8 +44,9 @@ pub use openworker_runtime::team_service::{Command as TeamCommand, Create as Tea
 pub use openworker_runtime::teams::{Member as TeamMember, Role as TeamRole};
 /// OTLP/HTTP export settings: `endpoint` (collector origin, HTTPS or loopback
 /// HTTP) and `deployment` (label, default `"default"`).
-pub use openworker_telemetry::otlp::{
-    Config as TelemetryConfig, Header as TelemetryHeader, Signal as TelemetrySignal,
+pub use openworker_telemetry::config::{
+    Acknowledgement as TelemetryAcknowledgement, Config as TelemetryConfig,
+    Header as TelemetryHeader, Signal as TelemetrySignal,
 };
 /// Opt-in prompt/tool content in telemetry (off by default).
 pub use openworker_telemetry::{Capture, ContentPolicy};
@@ -86,6 +97,7 @@ pub enum Error {
     InvalidInput(String),
     Remote(String),
     Provider(openworker_runtime::provider::Diagnostic),
+    AgentDefinitionConflict(AgentDefinitionConflict),
     Setup(String),
     Unavailable,
     /// May have committed or started. Reconcile durable IDs; do not blindly retry.
@@ -97,6 +109,7 @@ impl std::fmt::Display for Error {
         match self {
             Self::InvalidInput(s) | Self::Remote(s) | Self::Setup(s) => f.write_str(s),
             Self::Provider(diagnostic) => std::fmt::Display::fmt(diagnostic, f),
+            Self::AgentDefinitionConflict(diagnostic) => std::fmt::Display::fmt(diagnostic, f),
             Self::Unavailable => f.write_str("Harness unavailable or recovering; request not sent"),
             Self::OutcomeUnknown => f.write_str("Harness response lost; execution outcome unknown. Reconcile saved session before retrying."),
             Self::Closed => f.write_str("Harness client closed"),
@@ -517,3 +530,9 @@ pub use openworker_runtime::compliance;
 pub use openworker_security_adapters as security_adapters;
 
 pub use openworker_runtime::compliance_export::Sink as ComplianceSink;
+
+#[cfg(feature = "evaluations")]
+pub use openworker_observability::evaluations;
+
+mod attachments;
+pub use attachments::{Attachment, InputContent, UserInput};

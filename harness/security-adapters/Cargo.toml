@@ -10,8 +10,9 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+openworker-runtime = { version = "=0.1.0-beta.5", path = "../runtime", default-features = false }
 anyhow = "1"
-openworker-guardrails = { version = "=0.1.0-beta.2", path = "../guardrails", default-features = false }
+openworker-guardrails = { version = "=0.1.0-beta.5", path = "../guardrails", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

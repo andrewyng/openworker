@@ -19,6 +19,12 @@ pub use openworker_runtime::coding_handoff::config::{
 pub use openworker_runtime::coding_handoff::ObjectFormat as GitObjectFormat;
 pub use openworker_runtime::team_definition::Sandbox as TeamSandbox;
 
+#[cfg(feature = "recording")]
+#[path = "service_observability.rs"]
+mod observability;
+#[cfg(feature = "recording")]
+pub use observability::Observability;
+
 pub fn new_idempotency_key() -> String {
     openworker_runtime::id("idem")
 }
@@ -135,6 +141,7 @@ pub struct RunResult {
     pub failure: Option<String>,
     pub interruptions: Vec<Value>,
 }
+pub use openworker_runtime::environment::LoopPlacement;
 pub use openworker_store_postgres::service_catalog::{
     Entry as CatalogEntry, Operation as ServiceOperation, Profile as RuntimeProfile,
     Release as AgentRelease,
@@ -142,6 +149,8 @@ pub use openworker_store_postgres::service_catalog::{
 #[derive(Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionOptions {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub integrations: openworker_runtime::integrations::Preferences,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -322,6 +331,99 @@ impl Service {
             return Ok(response);
         }
         Err(error("unauthorized"))
+    }
+    pub async fn publish_app_agent(
+        &self,
+        name: &str,
+        definition: Value,
+        key: &str,
+    ) -> Result<Value> {
+        self.json(
+            "POST",
+            &format!("/v1/app-agents/{}", id(name)?),
+            Some(definition),
+            Some(key),
+        )
+        .await
+    }
+    pub async fn app_agents(&self) -> Result<Value> {
+        self.json("GET", "/v1/app-agents", None, None).await
+    }
+    pub async fn model_providers(&self) -> Result<Value> {
+        self.json("GET", "/v1/model-providers", None, None).await
+    }
+    pub async fn model_provider(&self, name: &str) -> Result<Value> {
+        let catalog = self.model_providers().await?;
+        catalog["providers"]
+            .as_array()
+            .and_then(|providers| providers.iter().find(|p| p["name"] == name))
+            .cloned()
+            .ok_or_else(|| error("model_provider_not_found"))
+    }
+    pub async fn rotate_model_provider_key(
+        &self,
+        name: &str,
+        secret: &str,
+        key: &str,
+    ) -> Result<Value> {
+        self.json(
+            "POST",
+            &format!("/v1/model-providers/{}/rotate", id(name)?),
+            Some(json!({"apiKey":secret})),
+            Some(key),
+        )
+        .await
+    }
+    pub async fn disable_model_provider(&self, name: &str, key: &str) -> Result<Value> {
+        self.json(
+            "POST",
+            &format!("/v1/model-providers/{}/disable", id(name)?),
+            Some(json!({})),
+            Some(key),
+        )
+        .await
+    }
+    pub async fn share_app_agent(
+        &self,
+        release: &str,
+        principals: &[String],
+        key: &str,
+    ) -> Result<Value> {
+        self.json(
+            "PUT",
+            &format!("/v1/app-agents/{}/sharing", id(release)?),
+            Some(json!({"sharedWith":principals})),
+            Some(key),
+        )
+        .await
+    }
+    pub async fn register_model_provider(
+        &self,
+        provider: &openworker_store_postgres::model_registry::Provider,
+        secret: &str,
+        key: &str,
+    ) -> Result<Value> {
+        self.json(
+            "POST",
+            "/v1/model-providers",
+            Some(json!({"provider":provider,"apiKey":secret})),
+            Some(key),
+        )
+        .await
+    }
+    pub async fn set_model_profile(
+        &self,
+        name: &str,
+        model: &openworker_runtime::connections::Choice,
+        key: &str,
+    ) -> Result<Value> {
+        self.json(
+            "PUT",
+            &format!("/v1/model-profiles/{}", id(name)?),
+            Some(json!(model)),
+            Some(key),
+        )
+        .await
     }
     pub async fn json(
         &self,
@@ -675,6 +777,52 @@ impl Session {
                 .into(),
         })
     }
+    /// Upload immutable inputs over the authenticated service boundary, then
+    /// submit their ordered references using the caller's idempotency key.
+    pub async fn send_input(
+        &self,
+        input: crate::UserInput,
+        limits: Option<openworker_runtime::budget::Limits>,
+        key: Option<&str>,
+    ) -> Result<Run> {
+        let _ = id(self.id())?;
+        let content = input
+            .upload_service(&self.service, self.id())
+            .await
+            .map_err(|e| {
+                error(if matches!(e, crate::Error::OutcomeUnknown) {
+                    "outcome_unknown"
+                } else {
+                    "attachment_upload_failed"
+                })
+            })?;
+        if let Some(limits) = &limits {
+            limits
+                .validate()
+                .map_err(|_| error("invalid_turn_limits"))?;
+        }
+        let generated = openworker_runtime::id("idem");
+        let r = self
+            .service
+            .json(
+                "POST",
+                &format!("/v1/sessions/{}/turns", id(self.id())?),
+                Some(json!({"content":content,"limits":limits})),
+                Some(key.unwrap_or(&generated)),
+            )
+            .await?;
+        Ok(Run {
+            session: self.clone(),
+            id: r["runId"]
+                .as_str()
+                .ok_or_else(|| error("invalid_receipt"))?
+                .into(),
+            submission_id: r["submissionId"]
+                .as_str()
+                .ok_or_else(|| error("invalid_receipt"))?
+                .into(),
+        })
+    }
     pub async fn resume_run(&self, submission: &str) -> Result<Run> {
         let r = self
             .service
@@ -954,6 +1102,17 @@ impl Session {
     }
 }
 impl AgentTeam {
+    pub async fn reauthorize(&self) -> Result<Value> {
+        self.lead
+            .service
+            .json(
+                "POST",
+                &format!("/v1/sessions/{}/team/reauthorize", id(self.lead.id())?),
+                Some(json!({})),
+                None,
+            )
+            .await
+    }
     pub async fn stop(&self, key: &str) -> Result<Value> {
         self.command(key, "stop", json!({})).await
     }

@@ -68,7 +68,7 @@ fn creation_audit_failure_rolls_back_and_missing_receipt_never_recreates() {
     let api = PostgresStore::open(c.clone()).unwrap();
     let mut db = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
     db.batch_execute(&format!(
-        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        "SET ow.runtime_schema='7'; SET search_path={},pg_catalog",
         c.schema
     ))
     .unwrap();

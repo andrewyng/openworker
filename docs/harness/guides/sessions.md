@@ -1,4 +1,4 @@
-# Sessions and teams
+# Sessions and recovery
 
 An agent is a reusable definition. A session is its durable conversation and
 execution state. Sending a message starts a run; the run exposes events and a final
@@ -8,6 +8,44 @@ Use `session.state()` for current activity, pending interactions and outstanding
 timers. On restart, reattach to the saved session rather than creating a replacement.
 Reconnect/replay does not mean replaying side effects. If an action's outcome is
 unknown, inspect its status before retrying it.
+
+## Agent identity and workspace
+
+Agent names identify persisted immutable definitions. Changing instructions,
+tools, approval mode or other definition fields requires a new name. Identical
+registration is idempotent; creating another session does not replace a definition.
+Keep old identities for their existing sessions. A fresh state directory is a
+separate development environment, not a migration of existing conversations.
+
+An explicit `workspace` selects the working directory. Omitting it normally
+allocates a private scratch workspace. `scratch: false` requires an explicit
+workspace; `scratch: true` cannot accompany one. Scratch does not promise automatic
+deletion. Keep state outside files available to tools, and enforce directory scope
+in app callbacks; a workspace is not an OS sandbox.
+
+## Continue after an application restart
+
+Save the session reference with your application's conversation and owner record:
+
+```typescript
+const session = await agent.newSession();
+const reference = session.reference(); // Persist in the application's database.
+await session.run('Investigate this support request.');
+```
+
+After starting the harness with the same persistent state and registering the
+same agent definition, load that record and reattach:
+
+```typescript
+const session = await agent.resumeSession(reference);
+const state = await session.state(); // Inspect pending work or interactions first.
+// Submit a new message only when the session is ready for it.
+const result = await session.run('What should we do next?');
+```
+
+Your app authorizes the user before loading the reference. Recovery uses the saved
+execution state; it does not rerun old tool calls as a new task. Restore model
+credentials at startup when using memory-only credential storage.
 
 ## Context and limits for each turn
 
@@ -39,6 +77,64 @@ limit does not increase that total. Set limits on the agent for defaults or on
 `send` for one turn. The selected model must support the requested per-call limit.
 Reusing a submission ID requires the same message, context, limits and safety
 options; a changed addendum is a new turn with a new submission ID.
+
+## Guide the auto-approver and compactor
+
+**Source preview:** use the matching updated runtime. For embedded Rust and
+managed-subprocess TypeScript sessions, `autoApproverContext` supplies application
+facts and review guidance to the action reviewer. `compaction.additionalInstructions`
+adds summary guidance. Both can be set on an agent, a new session, or one turn.
+
+<!-- sdk-tabs -->
+### TypeScript
+
+```typescript
+const session = await agent.newSession({
+  autoApproverContext: "Staging workspace. Ask before publishing.",
+  compaction: { additionalInstructions: "Preserve decisions and unfinished tests." },
+});
+await session.run("Continue.", {
+  autoApproverContext: "For this turn, changes must remain inside src/.",
+  compaction: { additionalInstructions: "Keep the migration checklist." },
+});
+```
+
+### Rust
+
+```rust
+let session = agent.new_session_with(
+    SessionOptions::default()
+        .auto_approver_context("Staging workspace. Ask before publishing.")
+        .compaction(CompactionOptions::additional_instructions(
+            "Preserve decisions and unfinished tests."
+        ))
+).await?;
+let run = session.send_with_options("Continue.", TurnOptions {
+    auto_approver_context: Some("Changes must remain inside src/.".into()),
+    compaction: Some(CompactionOptions::additional_instructions("Keep the migration checklist.")),
+    ..Default::default()
+}).await?;
+let result = run.result().await?;
+```
+<!-- /sdk-tabs -->
+
+Precedence is agent → session → turn. Omitted fields inherit; an empty string
+clears inherited guidance for that scope. Turn overrides survive recovery and
+apply to retries and tool follow-ups in that turn. They do not change the next
+turn's defaults. Reusing a submission ID with changed guidance fails.
+
+Each string supports up to 32,000 UTF-8 bytes and no NUL. Guidance is stored
+separately from user history. Reviewer context does not enable auto-approval or
+grant tool access: configure auto-approval and a reviewer model separately.
+Hard policy checks still run first; an unavailable or unsure reviewer asks the
+human. Compaction guidance supplements the required summary structure. These
+session/turn overrides are not yet exposed by the service-cluster REST client.
+
+## Attach a file
+
+The SDK supports images, PDFs and UTF-8 files as ordered user-message
+content. See [Attachments](attachments.md) for the convenience and interleaved
+forms, storage limits and guardrail behavior.
 
 ## Import a conversation
 
@@ -78,9 +174,31 @@ assembled request, including imported history, before the next model call.
 ## Approvals and questions
 
 Render durable approval/question interruptions in your UI, then send the user's
-actual response. “Allow always” applies to the session. Auto-approval uses a
-reviewer; an inconclusive decision still asks the human. Bypass skips human approval
-but does not remove required guardrails or sandbox restrictions.
+actual response. Configure the decision path in the agent definition:
+
+| TypeScript mode | Behavior |
+| --- | --- |
+| `always` (default) | Requests a human decision unless a valid session grant covers the tool. |
+| `only` with a tool list | Requests approval for listed tools; ordinary unlisted tools receive application-policy approval. |
+| `auto` with `reviewerModel` | An explicit LLM reviews eligible calls: allow executes, deny returns a denial, uncertain requests human input. |
+| `never` | Bypasses approval review; hard security checks still apply. |
+
+Rust exposes `Approvals::Always`, `Only`, `auto(model)` and `Never`. Auto review
+can include read-only tools. Hard denials and valid session grants are checked
+first. Privileged child/type-creation operations have additional requirements;
+omission from an `only` list does not automatically exempt them.
+
+Use `once` when each mutation requires a new card. A `session` grant covers the
+entire tool, including different valid arguments, survives restart and does not
+override hard checks. Questions are separate from approval decisions. See the
+[complete streamed approval loop](streaming.md#streaming-with-tool-approvals).
+
+The typed `auto_approved` summary currently describes application-policy approval,
+not a model review verdict. Raw `interaction_required` / `interaction_resolved`
+events can include `data.review.verdict`, a safe `reason`, `origin` and nested
+`call.call_id`; handle absent/withheld content. A denied tool result tells the
+working model not to retry or evade the denial, but currently omits the reviewer's
+reason. The app can display an available safe journal reason itself.
 
 A tool-free guide can disable optional tools, memory, planning and scheduling.
 Auto-skip questions is a separate setting, not an authorization mode.
@@ -107,14 +225,13 @@ These APIs require an updated native runtime as well as the SDK package. Clients
 check host capabilities before sending the new options. Omitted options retain
 existing agent definitions and session schema digests across upgrades.
 
+## Standalone sub-agents
+
+Enable delegation on a normal agent, then let its model create and message children.
+See [sub-agents and teams](subagents.md) for configuration, the model-facing tool
+and workspace behavior.
+
 ## Teams
 
-A lead can create multiple instances of registered agent types, communicate through
-durable inboxes/board mentions and wait without keeping an execution slot occupied.
-Shared workspaces use separate worktrees; independent sandboxes exchange changes
-through explicit handoff. Team creation does not enlarge the lead's permissions.
-
-Continue with the [Rust SDK](../../../harness/harness-sdk/README.md) or
-[TypeScript SDK](../../../harness/typescript-sdk/README.md) for session and team
-APIs. See [alignment](alignment.md) for approval behavior and
-[deployment options](deployment.md) for shared service storage.
+Use an explicit team for named agent types, board communication and configurable
+sandbox placement. [Compare teams with standalone sub-agents](subagents.md#choose-how-agents-work-together).

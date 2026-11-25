@@ -93,19 +93,31 @@ impl Host {
         let _run_admission = self.run_admission.lock().await;
         let sid = text(p, "session_id")?;
         let submission = text(p, "submission_id")?;
-        let context = openworker_runtime::turn_options::Context::from_request(p)?;
-        let context_digest = context.digest()?;
-        let raw_input = openworker_runtime::runtime::text(p, "text", 32000)?;
+        let mut context = openworker_runtime::turn_options::Context::from_request(p)?;
         let coworker = self.store.lock().unwrap().metadata(sid)?.coworker;
         let safety = p
             .get("safety")
             .filter(|v| !v.is_null())
             .map(|v| serde_json::from_value::<openworker_runtime::safety::Config>(v.clone()))
             .transpose()?;
-        let input = self
-            .runtime(&coworker)?
-            .check_user_input_with(sid, raw_input, safety.as_ref())
-            .await?;
+        let runtime = self.runtime(&coworker)?;
+        let input = if let Some(parts) = &context.content {
+            let parts = runtime
+                .prepare_input_content(sid, parts, safety.as_ref())
+                .await?;
+            let text = openworker_runtime::attachments::summary(&parts);
+            context.content = Some(parts);
+            text
+        } else {
+            runtime
+                .check_user_input_with(
+                    sid,
+                    openworker_runtime::runtime::text(p, "text", 32000)?,
+                    safety.as_ref(),
+                )
+                .await?
+        };
+        let context_digest = context.digest()?;
         if let Some(value) = p.get("limits").filter(|v| !v.is_null()) {
             let limits: openworker_runtime::budget::Limits = serde_json::from_value(value.clone())?;
             limits.validate()?;
@@ -164,7 +176,7 @@ impl Host {
         let started = self
             .retry_busy(
                 "turn/start",
-                json!({"session_id":sid,"submission_id":submission,"text":input,"limits":p["limits"],"safety":p["safety"],"instruction_addendum":context.instruction_addendum,"output":context.output}),
+                json!({"session_id":sid,"submission_id":submission,"text":input,"limits":p["limits"],"safety":p["safety"],"instruction_addendum":context.instruction_addendum,"auto_approver_context":context.auto_approver_context,"compaction":context.compaction,"output":context.output,"content":context.content}),
             )
             .await;
         match started {
@@ -229,9 +241,10 @@ impl Host {
                 }
                 Ok(json!({"closed": closed, "errors": errors}))
             }
-            "session/send" => self.session_send(&p).await,
+            // Keep nested routing futures off the small Windows process-main stack.
+            "session/send" => Box::pin(self.session_send(&p)).await,
             "session/state" => self.session_state(&p).await,
-            "run/start" => self.run_start(&p).await,
+            "run/start" => Box::pin(self.run_start(&p)).await,
             "run/wait" => self.run_wait(&p).await,
             "run/respond" => self.run_respond(&p).await,
             "run/cancel" => {
@@ -285,6 +298,8 @@ impl Host {
                 "input",
                 "limits",
                 "instruction_addendum",
+                "auto_approver_context",
+                "compaction",
                 "output",
                 "safety"
             ]
@@ -300,7 +315,7 @@ impl Host {
             .transpose()?
             .unwrap_or("message");
         let allowed: &[&str] = match kind {
-            "message" => &["type", "text"],
+            "message" => &["type", "text", "content"],
             "answer" => &["type", "text", "interaction_id", "target_session_id"],
             "approval" => &["type", "decision", "interaction_id", "target_session_id"],
             "steer" => bail!("Steering is not supported by this host"),
@@ -319,10 +334,12 @@ impl Host {
             "Safety overrides apply only to new turns"
         );
         if kind == "message" {
-            return self.run_start(&json!({"session_id":sid,"text":input["text"],"submission_id":text(p,"submission_id")?,"limits":p["limits"],"safety":p["safety"],"instruction_addendum":p["instruction_addendum"],"output":p["output"]})).await;
+            return Box::pin(self.run_start(&json!({"session_id":sid,"text":input["text"],"submission_id":text(p,"submission_id")?,"limits":p["limits"],"safety":p["safety"],"instruction_addendum":p["instruction_addendum"],"auto_approver_context":p["auto_approver_context"],"compaction":p["compaction"],"output":p["output"],"content":input["content"]}))).await;
         }
         ensure!(
-            p.get("instruction_addendum").is_none_or(Value::is_null)
+            p.get("auto_approver_context").is_none_or(Value::is_null)
+                && p.get("compaction").is_none_or(Value::is_null)
+                && p.get("instruction_addendum").is_none_or(Value::is_null)
                 && p.get("output").is_none_or(Value::is_null),
             "Turn context applies only to new message turns"
         );
@@ -387,8 +404,14 @@ impl Host {
                 lead = snapshot.clone();
             }
             cursors.insert(id.clone(), snapshot["cursor"].clone());
-            for i in snapshot["interactions"].as_array().into_iter().flatten() {
-                pending.push(interruption(id, agent, i, &snapshot));
+            for i in pending_interactions(&snapshot) {
+                let mut item = interruption(id, agent, i, &snapshot);
+                enrich_tool_identity(
+                    &mut item,
+                    i["call"]["name"].as_str(),
+                    &self.runtime(agent)?.bundle.tools,
+                );
+                pending.push(item);
             }
             if snapshot["turn"]["status"] == "waiting_safety" && !self.runtime(agent)?.is_busy(id) {
                 pending.push(safety_interruption(id, agent, &snapshot));
@@ -506,7 +529,8 @@ impl Host {
     }
 
     async fn agent_session(&self, p: &Value) -> Result<Value> {
-        // Reject malformed imports before creating scratch directories/sessions.
+        // Reject malformed guidance/imports before creating scratch directories/sessions.
+        openworker_runtime::turn_options::Context::from_request(p)?;
         openworker_runtime::history_import::from_request(p.get("initial_history"))?;
         ensure!(
             p.get("auto_skip_questions").is_none_or(Value::is_boolean),
@@ -569,21 +593,55 @@ impl Host {
         };
         let name = p["name"].as_str().unwrap_or(&profile.name).to_owned();
         let options = |id: &str, name: String| {
-            let mode = self.profile(id).approvals.mode();
+            let member = self.profile(id);
             let auto_skip_questions = if id == agent {
                 p.get("auto_skip_questions")
                     .and_then(Value::as_bool)
-                    .unwrap_or(self.profile(id).auto_skip_questions)
+                    .unwrap_or(member.auto_skip_questions)
             } else {
-                self.profile(id).auto_skip_questions
+                member.auto_skip_questions
             };
             let mut options = json!({"name": name, "coworker": id, "workspace": workspace,
-                   "permissions": {"mode": mode, "auto_skip_questions": auto_skip_questions},"compaction":self.config.desktop.compaction});
+                "permissions": {
+                    "mode": member.approvals.mode(),
+                    "auto_skip_questions": auto_skip_questions,
+                    "never_allow_read_write_outside_workspace": member.never_allow_read_write_outside_workspace
+                        || profile.never_allow_read_write_outside_workspace
+                },
+                "compaction":self.config.desktop.compaction
+            });
+            let profile = member;
+            options["auto_approver_context"] = profile
+                .auto_approver_context
+                .clone()
+                .map_or(Value::Null, |s| json!(s));
+            if let Some(additional) = profile
+                .compaction
+                .as_ref()
+                .and_then(|c| c.additional_instructions.as_ref())
+            {
+                options["compaction"]["additional_instructions"] = json!(additional);
+            }
+            if id == agent {
+                if let Some(context) = p.get("auto_approver_context").filter(|v| !v.is_null()) {
+                    options["auto_approver_context"] = context.clone();
+                }
+                if let Some(additional) = p
+                    .get("compaction")
+                    .and_then(|c| c.get("additional_instructions"))
+                    .filter(|v| !v.is_null())
+                {
+                    options["compaction"]["additional_instructions"] = additional.clone();
+                }
+            }
             if let Approvals::Auto(model) = self.profile(id).approvals {
                 options["reviewer_model"] = json!(model);
             }
             // A lead's override does not silently replace each worker's default.
             if id == agent {
+                if let Some(prefs) = p.get("integrations") {
+                    options["integrations"] = prefs.clone();
+                }
                 if let Some(history) = p.get("initial_history") {
                     options["initial_history"] = history.clone();
                 }
@@ -742,7 +800,7 @@ impl Host {
             let Ok(snap) = rt.snapshot(&sid) else {
                 continue;
             };
-            for i in snap["interactions"].as_array().into_iter().flatten() {
+            for i in pending_interactions(&snap) {
                 let tool = i["call"]["name"].as_str().unwrap_or_default();
                 let Some(id) = i["id"].as_str() else { continue };
                 pending.insert(id.to_owned());
@@ -825,7 +883,14 @@ impl Host {
             let cached = record.as_ref().and_then(|r| r.get("result")).cloned();
             let mut snaps = Vec::with_capacity(members.len());
             for (s, agent) in &members {
-                let rt = self.runtime(agent)?;
+                let rt = match self.runtime(agent) {
+                    Ok(runtime) => runtime,
+                    Err(_) => {
+                        let session = self.store.lock().unwrap().metadata(s)?;
+                        ensure!(session.coworker == *agent, "Run member runtime changed");
+                        self.runtime_for_session(&session).await?
+                    }
+                };
                 snaps.push(rt.snapshot(s)?);
             }
             let board = match &team {
@@ -867,6 +932,24 @@ impl Host {
                     let mut last = from;
                     let journal = self.store.lock().unwrap().events(s, from)?;
                     let membership = self.store.lock().unwrap().metadata(s)?.agent_team;
+                    let parent_session = if membership.is_some() {
+                        let doc = self.store.lock().unwrap().agent_team(
+                            s,
+                            "snapshot",
+                            &json!({}),
+                            None,
+                        )?;
+                        if !doc["standalone"].is_null() {
+                            doc["roster"]["instances"][doc["lead"].as_str().unwrap_or("")]
+                                ["session_id"]
+                                .as_str()
+                                .map(str::to_owned)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
                     for e in journal {
                         if e.event_id > until {
                             break;
@@ -876,10 +959,18 @@ impl Host {
                             break;
                         }
                         last = e.event_id;
-                        let mut item = stream_item(agent, e);
+                        let runtime = self.runtime(agent)?;
+                        let mut item = stream_item(agent, e, Some(&runtime.bundle.tools));
                         if let Some(member) = &membership {
-                            item["agent_id"] = json!(member.agent_id);
-                            item["team_id"] = json!(member.team_id);
+                            if let Some(parent) = &parent_session {
+                                if parent != s {
+                                    item["agent_id"] = json!(member.agent_id);
+                                    item["parent_session_id"] = json!(parent);
+                                }
+                            } else {
+                                item["agent_id"] = json!(member.agent_id);
+                                item["team_id"] = json!(member.team_id);
+                            }
                         }
                         events.push(item);
                     }
@@ -896,7 +987,7 @@ impl Host {
                     interruptions.push(safety_interruption(s, agent, snap));
                 }
                 let approvals = self.profile(agent).approvals;
-                for raw in snap["interactions"].as_array().into_iter().flatten() {
+                for raw in pending_interactions(snap) {
                     let tool = raw["call"]["name"].as_str().unwrap_or_default();
                     // The auto-approver handles these unless it failed.
                     let failed = raw["id"]
@@ -905,7 +996,13 @@ impl Host {
                     if raw["kind"] == "approval" && approvals.auto_approves(tool) && !failed {
                         continue;
                     }
-                    interruptions.push(interruption(s, agent, raw, snap));
+                    let mut item = interruption(s, agent, raw, snap);
+                    enrich_tool_identity(
+                        &mut item,
+                        raw["call"]["name"].as_str(),
+                        &self.runtime(agent)?.bundle.tools,
+                    );
+                    interruptions.push(item);
                 }
             }
 
@@ -956,16 +1053,24 @@ impl Host {
             } else {
                 false
             };
-            let all_idle = snaps
-                .iter()
-                .all(|s| s["turn"]["status"].as_str().is_none_or(terminal));
+            let standalone =
+                snaps[0]["session"]["package"]["standalone_subagents"]["enabled"] == true;
+            let all_idle = if standalone {
+                snaps[0]["turn"]["status"].as_str().is_none_or(terminal)
+            } else {
+                snaps
+                    .iter()
+                    .all(|s| s["turn"]["status"].as_str().is_none_or(terminal))
+            };
             let status = if let Some(result) = &cached {
                 result["status"]
                     .as_str()
                     .context("Invalid saved run status")?
+            } else if standalone && all_idle {
+                terminal_status(lead_turn)
             } else if !interruptions.is_empty() {
                 "interrupted"
-            } else if pending_instances
+            } else if (!standalone && pending_instances)
                 || !all_idle
                 || board.as_ref().is_some_and(|b| b["pending_work"] != false)
             {
@@ -1033,6 +1138,19 @@ fn text<'a>(p: &'a Value, key: &str) -> Result<&'a str> {
     Ok(s)
 }
 
+/// Cancellation has already been admitted. Unanswered interactions can remain
+/// in the snapshot until asynchronous cleanup settles; they are not actionable.
+/// Keep waiting for the durable terminal status, including outcome-unknown.
+fn pending_interactions(snapshot: &Value) -> impl Iterator<Item = &Value> {
+    let status = snapshot["turn"]["status"].as_str().unwrap_or_default();
+    let visible = status != "cancelling" && !terminal(status);
+    snapshot["interactions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(move |_| visible)
+}
+
 fn terminal_status(turn: &Value) -> &'static str {
     match turn["status"].as_str().unwrap_or("") {
         "completed" | "" => "completed",
@@ -1082,14 +1200,38 @@ fn final_output(snapshot: &Value) -> Value {
     Value::Null
 }
 
+/// Resolve the installed binding, including custom aliases and native qualified names.
+/// Never guess a name by replacing underscores in model output.
+fn enrich_tool_identity(
+    item: &mut Value,
+    alias: Option<&str>,
+    tools: &openworker_runtime::bundle::Tools,
+) {
+    let Some(alias) = alias else {
+        return;
+    };
+    item["model_alias"] = json!(alias);
+    if let Some(binding) = tools.bindings.get(alias) {
+        if let Some(server) = tools.servers.get(&binding.server) {
+            item["qualified_name"] = json!(if server.program == "$NATIVE" {
+                binding.tool.clone()
+            } else {
+                format!("{}.{}", binding.server, binding.tool)
+            });
+        }
+    }
+}
+
 /// A journal event plus a small typed summary SDKs can map directly.
-fn stream_item(agent: &str, e: Event) -> Value {
-    let summary = match e.kind.as_str() {
+fn stream_item(agent: &str, e: Event, tools: Option<&openworker_runtime::bundle::Tools>) -> Value {
+    let mut summary = match e.kind.as_str() {
         "model_attempt_started"
         | "model_attempt_finished"
         | "assistant_delta"
         | "reasoning_delta"
         | "model_activity"
+        | "model_route"
+        | "model_usage"
         | "provider_error" => {
             let mut summary = e.data.clone();
             summary["type"] = json!(e.kind);
@@ -1115,7 +1257,27 @@ fn stream_item(agent: &str, e: Event) -> Value {
         "plan_updated" => Some(json!({"type": "plan_updated", "plan": e.data["plan"]})),
         _ => None,
     };
-    json!({"agent": agent, "session_id": e.session_id, "event": e, "summary": summary})
+    if let Some(summary) = &mut summary {
+        if matches!(e.kind.as_str(), "tool_started" | "tool_finished") {
+            if let Some(tools) = tools {
+                enrich_tool_identity(
+                    summary,
+                    e.data["name"]
+                        .as_str()
+                        .or_else(|| e.data["call"]["name"].as_str()),
+                    tools,
+                );
+            }
+            if e.kind == "tool_started" {
+                // Project only already-released journal content; never reread callback args.
+                if let Some(arguments) = e.data.get("arguments") {
+                    summary["arguments"] = arguments.clone();
+                }
+            }
+        }
+    }
+    let approval_decision = openworker_runtime::permissions::approval_decision(&e);
+    json!({"agent": agent, "session_id": e.session_id, "event": e, "summary": summary, "approval_decision":approval_decision})
 }
 
 fn safety_interruption(sid: &str, agent: &str, snapshot: &Value) -> Value {
@@ -1136,11 +1298,123 @@ mod tests {
                 kind: kind.into(),
                 data: json!({"name":"app__preview","call_id":"call-preview"}),
             };
-            let item = stream_item("builder", event);
+            let item = stream_item("builder", event, None);
             assert_eq!(item["summary"]["type"], kind);
             assert_eq!(item["summary"]["call_id"], "call-preview");
             assert_eq!(item["summary"]["call_id"], item["event"]["data"]["call_id"]);
         }
+    }
+
+    #[test]
+    fn tool_metadata_uses_installed_bindings_and_only_released_arguments() {
+        use openworker_runtime::bundle::{Binding, Server, Tools};
+        let tools = Tools {
+            servers: [
+                (
+                    "native".into(),
+                    Server {
+                        id: "native".into(),
+                        program: "$NATIVE".into(),
+                        args: vec![],
+                    },
+                ),
+                (
+                    "repo".into(),
+                    Server {
+                        id: "repo".into(),
+                        program: "mcp-server".into(),
+                        args: vec![],
+                    },
+                ),
+            ]
+            .into(),
+            bindings: [
+                (
+                    "files__move_file".into(),
+                    Binding {
+                        server: "native".into(),
+                        tool: "files.move_file".into(),
+                    },
+                ),
+                (
+                    "inspect".into(),
+                    Binding {
+                        server: "repo".into(),
+                        tool: "scan_file".into(),
+                    },
+                ),
+            ]
+            .into(),
+        };
+        for (alias, qualified) in [
+            ("files__move_file", Some("files.move_file")),
+            ("inspect", Some("repo.scan_file")),
+            ("internal__unknown", None),
+        ] {
+            let mut approval = json!({"tool":alias});
+            enrich_tool_identity(&mut approval, Some(alias), &tools);
+            assert_eq!(approval["model_alias"], alias);
+            assert_eq!(approval["qualified_name"].as_str(), qualified);
+            for kind in ["tool_started", "tool_finished"] {
+                for arguments in [
+                    None,
+                    Some(Value::Null),
+                    Some(json!({"path":"released.txt"})),
+                ] {
+                    let mut data = json!({"name":alias,"call_id":"call-1"});
+                    if let Some(value) = &arguments {
+                        data["arguments"] = value.clone();
+                    }
+                    let event = Event {
+                        event_id: 4,
+                        session_id: "session-1".into(),
+                        turn_id: Some("turn-1".into()),
+                        kind: kind.into(),
+                        data,
+                    };
+                    let item = stream_item("builder", event, Some(&tools));
+                    let summary = &item["summary"];
+                    assert_eq!(summary["tool"], alias);
+                    assert_eq!(summary["model_alias"], alias);
+                    assert_eq!(summary["qualified_name"].as_str(), qualified);
+                    assert_eq!(
+                        summary.get("arguments"),
+                        if kind == "tool_started" {
+                            arguments.as_ref()
+                        } else {
+                            None
+                        }
+                    );
+                    assert_eq!(item["session_id"], "session-1");
+                    assert_eq!(item["event"]["turn_id"], "turn-1");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cancelled_waits_do_not_reopen_approval_while_cleanup_is_pending() {
+        let mut snapshot = json!({"turn":{"status":"waiting"},"interactions":[{"id":"i","kind":"approval","call":{"name":"files__write","call_id":"c","arguments":"{}"}}]});
+        for (status, count) in [
+            ("waiting", 1),
+            ("recoverable", 1),
+            ("cancelling", 0),
+            ("cancelled", 0),
+            ("interrupted", 0),
+            ("completed", 0),
+        ] {
+            snapshot["turn"]["status"] = json!(status);
+            assert_eq!(pending_interactions(&snapshot).count(), count, "{status}");
+            assert_eq!(
+                snapshot["interactions"].as_array().unwrap().len(),
+                1,
+                "Filtering must not rewrite the durable approval history"
+            );
+        }
+        // Unknown admitted tool effects must still surface as failed/interrupted,
+        // never as a successful cancellation merely because approvals are hidden.
+        assert_eq!(terminal_status(&json!({"status":"interrupted"})), "failed");
+        assert_eq!(terminal_status(&json!({"status":"cancelled"})), "cancelled");
     }
 
     #[test]

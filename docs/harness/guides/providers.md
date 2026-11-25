@@ -9,6 +9,7 @@ The session saves its resolved model. Unavailable models fail explicitly.
 | OpenAI | Responses | `name: "OpenAI", api: "responses"` |
 | Anthropic | Native Messages | `name: "Anthropic", api: "anthropic"` |
 | Google Gemini | Google OpenAI-compatible Chat Completions | Google's `/v1beta/openai` base URL and a Gemini API key |
+| Sarvam AI | Chat Completions | `https://api.sarvam.ai/v2` base URL and a Sarvam API key |
 | OpenRouter or a compatible proxy | Chat Completions | Custom `baseUrl` and credentials |
 | Ollama / vLLM | Chat Completions | Local base URL and an installed model ID |
 
@@ -17,6 +18,20 @@ Register a provider at startup or after your settings UI obtains a key. Use an
 environment-variable reference for server deployments; for desktop UI input,
 pass `credentials: { apiKey, storage: "memory" }` and use your application's secret
 store for persistence. Only choose SDK secure persistence on a supported platform.
+
+## Where credentials are read
+
+| Interface | What resolves an environment-key reference? |
+| --- | --- |
+| TypeScript `setModelProvider` / `modelProviders` | The Node process reads `apiKeyEnv` and sends the value over private stdio to the Rust child. |
+| Embedded Rust `Credentials::from_env` | The Rust application process reads its environment. |
+
+`inheritEnv` is unnecessary for the TypeScript provider convenience API. Use it
+only for variables that Rust or another child must resolve itself; avoid passing
+the whole environment. Neither SDK automatically loads env files. Memory-only
+credentials must be supplied when the application starts. Secure provider storage
+uses macOS Keychain or Windows DPAPI; on Linux choose memory-only credentials or
+server provisioning. Callback functions also need registration on app startup.
 
 A custom proxy can supply short-lived bearer tokens through the provider-auth
 callback interface and proactively rotate them. Authentication refresh does not
@@ -29,6 +44,59 @@ qualify the specific model/configuration used by your application.
 
 See [Streaming and retries](streaming.md) for provider reasoning display, explicit
 Anthropic thinking settings and structured failure diagnostics.
+
+## Register a cloud or local connection
+
+Choose one connection below, then use its name in the agent's `defaultModel`.
+The model ID must be available at that endpoint.
+
+```typescript
+// Anthropic: keep the key in your trusted process environment.
+await harness.setModelProvider({
+  name: 'Anthropic', api: 'anthropic',
+  credentials: { apiKeyEnv: 'ANTHROPIC_API_KEY', storage: 'memory' },
+});
+
+// Ollama: choose a model already installed on this machine.
+await harness.setModelProvider({
+  name: 'Ollama', api: 'chat-completions',
+  baseUrl: 'http://127.0.0.1:11434/v1',
+});
+```
+
+**Sarvam AI.** Sarvam serves `sarvam-105b` through an OpenAI-compatible Chat Completions API.
+Use the `/v2` base URL: it accepts the key as a bearer token and supports the
+streaming usage option. Create a key at
+[indus.sarvam.ai](https://indus.sarvam.ai/key-management).
+
+<!-- sdk-tabs -->
+### TypeScript
+
+```typescript
+await harness.setModelProvider({
+  name: 'Sarvam', api: 'chat-completions',
+  baseUrl: 'https://api.sarvam.ai/v2',
+  credentials: { apiKeyEnv: 'SARVAM_API_KEY', storage: 'memory' },
+});
+// Then use { provider: 'Sarvam', name: 'sarvam-105b' } as the agent's defaultModel.
+```
+
+### Rust
+
+```rust,ignore
+harness.set_model_provider(
+    ModelProvider::chat_completions("Sarvam")
+        .base_url("https://api.sarvam.ai/v2")
+        .credentials(Credentials::from_env("SARVAM_API_KEY").memory_only()),
+).await?;
+// Then use Model::new("Sarvam", "sarvam-105b") as the agent's default model.
+```
+<!-- /sdk-tabs -->
+
+Use the [Desktop example](desktop.md#connect-a-model) for OpenAI Responses.
+For an authenticated OpenAI-compatible proxy, use `api: 'chat-completions'`, its
+`baseUrl` and application-owned credentials. A provider registration does not make
+a text-only model understand images or PDFs; see [attachments](attachments.md).
 
 ## Streaming token usage
 
@@ -157,3 +225,64 @@ as well as indexed argument fragments. It never guesses how to combine partial
 unindexed calls, and incomplete streams cannot authorize tool execution.
 See [Google's compatibility guide](https://ai.google.dev/gemini-api/docs/openai)
 and [thought signature requirements](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures).
+
+## Inference request options
+
+A provider registration can supply nonsecret headers, URL query parameters and
+extra JSON body fields. In TypeScript use `inferenceOptions`. Rust accepts
+`ModelProvider::inference_options(InferenceOptions { .. })`. The runtime stores
+these settings with the provider and applies them to that endpoint's inference
+requests. Configure credentials separately. Omitting options during credential
+rotation preserves them. Supply an empty options object to clear them.
+
+```typescript
+await harness.setModelProvider({
+  name: "local-router", api: "chat-completions", baseUrl,
+  credentials: { apiKeyEnv: "ROUTER_KEY", storage: "memory" },
+  inferenceOptions: {
+    headers: { "x-routing-group": "desktop" },
+    query: { "api-version": "2" },
+    body: { sampling_hint: "interactive" },
+    timeouts: { requestMs: 300_000, generationMs: 360_000 },
+  },
+});
+```
+
+
+`requestMs` limits a single HTTP request, including its streamed response.
+`generationMs` limits all attempts for one model call, including retry delays.
+The defaults are 180 seconds per request and 240 seconds per model call. If you
+set only `requestMs`, the overall budget is at least one minute longer.
+
+These are harness-side limits; they are not added to the inference JSON body.
+`requestMs` accepts 1–3,600,000 ms. `generationMs` must cover a request and cannot
+exceed 7,200,000 ms. Invalid settings fail registration. The same options work on
+cluster-managed providers through `registerModelProvider` or
+`owcluster model-provider register`. Provider definitions are pinned: use a new
+provider name when changing their configuration; rotating credentials preserves it.
+
+## Native provider integrations
+
+Compiled Rust integrations receive `Endpoint::agent_context` during inference
+preparation and `integrations::Event::agent_context` during lifecycle delivery:
+
+```rust
+pub struct AgentContext {
+    pub agent_id: String,
+    pub parent_agent_id: Option<String>,
+    pub root_agent_id: String,
+}
+```
+
+These are stable instance IDs from the session and durable team roster, not
+developer-defined agent names or types. A root has no parent and its root ID is
+its own ID. A child has its immediate creator as parent and shares the root ID.
+They survive turn changes and recovery. No conversation-inheritance flag or
+child-count flag is included. Invalid ancestry fails rather than becoming a new root.
+
+The runtime supplies this context to the installed integration; the integration
+owns any translation to its provider's request fields. Ordinary providers do not
+receive additional identity fields automatically. Probes without a session and
+manually delivered events without context can have `None`; real runtime lifecycle
+delivery resolves the durable context. No app-supplied name or system prompt is
+added to identity metadata.

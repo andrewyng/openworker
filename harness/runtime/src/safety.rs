@@ -16,7 +16,8 @@ pub fn hold_internal_result(s: &mut crate::store::Session, call: &serde_json::Va
     let Some(turn) = s.turn.as_mut() else {
         return false;
     };
-    if !s.safety.protects(Phase::ToolResult, Some(name))
+    if !s.integrations.may_check_results
+        && !s.safety.protects(Phase::ToolResult, Some(name))
         && !turn.safety.protects(Phase::ToolResult, Some(name))
     {
         return false;
@@ -58,6 +59,7 @@ impl From<crate::connections::Choice> for ModelRef {
 impl From<ModelRef> for crate::connections::Choice {
     fn from(value: ModelRef) -> Self {
         Self {
+            notify_on_session_state: None,
             connection: value.connection,
             model: value.model,
         }

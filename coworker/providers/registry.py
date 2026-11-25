@@ -311,7 +311,7 @@ def _build_openrouter_account(profile: dict[str, Any], secrets: Any) -> Provider
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
-    Kimi, MiniMax, Qwen, xAI, Mistral, Novita, Upstage). The key is resolved from the vendor's OWN
+    Kimi, MiniMax, Qwen, xAI, Mistral, Novita, Upstage, Sarvam). The key is resolved from the vendor's OWN
     profile (or its env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a
     configured OpenAI key is never silently sent to a different vendor's endpoint. Missing key ⇒
     fail fast with a vendor-named error (these are only built on demand, when one of their models
@@ -552,7 +552,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         needs_key=False,
         fields=[],
         build=_build_codex,
-        recommended_model="gpt-5.6-sol",
+        recommended_model="gpt-5.6-terra",
         blurb="Sign in with your ChatGPT plan and run OpenAI models through your "
         "subscription — no API key. Tokens stay on this machine.",
         auth="oauth",
@@ -781,7 +781,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         "deepseek",
         "DeepSeek",
         base_url="https://api.deepseek.com",
-        recommended_model="deepseek-v4-flash",
+        recommended_model="deepseek-flash",
         env_key="DEEPSEEK_API_KEY",
     ),
     _compat(
@@ -796,7 +796,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         "minimax",
         "MiniMax",
         base_url="https://api.minimax.io/v1",
-        recommended_model="MiniMax-M2.5",
+        recommended_model="MiniMax-M3.1-Flash",
         env_key="MINIMAX_API_KEY",
     ),
     _compat(
@@ -864,6 +864,19 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="solar-pro4",
         env_key="UPSTAGE_API_KEY",
     ),
+    # Sarvam: /v2, not /v1 — /v1 serves (and lists) only sarvam-105b and its conversations
+    # variant, and only /v2 documents stream_options. Bearer auth is accepted on every
+    # endpoint; a bad key is a 403.
+    # sarvam-105b on /v2 with tools, include_usage and reasoning_effort "none" verified live
+    # 2026-11-17 (docs.sarvam.ai/api-reference/authentication, /chat/chat-completions-v2).
+    _compat(
+        "sarvam",
+        "Sarvam AI",
+        base_url="https://api.sarvam.ai/v2",
+        recommended_model="sarvam-105b",
+        env_key="SARVAM_API_KEY",
+        endpoint_help="Prefilled with Sarvam's OpenAI-compatible /v2 endpoint; keep it (the /v1 route serves only the two Sarvam-105B models).",
+    ),
     # Resellers: many labs' models behind one key, using THEIR model namespaces (the curated
     # ids + display labels live in providers/matrix.py). Groq was deferred on 2026-07-04 to
     # bound how much needed verifying at once; it landed 2026-10-25 with verified rows.
@@ -878,7 +891,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         "fireworks",
         "Fireworks AI",
         base_url="https://api.fireworks.ai/inference/v1",
-        recommended_model="accounts/fireworks/models/glm-5p2",
+        recommended_model="accounts/fireworks/models/glm-5p3",
         env_key="FIREWORKS_API_KEY",
     ),
     _compat(
@@ -1623,8 +1636,12 @@ def verify_provider_key(
             # segment (e.g. LM Studio served at http://127.0.0.1:1234) can still answer
             # /models while every completion 404s — the session then hangs silently on
             # an endpoint that "tested" fine. Probe the real completions route too and
-            # fail fast with a path-specific message instead (issue #431).
-            if resp.status_code < 300:
+            # fail fast with a path-specific message instead (issue #431). Only for an
+            # endpoint the user typed: a vendor's own default needs no path check, and
+            # Moonshot, Groq and MiniMax answer 404 to a GET on the completions route
+            # while serving it fine (OPE-268).
+            vendor_default = default_base.rstrip("/") or ("https://api.openai.com/v1" if name == "openai" else "")
+            if resp.status_code < 300 and base != vendor_default:
                 route = httpx.get(
                     base + "/chat/completions",
                     headers={"Authorization": f"Bearer {key}"},
@@ -1656,6 +1673,9 @@ def verify_provider_key(
     if resp.status_code in (401, 403):
         if name == "ollama":
             return {"ok": False, "error": "Server rejected the request."}
+        return {"ok": False, "error": "Invalid API key."}
+    if resp.status_code == 400 and name == "xai" and "incorrect api key" in str(getattr(resp, "text", "") or "").lower():
+        # xAI answers a wrong key with 400 and a sentence, not 401 (seen live 2026-11-09, OPE-268).
         return {"ok": False, "error": "Invalid API key."}
     if resp.status_code == 404 and name == "ollama":
         return {

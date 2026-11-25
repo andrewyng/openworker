@@ -59,9 +59,11 @@ pub(crate) fn manifest(agent: &Agent, role: Option<Role>) -> Result<String> {
         memory_scope: agent.memory_scope.clone(),
         scheduling: agent.scheduling,
         team_role: role,
+        integrations: agent.integrations.clone(),
         default_model: agent.model.clone(),
         limits: agent.limits.clone(),
         builtin_tools: agent.builtin_tools.clone(),
+        standalone_subagents: agent.standalone_subagents.clone(),
     };
     // JSON is a YAML subset, so the engine's frontmatter parser accepts it and
     // no prompt text can be misread as manifest keys.

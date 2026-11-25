@@ -10,7 +10,7 @@ See [versions and compatibility](../../docs/harness/guides/releases.md).
 npm --prefix harness/typescript-sdk ci
 npm --prefix harness/typescript-sdk run build
 cargo build --manifest-path harness/Cargo.toml --locked --release \
-  -p openworker-sdk --bin openworker-harness --features security-adapters,compliance-export
+  -p openworker-sdk --bin openworker-harness --features security-adapters,compliance-export,recording-postgres,evaluation-export
 node harness/release/prepare.mjs \
   /absolute/target/release/openworker-harness aarch64-apple-darwin /absolute/new-candidate
 ```
@@ -20,10 +20,13 @@ not exist. The preparer checks architecture and (on the matching native host)
 version, creates the platform npm package, client/starter tarballs, a standalone
 runtime archive, SHA256SUMS and `release.json`. It refuses to overwrite a candidate.
 Native compilation and clean-machine testing are required on every claimed target.
+Windows release jobs use an explicit Cargo target and static CRT linkage. The
+preparer inspects PE imports and rejects a host that requires separately installed
+Visual C++ runtime DLLs.
 
 The npm client is `@openworkerai/harness-sdk`; matching runtime packages are
 `@openworkerai/harness-runtime-<platform>-<arch>`. The same candidate includes
-`@openworkerai/build-with-sdk-skills`, which installs the shared Desktop/Web
+`@openworkerai/openworker-harness-builder`, which installs the shared Desktop/Web
 skill into a Codex or Claude Code project, or user-wide with `--global`. The skill package has no runtime or
 SDK dependency. Its package version can advance independently;
 `openworkerSdkVersion` declares the compatible SDK release. To prepare just that archive without compiling Rust:
@@ -33,6 +36,9 @@ node skills/prepare.mjs /absolute/new-skills-candidate
 ```
 
 Run this command from the repository root. See [skill installation](../../skills/README.md).
+For a full SDK release, set the skill's compatibility pin to the candidate SDK
+version. The native package smoke tests the exact builder archive in fresh project
+and global installations for Codex and Claude, including replacement backups.
 
 Source npm manifests remain `private` so a plain `npm publish` in the checkout
 cannot accidentally publish an incomplete client. Staging removes that marker and
@@ -42,14 +48,14 @@ hook or fetches an executable during startup.
 
 ## Rust archives
 
-Package the nine crates listed in `manifest.json` together, in dependency order.
+Package the crates listed in `manifest.json` together, in dependency order.
 Cargo rewrites path+version dependencies into registry dependencies. For example:
 
 ```sh
 cargo package --manifest-path harness/Cargo.toml --no-verify \
   -p openworker-artifacts -p openworker-compliance -p openworker-guardrails \
   -p openworker-telemetry -p openworker-tools -p openworker-runtime \
-  -p openworker-security-adapters -p openworker-store-postgres -p openworker-sdk
+  -p openworker-security-adapters -p openworker-store-postgres -p openworker-observability -p openworker-sdk
 node harness/release/check-examples.mjs /absolute/new-examples
 python3 harness/release/verify-crates.py \
   --packages /absolute/target/package --out /absolute/new-consumer \

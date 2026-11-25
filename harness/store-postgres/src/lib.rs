@@ -1,15 +1,25 @@
 //! Optional PostgreSQL StateStore adapter. No automatic claims, heartbeat or replay.
 mod agent_team;
 pub use agent_team::WorkspaceJob;
+pub mod app_agents;
 mod artifacts;
 mod assistant;
 pub mod auth;
 mod compliance;
+pub mod compliance_catalog;
 mod controls;
 mod db;
 mod environments;
+pub mod eval_judge;
+pub mod eval_replay;
+pub mod eval_schedule;
+pub mod eval_selection;
+pub mod evals;
+pub mod guardrail_query;
 mod ingress;
+mod input_attachments;
 mod input_safety;
+pub mod model_registry;
 mod observers;
 mod operations;
 pub mod pools;
@@ -535,6 +545,36 @@ fn sanitize(e: anyhow::Error) -> anyhow::Error {
 }
 
 impl StateStore for PostgresStore {
+    fn session_app(&self, sid: &str) -> Result<Option<String>> {
+        anyhow::ensure!(self.auth.is_none(), auth::Error::Forbidden);
+        let sid = sid.to_owned();
+        self.call(move |db| {
+            Ok(db
+                .client
+                .query_opt(
+                    "SELECT principal FROM api_session_owners WHERE session_id=$1",
+                    &[&sid],
+                )?
+                .map(|row| row.get::<_, String>(0))
+                .filter(|app| auth::is_app_principal(app)))
+        })
+    }
+
+    fn supports_input_attachments(&self) -> bool {
+        cfg!(feature = "attachments")
+    }
+
+    fn input_attachment(
+        &mut self,
+        sid: &str,
+        id: &str,
+        request: openworker_runtime::attachments::Upload,
+    ) -> Result<openworker_runtime::attachments::Blob> {
+        let sid = sid.to_owned();
+        let id = id.to_owned();
+        self.call(move |db| db.input_blob(&sid, &id, request))
+    }
+
     fn pending_observers(&self, sid: &str) -> Result<Vec<Value>> {
         let sid = sid.to_owned();
         self.call(move |db| db.pending_observers(&sid))
@@ -582,6 +622,16 @@ impl StateStore for PostgresStore {
         q: openworker_runtime::compliance::Query,
     ) -> Result<Value> {
         PostgresStore::compliance_page(self, sid, q)
+    }
+    fn observation_children(
+        &self,
+        sid: &str,
+        tid: &str,
+    ) -> Result<Vec<openworker_runtime::observation_links::ChildLink>> {
+        PostgresStore::observation_children(self, sid, tid)
+    }
+    fn has_turn(&self, sid: &str, tid: &str) -> Result<bool> {
+        self.observation_run(sid, tid).map(|_| true)
     }
     fn supports_agent_teams(&self) -> bool {
         true

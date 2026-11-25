@@ -156,6 +156,10 @@ impl Config {
         self.repository_grant(profile)?;
         profile.validate()?;
         let mut c = self.clone();
+        c.openshell.selected_loop = !profile.loop_placement.is_service();
+        if c.openshell.selected_loop {
+            c.openshell_provider(true)?;
+        }
         c.openshell.cpu = Some(profile.cpu);
         c.openshell.memory_mb = Some(profile.memory_mb);
         // Always reset selection, including when a child chooses no Git access.

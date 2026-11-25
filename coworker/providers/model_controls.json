@@ -40,6 +40,14 @@
       "source": "https://platform.moonshot.ai/docs"
     },
     {
+      "match": ["sarvam-105b"],
+      "providers": ["sarvam"],
+      "thinking": {"support": "not_supported"},
+      "reasoning": {"support": "supported", "levels": ["low", "medium", "high"], "default": "low"},
+      "notes": "Sarvam's own model list (GET /v2/models, read 2026-11-17) gives efforts low, medium, high, default low, and says thinking can be turned off; none is used for session titles.",
+      "source": "https://docs.sarvam.ai/api-reference/chat/models-v2"
+    },
+    {
       "match": ["gpt-oss*", "openai/gpt-oss*"],
       "providers": ["ollama"],
       "thinking": {"support": "not_supported"},

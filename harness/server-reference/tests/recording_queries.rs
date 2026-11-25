@@ -160,6 +160,7 @@ fn authorized_search_timeline_summaries_revocation_and_separate_database_outage(
         },
     );
     let mut exec_sql = postgres::Client::connect(&execution, postgres::NoTls).unwrap();
+    exec_sql.batch_execute("SET ow.runtime_schema='6'").unwrap();
     exec_sql.batch_execute(&format!("INSERT INTO {schema}.api_session_owners VALUES('s_alice','alice'),('s_empty','alice'),('s_bob','bob');UPDATE {schema}.submissions SET created='2026-01-01 00:00:00+00'" )).unwrap();
     let recording = config
         .observability

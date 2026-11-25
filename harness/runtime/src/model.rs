@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 #[derive(Clone)]
@@ -7,6 +8,8 @@ pub struct Model {
     pub provider: crate::provider::Kind,
     pub name: String,
     pub scripted: bool,
+    pub session_sequence: Option<i64>,
+    pub agent_context: Option<crate::provider_adapters::AgentContext>,
     pub observation: Option<CallContext>,
     /// Withhold candidate bodies from exporters until runtime safety checks finish.
     pub content_withheld: bool,
@@ -24,7 +27,7 @@ pub struct Model {
     #[cfg(test)]
     pub summary_hook: Option<SummaryHook>,
     #[cfg(test)]
-    pub review_hook: Option<SummaryHook>,
+    pub review_hook: Option<ReviewHook>,
 }
 #[cfg(test)]
 type TestFuture<T> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + Send>>;
@@ -33,7 +36,9 @@ pub type SampleHook = std::sync::Arc<
     dyn Fn(String, Vec<Value>, mpsc::Sender<Progress>) -> TestFuture<()> + Send + Sync,
 >;
 #[cfg(test)]
-pub type SummaryHook = std::sync::Arc<dyn Fn(String) -> TestFuture<String> + Send + Sync>;
+pub type ReviewHook = std::sync::Arc<dyn Fn(String) -> TestFuture<String> + Send + Sync>;
+#[cfg(test)]
+pub type SummaryHook = std::sync::Arc<dyn Fn(String, String) -> TestFuture<String> + Send + Sync>;
 pub enum Progress {
     Delta(String),
     Reasoning(crate::provider::ReasoningDelta),
@@ -41,6 +46,8 @@ pub enum Progress {
     OutputStarted,
     /// Latest cumulative provider snapshot, not a token increment.
     Usage(crate::telemetry::TokenUsage),
+    /// Bounded provider metadata after successful receipt and stream validation.
+    ProviderMetadata(crate::provider_adapters::AttemptAnnotations),
     Complete(crate::provider::Completion),
 }
 #[derive(Clone)]
@@ -53,6 +60,39 @@ pub struct CallContext {
     pub action: String,
     pub purpose: crate::telemetry::ModelPurpose,
     pub attempt: u32,
+}
+
+struct ModelAttemptSpan {
+    span: Option<openworker_telemetry::Span>,
+    annotations: crate::provider_adapters::AnnotationSlot,
+}
+impl ModelAttemptSpan {
+    fn attach_annotations(&mut self, success: bool) {
+        let Some(span) = &mut self.span else {
+            return;
+        };
+        let data = self.annotations.lock().unwrap();
+        if let Some(id) = &data.request_id {
+            span.model_request_id(id);
+        }
+        if success {
+            if let Some(route) = &data.route_locus {
+                span.metadata(openworker_telemetry::attributes::MODEL_ROUTE_LOCUS, route);
+            }
+            if let Some(model) = &data.response_model {
+                span.metadata(openworker_telemetry::attributes::RESPONSE_MODEL, model);
+            }
+        }
+    }
+    fn finish(mut self, outcome: crate::telemetry::Outcome) {
+        self.attach_annotations(outcome == crate::telemetry::Outcome::Ok);
+        self.span.take().unwrap().finish(outcome);
+    }
+}
+impl Drop for ModelAttemptSpan {
+    fn drop(&mut self) {
+        self.attach_annotations(false);
+    }
 }
 
 impl Model {
@@ -89,6 +129,15 @@ impl Model {
         }
         Ok(())
     }
+    fn options(&self) -> Result<crate::inference_options::InferenceOptions> {
+        Ok(match &self.connection {
+            Some((manager, selection)) => manager.inference_options(selection)?,
+            None => Default::default(),
+        })
+    }
+    pub(crate) fn timeouts(&self) -> Result<crate::inference_options::ModelTimeouts> {
+        Ok(self.options()?.timeouts.unwrap_or_default())
+    }
     pub fn with_provider(mut self, provider: crate::provider::Kind) -> Self {
         self.provider = provider;
         self
@@ -98,6 +147,8 @@ impl Model {
             provider: crate::provider::Kind::Openai,
             name,
             scripted,
+            session_sequence: None,
+            agent_context: None,
             observation: None,
             content_withheld: false,
             stream_reasoning: false,
@@ -240,7 +291,7 @@ impl Model {
         self.observation = Some(context);
         self
     }
-    async fn observed<F, Fut>(
+    pub(crate) async fn observed<F, Fut>(
         &self,
         instructions: &str,
         history: &[Value],
@@ -252,7 +303,14 @@ impl Model {
         Fut: std::future::Future<Output = Result<()>>,
     {
         let Some(context) = self.observation.as_ref().filter(|c| c.telemetry.enabled()) else {
-            return request(tx).await;
+            let annotations: crate::provider_adapters::AnnotationSlot = Default::default();
+            let result = crate::provider_adapters::ATTEMPT_ANNOTATIONS
+                .scope(annotations.clone(), request(tx.clone()))
+                .await;
+            if result.is_ok() {
+                Self::emit_annotations(&tx, &annotations).await?;
+            }
+            return result;
         };
         let mut span = context.telemetry.span(
             crate::telemetry::Operation::Model,
@@ -269,8 +327,13 @@ impl Model {
         if !self.content_withheld {
             span.content_tail("gen_ai.prompt",||serde_json::to_string(&json!({"instructions":instructions,"history":public_items(&history[history.len().saturating_sub(20)..])})).unwrap_or_default());
         }
+        let mut observed = ModelAttemptSpan {
+            span: Some(span),
+            annotations: Default::default(),
+        };
         let (inner, mut rx) = mpsc::channel(32);
-        let future = request(inner);
+        let future = crate::provider_adapters::ATTEMPT_ANNOTATIONS
+            .scope(observed.annotations.clone(), request(inner));
         tokio::pin!(future);
         let mut finished = None;
         let mut closed = false;
@@ -284,18 +347,26 @@ impl Model {
                 continue;
             };
             match &progress {
-                Progress::Delta(text) if !text.is_empty() => span.first_output(),
-                Progress::Reasoning(delta) if !delta.text.is_empty() => span.first_output(),
-                Progress::OutputStarted => span.first_output(),
-                Progress::Usage(usage) => span.reported_usage(*usage),
+                Progress::Delta(text) if !text.is_empty() => {
+                    observed.span.as_mut().unwrap().first_output()
+                }
+                Progress::Reasoning(delta) if !delta.text.is_empty() => {
+                    observed.span.as_mut().unwrap().first_output()
+                }
+                Progress::OutputStarted => observed.span.as_mut().unwrap().first_output(),
+                Progress::Usage(usage) => observed.span.as_mut().unwrap().reported_usage(*usage),
                 Progress::Complete(completion) => {
                     if completed {
-                        span.finish(crate::telemetry::Outcome::Error);
+                        observed.finish(crate::telemetry::Outcome::Error);
                         bail!("Duplicate provider completion");
                     }
                     completed = true;
                     if let Some(usage) = &completion.usage {
-                        span.reported_usage(usage.reported());
+                        observed
+                            .span
+                            .as_mut()
+                            .unwrap()
+                            .reported_usage(usage.reported());
                     }
                     if completion.output.iter().any(|item| {
                         item["type"] == "function_call"
@@ -306,19 +377,23 @@ impl Model {
                                     })
                                 })
                     }) {
-                        span.first_output();
+                        observed.span.as_mut().unwrap().first_output();
                     }
                     if !self.content_withheld {
-                        span.content("gen_ai.completion", || {
-                            serde_json::to_string(&public_items(&completion.output))
-                                .unwrap_or_default()
-                        });
+                        observed
+                            .span
+                            .as_mut()
+                            .unwrap()
+                            .content("gen_ai.completion", || {
+                                serde_json::to_string(&public_items(&completion.output))
+                                    .unwrap_or_default()
+                            });
                     }
                 }
                 _ => {}
             }
             if tx.send(progress).await.is_err() {
-                span.finish(crate::telemetry::Outcome::Interrupted);
+                observed.finish(crate::telemetry::Outcome::Interrupted);
                 bail!("Model consumer closed");
             }
         }
@@ -329,12 +404,28 @@ impl Model {
                 Err(anyhow::anyhow!("Missing provider completion"))
             }
         });
-        span.finish(if result.is_ok() {
+        if result.is_ok() {
+            Self::emit_annotations(&tx, &observed.annotations).await?;
+        }
+        observed.finish(if result.is_ok() {
             crate::telemetry::Outcome::Ok
         } else {
             crate::telemetry::Outcome::Error
         });
         result
+    }
+    async fn emit_annotations(
+        tx: &mpsc::Sender<Progress>,
+        slot: &crate::provider_adapters::AnnotationSlot,
+    ) -> Result<()> {
+        let data = slot.lock().unwrap().sanitized();
+        if data.request_id.is_some() || data.route_locus.is_some() || data.response_model.is_some()
+        {
+            tx.send(Progress::ProviderMetadata(data))
+                .await
+                .map_err(|_| anyhow::anyhow!("Model consumer closed"))?;
+        }
+        Ok(())
     }
     #[allow(clippy::too_many_arguments)]
     async fn request_plain(
@@ -362,21 +453,180 @@ impl Model {
                 (api, format!("{}/{}", api.default_url(), api.path()))
             }
         };
-        let client = reqwest::Client::builder()
-            .no_proxy()
+        let options = self.options()?;
+        let max_tokens = if let Some(limit) = self
+            .connection
+            .as_ref()
+            .and_then(|(manager, selected)| manager.context_limit(selected))
+        {
+            let prompt = crate::compaction::estimate(history)
+                .saturating_add(crate::compaction::estimate(tools))
+                .saturating_add(instructions.len().div_ceil(4));
+            let remaining = limit.saturating_sub(prompt);
+            anyhow::ensure!(
+                remaining > 0,
+                "Estimated input exceeds configured model context limit"
+            );
+            max_tokens.min(remaining)
+        } else {
+            max_tokens
+        };
+        self.request_endpoint(
+            api,
+            &endpoint,
+            &options,
+            instructions,
+            history,
+            tools,
+            max_tokens,
+            format,
+            tx,
+            key,
+            false,
+        )
+        .await
+    }
+
+    /// Runs only inside the sandbox. The credential variable contains the
+    /// OpenShell endpoint-bound placeholder; no gateway or service credential crosses stdio.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn sandbox_inference(
+        &self,
+        api: crate::model_api::Api,
+        base: &str,
+        timeouts: Option<crate::inference_options::ModelTimeouts>,
+        instructions: &str,
+        history: &[Value],
+        tools: &[Value],
+        limit: u32,
+        tx: mpsc::Sender<Progress>,
+    ) -> Result<()> {
+        let endpoint = format!(
+            "{}/{}",
+            crate::loop_channel::inference_base(base)?,
+            api.path()
+        );
+        let key = zeroize::Zeroizing::new(
+            std::env::var(api.kind().key_env())
+                .context("Sandbox inference provider is not attached")?,
+        );
+        let options = crate::inference_options::InferenceOptions {
+            timeouts,
+            ..Default::default()
+        };
+        options.validate()?;
+        self.request_endpoint(
+            api,
+            &endpoint,
+            &options,
+            instructions,
+            history,
+            tools,
+            limit as usize,
+            None,
+            tx,
+            &key,
+            true,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn request_endpoint(
+        &self,
+        api: crate::model_api::Api,
+        endpoint: &str,
+        options: &crate::inference_options::InferenceOptions,
+        instructions: &str,
+        history: &[Value],
+        tools: &[Value],
+        max_tokens: usize,
+        format: Option<Value>,
+        tx: mpsc::Sender<Progress>,
+        key: &str,
+        sandbox_route: bool,
+    ) -> Result<()> {
+        let transport = self
+            .connection
+            .as_ref()
+            .and_then(|(m, s)| m.integrations.provider(&s.connection).map(|(_, t)| t));
+        let request_url = options.url(endpoint)?;
+        let headers = options.headers()?;
+        let mut builder = reqwest::Client::builder().default_headers(headers);
+        if sandbox_route {
+            // OpenShell supplies the sandbox egress proxy and its trust bundle.
+            if let Ok(proxy) =
+                std::env::var("HTTPS_PROXY").or_else(|_| std::env::var("https_proxy"))
+            {
+                builder = builder.proxy(reqwest::Proxy::all(proxy)?);
+            }
+            if let Some(path) = std::env::var_os("SSL_CERT_FILE") {
+                let pem = std::fs::read(path)?;
+                for cert in reqwest::Certificate::from_pem_bundle(&pem)? {
+                    builder = builder.add_root_certificate(cert);
+                }
+            }
+        } else {
+            builder = builder.no_proxy();
+        }
+        let client = builder
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(std::time::Duration::from_secs(15))
-            .timeout(std::time::Duration::from_secs(180))
+            .timeout(options.timeouts.clone().unwrap_or_default().request())
             .build()?;
+        let provider_error = |e: crate::provider::Error| {
+            if transport.is_some()
+                && e.code != Some("connection_refused")
+                && matches!(
+                    e.kind,
+                    crate::provider::Failure::Transport
+                        | crate::provider::Failure::IncompleteStream
+                )
+            {
+                return crate::provider::Error::new(crate::provider::Failure::InvalidResponse)
+                    .with_code("adapter_outcome_unknown")
+                    .with_api(api);
+            }
+            e.with_api(api)
+        };
+        let prepare =
+            |body: &mut Value| -> Result<Option<Box<dyn crate::provider_adapters::Attempt>>> {
+                let binding = self.connection.as_ref().and_then(|(_, selected)| {
+                    if !selected.notify_on_session_state {
+                        return None;
+                    }
+                    Some(crate::provider_adapters::Binding {
+                        sid: self.observation.as_ref()?.session.clone(),
+                        seq: self.session_sequence?,
+                    })
+                });
+                transport
+                    .as_ref()
+                    .map(|a| {
+                        a.prepare(
+                            body,
+                            crate::provider_adapters::Endpoint {
+                                agent_context: self.agent_context.as_ref(),
+                                api,
+                                url: &request_url,
+                                key,
+                                client: &client,
+                            },
+                            binding,
+                        )
+                    })
+                    .transpose()
+                    .map(|attempt| attempt.map(crate::provider_adapters::track))
+            };
         if api == crate::model_api::Api::ChatCompletions {
             let binding = crate::chat_completions::replay_binding(
-                &endpoint,
+                endpoint,
                 &self.name,
                 self.connection
                     .as_ref()
                     .map(|(_, selection)| selection.identity.as_str()),
             );
-            let google_compat = reqwest::Url::parse(&endpoint).is_ok_and(|url| {
+            let google_compat = reqwest::Url::parse(endpoint).is_ok_and(|url| {
                 url.host_str() == Some("generativelanguage.googleapis.com")
                     && url.path().ends_with("/openai/chat/completions")
             });
@@ -397,16 +647,19 @@ impl Model {
                     body.as_object_mut().unwrap().remove("stream_options");
                 }
             }
+            options.extend(&mut body)?;
+            let adapter = prepare(&mut body)?;
             crate::provider::request_decoded(
                 &client,
-                &endpoint,
+                &request_url,
                 key,
                 body,
                 tx,
                 crate::chat_completions::Decoder::with_binding(binding, google_compat),
+                adapter,
             )
             .await
-            .map_err(|e| e.with_api(api))?;
+            .map_err(provider_error)?;
             return Ok(());
         }
         if api == crate::model_api::Api::Anthropic {
@@ -441,9 +694,11 @@ impl Model {
                     }
                 }
             }
-            crate::anthropic::request(&client, &endpoint, key, body, tx)
+            options.extend(&mut body)?;
+            let adapter = prepare(&mut body)?;
+            crate::anthropic::request_with_adapter(&client, &request_url, key, body, tx, adapter)
                 .await
-                .map_err(|e| e.with_api(api))?;
+                .map_err(provider_error)?;
             return Ok(());
         }
         if history.iter().any(|v| v.get("provider").is_some()) {
@@ -467,7 +722,8 @@ impl Model {
         if let Some(format) = format {
             body["text"] = json!({"format":format});
         }
-        crate::provider::request(&client, &endpoint, key, body, tx)
+        options.extend(&mut body)?;
+        crate::provider::request(&client, &request_url, key, body, tx)
             .await
             .map_err(|e| e.with_api(api))?;
         Ok(())
@@ -480,7 +736,7 @@ impl Model {
     ) -> Result<String> {
         #[cfg(test)]
         if let Some(hook) = &self.summary_hook {
-            return hook(input.into()).await;
+            return hook(instructions.into(), input.into()).await;
         }
         if self.scripted {
             return Ok(crate::compaction::REFERENCE["cases"]
@@ -518,6 +774,13 @@ impl Model {
         self.text_response_usage(instructions, input, max_tokens, None)
             .await
     }
+    fn review_timeout(&self) -> Duration {
+        self.options()
+            .ok()
+            .and_then(|options| options.timeouts)
+            .map_or(Duration::from_secs(90), |timeouts| timeouts.request())
+    }
+
     pub async fn review_with_usage(
         &self,
         input: &str,
@@ -531,7 +794,7 @@ impl Model {
             return (self.review(input).await, Some(0));
         }
         match tokio::time::timeout(
-            std::time::Duration::from_secs(90),
+            self.review_timeout(),
             self.text_response_usage(
                 crate::permissions::REVIEW_INSTRUCTIONS,
                 input,
@@ -581,7 +844,7 @@ impl Model {
                 r=&mut request,if !finished=>{r?;finished=true;},
                 p=rx.recv(),if !closed=>match p {
                     Some(Progress::Complete(r))=>response=Some(r),
-                    Some(Progress::Delta(_)|Progress::Reasoning(_)|Progress::OutputStarted|Progress::Usage(_))=>{},None=>closed=true
+                    Some(Progress::Delta(_)|Progress::Reasoning(_)|Progress::OutputStarted|Progress::Usage(_)|Progress::ProviderMetadata(_))=>{},None=>closed=true
                 }
             }
         }
@@ -618,7 +881,7 @@ impl Model {
             );
         }
         match tokio::time::timeout(
-            std::time::Duration::from_secs(90),
+            self.review_timeout(),
             self.text_response(
                 REVIEW_INSTRUCTIONS,
                 input,
@@ -847,10 +1110,17 @@ impl Model {
             .and_then(|s| s.strip_prefix("TEST_RESOURCE_GRANTS ").map(str::to_owned))
         {
             let steps: Vec<Value> = serde_json::from_str(&plan)?;
-            let output = if let Some(step) = steps.get(calls.len()) {
-                vec![
-                    json!({"type":"function_call","call_id":crate::id("call"),"name":step["name"],"arguments":step["arguments"].to_string()}),
-                ]
+            // A nested group is one provider response with multiple calls.
+            let mut prior = 0;
+            let next = steps.iter().find(|step| {
+                let start = prior;
+                prior += step.as_array().map_or(1, |a| a.len());
+                start == calls.len()
+            });
+            let output = if let Some(step) = next {
+                step.as_array().map(Vec::as_slice).unwrap_or(std::slice::from_ref(step)).iter().map(|s|
+                    json!({"type":"function_call","call_id":crate::id("call"),"name":s["name"],"arguments":s["arguments"].to_string()})
+                ).collect()
             } else {
                 vec![
                     json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"Resource fixture finished; inspect actual tool results."}]}),
@@ -998,7 +1268,19 @@ pub fn public_items(items: &[Value]) -> Vec<Value> {
     items
         .iter()
         .filter(|item| item["type"] != "reasoning")
-        .cloned()
+        .map(|item| {
+            let mut item = item.clone();
+            if let Some(blocks) = item["content"].as_array_mut() {
+                for block in blocks {
+                    if block["type"] == "input_image" {
+                        *block = json!({"type":"input_image","content_withheld":true});
+                    } else if block["type"] == "input_file" {
+                        *block = json!({"type":"input_file","filename":block["filename"],"content_withheld":true});
+                    }
+                }
+            }
+            item
+        })
         .collect()
 }
 

@@ -7,7 +7,9 @@ site = Path(__file__).resolve().parent.parent
 root = site.parent
 output = Path(sys.argv[1]).resolve()
 base = sys.argv[2].rstrip('/')
-pages = json.loads((site/'pages.json').read_text())
+product = sys.argv[3] if len(sys.argv)>3 else 'sdk'
+assert product in ('sdk','desktop'), product
+pages = json.loads((site/('desktop-pages.json' if product=='desktop' else 'pages.json')).read_text())
 class Page(HTMLParser):
     def __init__(self, html):
         super().__init__(); self.ids=set(); self.links=[]; self.sources=[]; self.indexed=False; self.studio=False; self.pres=0
@@ -27,7 +29,7 @@ for p in pages:
     assert page.studio and page.indexed, file
     # Source drawer has one extra pre; all Markdown code fences remain present.
     fences=len(re.findall(r'^```[^\n]*\n[\s\S]*?^```', (root/p['source']).read_text(), re.M))
-    assert page.pres==fences+(p['slug'] in ('desktop','server')), (file,page.pres,fences)
+    assert page.pres==fences+(product=='sdk' and p['slug'] in ('desktop','server')), (file,page.pres,fences)
 for file,page in parsed.items():
     for target in page.links+page.sources:
         url=urlsplit(target)
@@ -42,5 +44,15 @@ for file,page in parsed.items():
 assert (output/'pagefind/pagefind.js').exists(), 'Missing search bundle'
 for name in ['apple','notion']:
     preview=output/'previews/desktop'/name/'index.html'
-    assert not Page(preview.read_text()).indexed
+    if product=='sdk': assert not Page(preview.read_text()).indexed
+    else: assert not preview.exists(), 'SDK previews must not appear in Desktop output'
+if product=='desktop':
+    from zipfile import ZipFile
+    with ZipFile(output/'examples/meeting-notes.zip') as archive:
+        samples=root/'docs/desktop/samples'
+        expected=sorted(str(path.relative_to(samples)) for path in (samples/'meeting-notes').glob('*.md'))
+        assert sorted(archive.namelist())==expected, 'Unexpected sample ZIP contents'
+        for name in expected: assert archive.read(name)==(samples/name).read_bytes(), name
+    assert not (output/'examples/desktop.json').exists(), 'SDK source bundle in Desktop output'
+    assert not (output/'examples/web.json').exists(), 'SDK source bundle in Desktop output'
 print(f'Checked {len(parsed)} Studio guides, code blocks, links, images, anchors and search assets at {base}')

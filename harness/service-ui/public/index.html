@@ -6,6 +6,9 @@
     <meta name="color-scheme" content="light" />
     <title>OpenWorker · Management</title>
     <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="tracing.css" />
+    <link rel="stylesheet" href="evals.css" />
+    <link rel="stylesheet" href="compliance.css" />
     <script type="module" src="app.js"></script>
   </head>
   <body>
@@ -13,14 +16,15 @@
       <div class="login-card">
         <h1>OpenWorker</h1>
         <p>Sign in to your service.</p>
-        <form id="login-form">
+        <form id="login-form" aria-busy="true">
           <label for="token">Service token</label
           ><input
             id="token"
             type="password"
             autocomplete="off"
+            disabled
             required
-          /><button class="button primary" type="submit">Sign in</button>
+          /><button class="button primary" type="submit" disabled>Sign in</button>
           <p id="login-error" role="alert"></p>
         </form>
       </div>

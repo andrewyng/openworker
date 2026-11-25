@@ -101,6 +101,8 @@ export function hostConfig(options: ResolvedHarnessOptions): object {
   return {
     state_dir: options.stateDir,
     desktop: {
+      integrations: options.integrations,
+      integration_policies: options.integrationPolicies,
       compliance: options.compliance ?? (options.complianceSinks?.length ? {} : undefined),
       compliance_sinks: options.complianceSinks ?? [],
       inherit_env: options.inheritEnv ?? [],
@@ -111,6 +113,7 @@ export function hostConfig(options: ResolvedHarnessOptions): object {
       compaction: {
         threshold_pct: options.compaction?.triggerAtContextFraction ?? 0.8,
         context_window: options.compaction?.contextWindow ?? 128000,
+        additional_instructions: options.compaction?.additionalInstructions,
       },
     },
     runner: options.runner ?? options.executable,
@@ -139,9 +142,23 @@ export function hostConfig(options: ResolvedHarnessOptions): object {
         : (options.sandbox ?? "openshell"),
     scripted: options.scripted ?? false,
     telemetry: options.telemetry ?? null,
+    ...(options.recording ? { recording: {
+      evaluations: options.recording.evaluations ?? false,
+      max_pending_evaluations:options.recording.maxPendingEvaluations??10000,
+      evaluation_retention_days:options.recording.evaluationRetentionDays??30,
+      evaluation_sinks:(options.recording.evaluationSinks??[]).map(s=>({name:s.name,url:s.url,authorization_env:s.authorizationEnv,include_explanation:s.includeExplanation??false})),
+      evidence: options.recording.evidence ? {user_input:options.recording.evidence.userInput??false,assistant_output:options.recording.evidence.assistantOutput??false,tool_arguments:options.recording.evidence.toolArguments??false,tool_results:options.recording.evidence.toolResults??false,max_bytes:options.recording.evidence.maxBytes}:null,
+      database: options.recording.database.type === "sqlite"
+        ? {kind:"sqlite",path:resolve(options.recording.database.path)}
+        : {kind:"postgres",connection_env:options.recording.database.connectionEnv,schema:options.recording.database.schema,ca_file:options.recording.database.caFile ?? null,loopback_plaintext:options.recording.database.loopbackPlaintext ?? false},
+      deployment:options.recording.deployment ?? "sdk",
+      retention_days:options.recording.retentionDays ?? 30,
+      queue_capacity:options.recording.queueCapacity ?? 1024,
+    }} : {}),
   };
 }
 export function agentWire(a: Agent, depth = 0): object {
+  if (a.approvals?.allowWorkspaceReads?.length) throw new Error("Directory approval grants require a cluster runtime profile");
   if (depth > 1)
     throw new HarnessError(
       "InvalidInput",
@@ -153,6 +170,7 @@ export function agentWire(a: Agent, depth = 0): object {
     name: a.name,
     description: a.description,
     instructions: a.instructions,
+    integrations: a.integrations,
     limits: a.limits,
     builtin_tools: a.builtinTools,
     tools: a.tools,
@@ -164,6 +182,9 @@ export function agentWire(a: Agent, depth = 0): object {
     memory_scope: a.memoryScope,
     scheduling: a.scheduling,
     auto_skip_questions: a.autoSkipQuestions,
+    never_allow_read_write_outside_workspace: a.neverAllowReadWriteOutsideWorkspace,
+    auto_approver_context: a.autoApproverContext,
+    compaction: a.compaction === undefined ? undefined : { additional_instructions: a.compaction.additionalInstructions },
     approvals:
       a.approvals?.mode === "auto"
         ? {
@@ -174,7 +195,8 @@ export function agentWire(a: Agent, depth = 0): object {
             },
           }
         : a.approvals,
-    subagents: a.subagents?.map((child) => agentWire(child, depth + 1)),
+    subagents: Array.isArray(a.subagents) ? a.subagents.map((child) => agentWire(child, depth + 1)) : undefined,
+    standalone_subagents: a.subagents && !Array.isArray(a.subagents) ? a.subagents : undefined,
     servers: a.servers,
     tool_policy: a.toolPolicy,
     runtime_policy: a.runtimePolicy,
@@ -185,6 +207,8 @@ export function environment(options: HarnessOptions): NodeJS.ProcessEnv {
   const explicit = [...(options.inheritEnv ?? []), ...(options.complianceSinks ?? []).map(s=>s.credentialEnv)];
   if (options.storage?.type === "postgres")
     explicit.push(options.storage.connectionEnv);
+  if(options.recording?.database.type === "postgres") explicit.push(options.recording.database.connectionEnv);
+  for (const sink of options.recording?.evaluationSinks ?? []) explicit.push(sink.authorizationEnv);
   for (const header of options.telemetry?.headers ?? [])
     if ("value_env" in header) explicit.push(header.value_env);
   for (const key of explicit) {

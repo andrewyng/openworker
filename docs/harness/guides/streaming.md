@@ -123,3 +123,109 @@ Upstream response bodies, prompts, keys and arbitrary error messages are not
 included in these diagnostics. Use the request ID with the provider when more
 detail is needed. A retryable provider error does not authorize an application to
 replay tool actions: retain the SDK's run reference and reconcile unknown outcomes.
+
+## Streaming with tool approvals
+
+Use one durable submission for the turn, including time spent waiting for approval.
+The UI shows the actual proposed tool and arguments; never invent an approval.
+
+### Stream, approve and continue the same turn
+
+This helper supplies the full loop. The app provides escaped-text rendering,
+activity UI and an approval card showing both `pending.tool` and
+`pending.arguments`.
+
+```typescript
+import { AttemptOutput, type Session, type RunEvent, type Interruption }
+  from '@openworkerai/harness-sdk';
+
+type Approval = Extract<Interruption, { kind: 'approval' }>;
+export async function streamWithApprovals(session: Session, text: string, ui: {
+  renderText(text: string): void;
+  renderActivity(event: RunEvent): void;
+  approve(proposal: Approval): Promise<boolean>;
+}) {
+  const display = new AttemptOutput();
+  let stream = (await session.send(text)).events();
+  while (true) {
+    for await (const event of stream) {
+      display.apply(event);
+      ui.renderText(display.text); // Replace; do not append the whole projection.
+      ui.renderActivity(event);
+    }
+    const result = await stream.result();
+    if (result.status !== 'interrupted') {
+      if (result.status === 'completed') ui.renderText(result.finalOutput ?? display.text);
+      else { display.interrupt(); ui.renderText(display.text); }
+      return result;
+    }
+    if (!result.interruptions.length) throw new Error('No pending interaction');
+    for (const pending of result.interruptions) {
+      if (pending.kind !== 'approval') return result; // Route questions/safety separately.
+      const allowed = await ui.approve(pending);
+      await session.respond(pending, { decision: allowed ? 'once' : 'deny' });
+    }
+    stream = await session.resumeStreamed(stream.checkpoint());
+  }
+}
+```
+
+Do not resend the user message to continue after approval: retain the submission
+and consumed cursors. Use `session.cancel()` for Stop. Closing an observer does not
+cancel execution or justify automatic approval. Persist the session reference
+and stream checkpoint for crash recovery, then reconcile pending interactions.
+In Rust, persist `Run::checkpoint()` or `RunStream::checkpoint()` after handling an event and use
+`session.resume_streamed_from(&checkpoint)` after reconnecting. A checkpoint
+records the last delivered journal position for each session. Events after the
+last saved checkpoint can be replayed.
+
+Rust's `RunEvent::ModelUsage` reports provider totals for a completed model call.
+If a provider omits usage, the SDK emits no usage event. Use the session and
+journal event IDs to avoid double-counting on replay.
+
+For a non-streaming flow, `session.runWith(input, handler)` invokes a real app
+handler for interruptions; `{ defer: true }` leaves the decision pending.
+
+## Show approval decisions
+
+A streamed event can contain `approvalDecision`, independently of its summary:
+
+```typescript
+for await (const item of run.events()) {
+  const decision = item.approvalDecision;
+  if (decision) {
+    console.log(decision.tool, decision.verdict, decision.reason ?? 'No explanation available');
+    // Scope interactionId/callId with item.sessionId and item.event.turn_id.
+  }
+}
+```
+
+`verdict` is `allow`, `deny` or `unsure`. `origin` distinguishes an LLM
+`reviewer` (the auto-approver), a human, a session grant, hard policy, bypass or
+application policy. `unsure` asks for human approval and does not execute the
+call. These are persisted decisions; observing or replaying them never approves
+another action or reruns a review. Rust exposes `RunEvent::ApprovalDecision`
+and `ApprovalVerdict`; existing `AutoApproved` events remain available and can
+carry the same decision metadata.
+
+Reasons are optional, limited to 512 characters, and omitted when content
+protection withholds them or obvious credential markers are detected. Configure
+content guardrails for your application's sensitive data; the bounding filter is
+not a general secret detector. Display explanations as untrusted text. A denied
+tool response includes a safe explanation when available, plus the instruction
+not to retry or evade the decision. Human and hard-policy denials use generic
+explanations, without copying private policy errors. Older journals may lack the
+metadata needed to identify a human decision or call; the SDK does not guess it.
+
+## Provider route metadata
+
+A provider integration can report a request ID and validated route through the
+`model_route` journal event after a successful attempt. TypeScript exposes the
+`model_route` summary (`requestId`, `routeLocus`, `responseModel`); Rust exposes
+`RunEvent::ModelRoute`. These fields are optional and contain bounded identifiers,
+not prompts or raw provider payloads. An integration that reports nothing emits
+no route event. Failed or incomplete receipts do not produce a successful route.
+
+Tracing exports the same request ID as `openworker.request.id` even with content
+capture off. Route and effective-model attributes require metadata capture.
+Correlation IDs never become metric dimensions.

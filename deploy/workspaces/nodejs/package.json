@@ -1,0 +1,5 @@
+{
+  "name": "openworker-nodejs-workspace",
+  "private": true,
+  "dependencies": { "vite": "8.3.8" }
+}

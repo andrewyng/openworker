@@ -7,6 +7,9 @@ use tokio::{
 };
 
 fn provider_error(error: anyhow::Error) -> Error {
+    if let Some(diagnostic) = error.downcast_ref::<crate::AgentDefinitionConflict>() {
+        return Error::AgentDefinitionConflict(diagnostic.clone());
+    }
     match error.downcast_ref::<openworker_runtime::provider::Error>() {
         Some(error) => Error::Provider(error.diagnostic()),
         None => Error::Remote(error.to_string()),
@@ -387,6 +390,15 @@ impl Backend {
                             return Err(Error::OutcomeUnknown);
                         }
                         if let Some(message) = v["error"]["message"].as_str() {
+                            if let Ok(diagnostic) =
+                                serde_json::from_value::<crate::AgentDefinitionConflict>(
+                                    v["error"]["agent_definition_conflict"].clone(),
+                                )
+                            {
+                                if diagnostic.valid() {
+                                    return Err(Error::AgentDefinitionConflict(diagnostic));
+                                }
+                            }
                             if let Ok(diagnostic) =
                                 serde_json::from_value::<openworker_runtime::provider::Diagnostic>(
                                     v["error"]["provider_error"].clone(),

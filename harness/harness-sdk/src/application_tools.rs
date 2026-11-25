@@ -61,6 +61,9 @@ pub struct ToolContext {
     /// Matches tool-start/finish RunEvent IDs. Callback delivery can precede
     /// the application's consumption of the already-recorded journal event.
     pub call_id: String,
+    /// The registered application tool, independently of the model's alias spelling.
+    pub qualified_name: String,
+    pub model_alias: Option<String>,
     pub workspace: std::path::PathBuf,
     cancel: CancellationToken,
     client: HarnessClient,
@@ -239,6 +242,8 @@ impl ApplicationTools {
                 session_id: value["context"]["session_id"].as_str().unwrap_or("").into(),
                 turn_id: value["context"]["turn_id"].as_str().unwrap_or("").into(),
                 call_id: value["context"]["call_id"].as_str().unwrap_or("").into(),
+                qualified_name: value["tool"].as_str().unwrap_or("").into(),
+                model_alias: value["context"]["model_alias"].as_str().map(str::to_owned),
                 workspace: value["context"]["workspace"].as_str().unwrap_or("").into(),
                 cancel: cancel.clone(),
                 client: client.clone(),

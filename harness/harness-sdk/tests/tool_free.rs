@@ -164,11 +164,13 @@ async fn exercise(api: Api, managed: bool) {
         .default_model(Model::new("Fixture", "fixture"));
     let builder = Harness::builder()
         .state_dir(root.path().join("state"))
-        .executable(&executable)
         .sandbox(Sandbox::Off)
         .agent(guide.clone().name("Startup guide"));
     let harness = if managed {
-        builder.managed(executable, RestartPolicy::default()).await
+        builder
+            .executable(&executable)
+            .managed(executable, RestartPolicy::default())
+            .await
     } else {
         builder.start().await
     }
@@ -220,6 +222,25 @@ async fn exercise(api: Api, managed: bool) {
         )
         .await
         .unwrap();
+    if !managed {
+        assert!(
+            harness
+                .create_agent(
+                    Agent::new("requires_runner")
+                        .instructions("Use the app tool.")
+                        .tool("app.unused")
+                )
+                .await
+                .is_err(),
+            "Later registration cannot silently enable bound tools without a helper"
+        );
+        assert!(!harness
+            .list_agents()
+            .await
+            .unwrap()
+            .iter()
+            .any(|a| a == "requires_runner"));
+    }
     let session = agent.new_session().await.unwrap();
     let run = session
         .send("Help me understand the lesson.")
@@ -280,7 +301,22 @@ async fn exercise(api: Api, managed: bool) {
     }
     assert_eq!(effects.load(Ordering::SeqCst), 0);
     assert_eq!(requests.load(Ordering::SeqCst), 5);
+    let reference = session.reference().clone();
     harness.shutdown().await.unwrap();
+    if !managed {
+        let restored = Harness::builder()
+            .state_dir(root.path().join("state"))
+            .sandbox(Sandbox::Off)
+            .start()
+            .await
+            .unwrap();
+        let recovered = restored.resume(reference).await.unwrap();
+        assert_eq!(
+            recovered.snapshot().await.unwrap()["turn"]["status"],
+            "completed"
+        );
+        restored.shutdown().await.unwrap();
+    }
     server.await.unwrap();
 }
 
@@ -300,3 +336,28 @@ case!(chat_completions_embedded, Chat, false);
 case!(chat_completions_managed, Chat, true);
 case!(anthropic_embedded, Anthropic, false);
 case!(anthropic_managed, Anthropic, true);
+
+#[tokio::test]
+async fn missing_runner_is_not_a_sandbox_or_managed_fallback() {
+    let root = tempfile::tempdir().unwrap();
+    let missing = root.path().join("missing-openworker-harness");
+    assert!(Harness::builder()
+        .state_dir(root.path().join("sandbox"))
+        .agent(
+            Agent::new("guide")
+                .instructions("Answer briefly.")
+                .tools([] as [&str; 0])
+        )
+        .executable(&missing)
+        .sandbox(Sandbox::Openshell)
+        .start()
+        .await
+        .is_err());
+    assert!(Harness::builder()
+        .state_dir(root.path().join("managed"))
+        .executable(&missing)
+        .sandbox(Sandbox::Off)
+        .managed(missing, RestartPolicy::default())
+        .await
+        .is_err());
+}

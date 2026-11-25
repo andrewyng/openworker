@@ -338,12 +338,15 @@ function TaskDetail({
       .catch(() => {});
   useEffect(() => {
     setSeenMark(null);
-    refresh();
-    // Opening the detail IS reading it: advance the seen mark and nudge the
-    // sidebar so the badge clears immediately (UX-023).
-    markAutomationSeen(id)
-      .then(() => announceAutomationsChanged())
-      .catch(() => {});
+    // Opening the detail IS reading it: advance the seen mark and nudge the sidebar so
+    // the badge clears (UX-023). Only after the first load: the "new" pills compare
+    // against the mark as it was before this visit, and a mark-seen that lands first
+    // would hand the load "now", so no run would read as new (OPE-309).
+    refresh().then(() =>
+      markAutomationSeen(id)
+        .then(() => announceAutomationsChanged())
+        .catch(() => {}),
+    );
   }, [id]);
 
   if (!task)

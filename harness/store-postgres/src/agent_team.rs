@@ -33,14 +33,14 @@ pub(crate) fn lead_authority(
     if let Some(catalog) = &doc.type_catalog {
         catalog.check_scope(lead)?;
     }
-    let row=tx.query_opt("SELECT o.principal,k.spec,o.release_id,o.profile_id FROM service_operations o JOIN api_credentials k ON k.id=o.credential_id AND NOT k.revoked AND ((k.spec->>'expires_at') IS NULL OR (k.spec->>'expires_at')::bigint>extract(epoch FROM clock_timestamp())) WHERE o.session_id=$1 AND o.status='complete' FOR SHARE OF k", &[&lead.id])?.context("Delegation credential expired/revoked")?;
+    let row=tx.query_opt("SELECT o.principal,k.spec,o.release_id,o.profile_id,k.id FROM service_operations o JOIN api_credentials k ON k.id=coalesce(o.delegation_credential_id,o.credential_id) AND NOT k.revoked AND ((k.spec->>'expires_at') IS NULL OR (k.spec->>'expires_at')::bigint>extract(epoch FROM clock_timestamp())) WHERE o.session_id=$1 AND o.status='complete' FOR SHARE OF k", &[&lead.id])?.context("Delegation credential expired/revoked")?;
     let spec: crate::auth::Spec = serde_json::from_value(row.get(1))?;
     ensure!(
         spec.principal == row.get::<_, String>(0) && spec.role.permits(crate::auth::Action::Submit),
         "Workspace delegation credential unavailable"
     );
     let identity = crate::auth::Identity {
-        credential_id: String::new(),
+        credential_id: row.get(4),
         principal: spec.principal,
         role: spec.role,
         scope: spec.scope,
@@ -55,7 +55,7 @@ pub(crate) fn lead_authority(
         release.activated && profile.activated && r.runtime_profiles.contains(&p.id),
         "Workspace release/profile unavailable"
     );
-    crate::service_catalog::allowed(&identity, &r.allowed_principals)?;
+    crate::app_agents::allow_release(tx, &identity, &r)?;
     crate::service_catalog::allowed(&identity, &p.allowed_principals)?;
     Ok((identity, p))
 }
@@ -91,7 +91,7 @@ pub(crate) fn workspace_authority(
         child_release.activated && child.runtime_profiles.contains(&p.id),
         "Child release unavailable"
     );
-    crate::service_catalog::allowed(&identity, &child.allowed_principals)?;
+    crate::app_agents::allow_release(tx, &identity, &child)?;
     Ok(identity)
 }
 impl Transaction for Tx<'_, '_> {
@@ -435,7 +435,7 @@ impl crate::PostgresStore {
                     "Child release not activated for this profile"
                 );
                 if let Some(p) = &principal {
-                    crate::service_catalog::allowed(p, &release.allowed_principals)?;
+                    crate::app_agents::allow_release(&mut tx, p, &release)?;
                 }
             }
             crate::service_team_types::validate_models(&mut tx, &lead, &args, &models)?;
@@ -619,20 +619,30 @@ impl crate::PostgresStore {
             child.agent_team=Some(agent_team::Membership{team_id:doc.id.clone(),agent_id:instance.agent_id.clone(),inbox_cursor:0,last_output:None,notices:vec![],waiting:None});
             let lead=doc.roster.instance(&doc.lead).context("Lead missing")?;
             // Delegation inherits the submitting principal, never a stronger role.
-            let origin=tx.query_one("SELECT principal,credential_id,project,profile_id FROM service_operations WHERE session_id=$1 AND status='complete'",&[&lead.session_id])?;
-            let principal:String=origin.get(0);let credential:String=origin.get(1);
+            let origin=tx.query_one("SELECT principal,project,profile_id FROM service_operations WHERE session_id=$1 AND status='complete'",&[&lead.session_id])?;
+            let principal:String=origin.get(0);
             let release_id=template["release"].as_str().context("Release missing")?;
             let authorization=(||->Result<crate::auth::Identity>{
             let lead_session=db::locked(&mut tx,&lead.session_id,None)?;
-            workspace_authority(&mut tx,&lead_session,&doc,&instance.agent_id)?;
-            crate::service_team_types::check_template(&mut tx, &doc, &instance, &template)?;
-            let spec:crate::auth::Spec=serde_json::from_value(tx.query_opt("SELECT spec FROM api_credentials WHERE id=$1 AND NOT revoked AND ((spec->>'expires_at') IS NULL OR (spec->>'expires_at')::bigint>extract(epoch FROM clock_timestamp())) FOR SHARE",&[&credential])?.context("Submitting credential expired or revoked")?.get(0))?;
-            ensure!(spec.principal==principal && spec.role.permits(crate::auth::Action::Submit),crate::auth::Error::Forbidden);
-            let identity=crate::auth::Identity{credential_id:credential,principal:principal.clone(),role:spec.role,scope:spec.scope,environments:spec.environments,expires_at:spec.expires_at};
+            let identity=workspace_authority(&mut tx,&lead_session,&doc,&instance.agent_id)?;
+            ensure!(identity.principal==principal,crate::auth::Error::Forbidden);
             let release_entry=crate::service_catalog::entry(&mut tx,"release",release_id)?;
             let release:crate::service_catalog::Release=serde_json::from_value(release_entry.definition)?;
-            ensure!(release_entry.activated,"Delegated release deactivated");crate::service_catalog::allowed(&identity,&release.allowed_principals)?;
-            let profile_id:String=doc.placement_bindings.get(&instance.agent_id).map(|b|b.profile_id.clone()).unwrap_or_else(||origin.get(3));
+            ensure!(release_entry.activated,"Delegated release deactivated");crate::app_agents::allow_release(&mut tx,&identity,&release)?;
+            if !doc.type_bindings.contains_key(&instance.agent_id) && doc.roster.request(&instance.agent_id).is_none_or(|r|r.model.is_none()){
+                if let Some(name)=&release.model_profile{
+                    let selected=crate::model_registry::resolve_profile(&mut tx,name)?.selection;
+                    child.model=selected.model.clone();child.model_provider=selected.provider;child.model_selection=Some(selected);
+                }
+            }
+            if let Some(selected)=&child.model_selection {
+                if let Some(row)=tx.query_opt("SELECT spec,enabled FROM model_providers WHERE name=$1 FOR SHARE",&[&selected.connection])? {
+                    ensure!(row.get::<_,bool>(1),crate::auth::Error::Forbidden);
+                    let route:crate::model_registry::Provider=serde_json::from_value(row.get(0))?;
+                    child.compaction_config.context_window=child.compaction_config.context_window.min(route.context_limit);
+                }
+            }
+            let profile_id:String=doc.placement_bindings.get(&instance.agent_id).map(|b|b.profile_id.clone()).unwrap_or_else(||origin.get(2));
             if let Some(placement)=doc.placement_bindings.get(&instance.agent_id) {
                 let lead_session=db::locked(&mut tx,&lead.session_id,None)?;
                 let checked=crate::service_team_placements::target_authority(&mut tx,&lead_session,&doc,&instance.agent_id,&profile_id)?;
@@ -642,13 +652,16 @@ impl crate::PostgresStore {
             let profile:crate::service_catalog::Profile=serde_json::from_value(profile_entry.definition)?;
             ensure!(profile_entry.activated && release.runtime_profiles.contains(&profile_id),"Delegated RuntimeProfile unavailable");
             crate::service_catalog::allowed(&identity,&profile.allowed_principals)?;
+            child.permissions.never_allow_read_write_outside_workspace |=
+                lead_session.permissions.never_allow_read_write_outside_workspace
+                    || profile.never_allow_read_write_outside_workspace;
             Ok(identity)
             })();
             let identity=match authorization {
                 Ok(identity)=>identity,
                 Err(_)=>{
                     doc.roster.close(&instance.agent_id)?;
-                    doc.failures.insert(instance.agent_id.clone(),"Delegation denied: submitting credential or activated release permission is unavailable".into());
+                    doc.failures.insert(instance.agent_id.clone(),"Delegation denied: check release and profile access. After credential rotation, reauthorize this team using the current app credential.".into());
                     Tx(&mut tx).write(&doc,false)?;tx.commit()?;return Ok(true);
                 }
             };
@@ -679,7 +692,7 @@ impl crate::PostgresStore {
         if cancelled_queued {
             return Ok(true);
         }
-        let target=self.call(|db|Ok(db.client.query_opt("SELECT s.id,s.data->'turn'->>'id',coalesce(o.principal,'harness-team-controller'),t.id FROM sessions s JOIN agent_teams t ON t.id=s.data->'agent_team'->>'team_id' LEFT JOIN api_session_owners o ON o.session_id=s.id WHERE ((t.data->>'stopped')::boolean OR (t.data->'roster'->'instances'->(s.data->'agent_team'->>'agent_id')->>'phase'='retiring' AND t.data->'retirements'->(s.data->'agent_team'->>'agent_id')->>'mode'='cancel')) AND s.data->'turn'->>'status' NOT IN ('completed','failed','cancelled','interrupted','truncated','blocked') AND NOT EXISTS(SELECT 1 FROM controls c WHERE c.session_id=s.id AND c.turn_id=s.data->'turn'->>'id' AND c.status='pending' AND c.command->'action'->>'kind'='cancel') ORDER BY s.id LIMIT 1",&[])?.map(|r|(r.get::<_,String>(0),r.get::<_,String>(1),r.get::<_,String>(2),r.get::<_,String>(3)))))?;
+        let target=self.call(|db|Ok(db.client.query_opt("SELECT s.id,s.data->'turn'->>'id',coalesce(o.principal,'harness-team-controller'),t.id FROM sessions s JOIN agent_teams t ON t.id=s.data->'agent_team'->>'team_id' LEFT JOIN api_session_owners o ON o.session_id=s.id WHERE ((t.data->>'stopped')::boolean OR (t.data->'roster'->'instances'->(s.data->'agent_team'->>'agent_id')->>'phase'='retiring' AND t.data->'retirements'->(s.data->'agent_team'->>'agent_id')->>'mode'='cancel') OR t.data->'standalone'->'cancellations'->>(s.data->'agent_team'->>'agent_id')=s.data->'turn'->>'id') AND s.data->'turn'->>'status' NOT IN ('completed','failed','cancelled','interrupted','truncated','blocked') AND NOT EXISTS(SELECT 1 FROM controls c WHERE c.session_id=s.id AND c.turn_id=s.data->'turn'->>'id' AND c.status='pending' AND c.command->'action'->>'kind'='cancel') ORDER BY s.id LIMIT 1",&[])?.map(|r|(r.get::<_,String>(0),r.get::<_,String>(1),r.get::<_,String>(2),r.get::<_,String>(3)))))?;
         let Some((sid, tid, actor, team)) = target else {
             return Ok(false);
         };
@@ -711,6 +724,14 @@ impl crate::PostgresStore {
             if s.closed || s.provider_blocked || s.turn.as_ref().is_some_and(|t|!openworker_runtime::store::terminal(&t.status)) {tx.commit()?;return Ok(());}
             let queued:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM submissions WHERE session_id=$1 AND status='queued')",&[&sid])?.get(0);
             if queued {tx.commit()?;return Ok(());}
+            let mut coordination = Tx(&mut tx).load(&member.team_id)?;
+            if coordination.standalone.is_some() {
+                openworker_runtime::subagents::reconcile(&mut Tx(&mut tx), &mut coordination)?;
+                if s.turn.as_ref().is_some_and(|t| t.status != "completed")
+                    || (member.agent_id != coordination.lead && !coordination.standalone.as_ref().unwrap().active.contains(&member.agent_id)) {
+                    tx.commit()?; return Ok(());
+                }
+            }
             let pending:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM agent_team_messages WHERE team=$1 AND seq>$2 AND data->'recipients' ? $3)",&[&member.team_id,&(member.inbox_cursor as i64),&member.agent_id])?.get(0);
             if !pending && member.notices.is_empty(){tx.commit()?;return Ok(());}
             if let Err(error)=ensure_admission(&mut tx,&s) {
@@ -768,6 +789,62 @@ impl crate::PostgresStore {
                 }
             }
             tx.commit()?;Ok(false)
+        })
+    }
+}
+
+impl crate::PostgresStore {
+    /// Replace only the delegation authority. Preserve the original submitting credential
+    /// and require a fresh authenticated decision by the same application principal.
+    pub fn reauthorize_team(&self, sid: &str) -> Result<Value> {
+        let sid = sid.to_owned();
+        self.call(move |db| {
+            use crate::auth::{self, Action, Scope};
+            let mut tx = db.client.transaction()?;
+            let caller = auth::guard(&mut tx, db.auth.as_ref(), Action::Control, Some(&sid), None)?
+                .ok_or(auth::Error::Unauthorized)?;
+            let lead = db::locked(&mut tx, &sid, None)?;
+            let membership = lead.agent_team.as_ref().ok_or(auth::Error::Forbidden)?;
+            let doc = Tx(&mut tx).load(&membership.team_id)?;
+            ensure!(
+                doc.roster
+                    .instance(&doc.lead)
+                    .is_some_and(|i| i.session_id == sid)
+                    && !doc.stopped,
+                auth::Error::Forbidden
+            );
+            let original=tx.query_opt("SELECT k.spec,o.principal,coalesce(o.delegation_credential_id,o.credential_id) FROM service_operations o JOIN api_credentials k ON k.id=coalesce(o.delegation_credential_id,o.credential_id) WHERE o.session_id=$1 AND o.status='complete' FOR UPDATE OF o",&[&sid])?.ok_or(auth::Error::Forbidden)?;
+            let previous: auth::Spec = serde_json::from_value(original.get(0))?;
+            ensure!(
+                caller.principal == original.get::<_, String>(1)
+                    && caller.principal == previous.principal
+                    && caller.role == previous.role
+                    && caller.role.permits(Action::Submit)
+                    && !matches!(caller.scope, Scope::Sessions { .. })
+                    && (caller.scope == previous.scope || previous.scope == Scope::All)
+                    && caller
+                        .environments
+                        .iter()
+                        .all(|e| previous.environments.contains(e)),
+                auth::Error::Forbidden
+            );
+            if caller.credential_id != original.get::<_, String>(2) {
+                tx.execute(
+                    "UPDATE service_operations SET delegation_credential_id=$2 WHERE session_id=$1",
+                    &[&sid, &caller.credential_id],
+                )?;
+                auth::audit_target(
+                    &mut tx,
+                    Some(&caller),
+                    Action::Control,
+                    &sid,
+                    "team.reauthorize",
+                )?;
+            }
+            // The new credential and the pinned release/profile must still authorize this lead.
+            lead_authority(&mut tx, &lead, &doc)?;
+            tx.commit()?;
+            Ok(json!({"sessionId":sid,"credentialId":caller.credential_id}))
         })
     }
 }

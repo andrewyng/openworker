@@ -9,15 +9,22 @@ use zeroize::Zeroizing;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Choice {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notify_on_session_state: Option<bool>,
     pub connection: String,
     pub model: String,
 }
 impl Choice {
     pub fn new(provider: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
+            notify_on_session_state: None,
             connection: provider.into(),
             model: name.into(),
         }
+    }
+    pub fn notify_on_session_state(mut self, enabled: bool) -> Self {
+        self.notify_on_session_state = Some(enabled);
+        self
     }
     pub fn validate(&self) -> Result<()> {
         if !crate::bundle::safe_name(&self.connection)
@@ -36,6 +43,8 @@ impl Choice {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Selection {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub notify_on_session_state: bool,
     #[serde(default)]
     pub provider: crate::provider::Kind,
     pub connection: String,
@@ -48,13 +57,55 @@ pub struct Defaults {
     pub agent: Option<Choice>,
     pub reviewer: Option<Choice>,
 }
+/// Trusted server-side transport binding. Its digest is included in the durable provider identity.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HostEndpoint {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_private_http: bool,
+    pub api: crate::model_api::Api,
+    pub base_url: String,
+    #[serde(default)]
+    pub inference_options: crate::inference_options::InferenceOptions,
+    #[serde(default)]
+    pub integrations: crate::integrations::Settings,
+}
+pub type HostKeySource = std::sync::Arc<dyn Fn() -> Result<Zeroizing<String>> + Send + Sync>;
+/// Stable selection identity includes the protocol and endpoint, independent of the secret.
+pub fn host_identity(
+    id: &str,
+    provider: crate::provider::Kind,
+    identity: &str,
+    endpoint: Option<&HostEndpoint>,
+) -> Result<String> {
+    let mut wire = format!("host-model-v1:{identity}:{}:{id}", provider.name());
+    if let Some(endpoint) = endpoint {
+        wire.push(':');
+        wire.push_str(&crate::bundle::digest(&serde_json::to_vec(endpoint)?));
+    }
+    Ok(crate::bundle::digest(wire.as_bytes()))
+}
+impl HostEndpoint {
+    fn validated_url(&self) -> Result<String> {
+        if self.allow_private_http {
+            crate::model_api::private_base_url(&self.base_url)
+        } else {
+            crate::model_api::base_url(&self.base_url)
+        }
+    }
+}
 struct State {
+    host_key_sources: BTreeMap<String, HostKeySource>,
+    host_endpoints: BTreeMap<String, HostEndpoint>,
     db: Connection,
     memory: BTreeMap<String, Zeroizing<String>>,
     host_references: std::collections::BTreeSet<String>,
     tokens: BTreeMap<String, std::sync::Arc<crate::provider_auth::Tokens>>,
 }
 pub struct Manager {
+    pub integrations: std::sync::Arc<crate::integrations::Configured>,
     scope: String,
     state: Mutex<State>,
 }
@@ -76,8 +127,54 @@ struct Set {
     prompt_caching: Option<bool>,
     #[serde(default)]
     thinking: Option<crate::anthropic::Thinking>,
+    inference_options: Option<crate::inference_options::InferenceOptions>,
+    integrations: Option<crate::integrations::Settings>,
+}
+fn save_inference_options(
+    db: &Connection,
+    id: &str,
+    options: crate::inference_options::InferenceOptions,
+    bound_transport: bool,
+) -> Result<()> {
+    if bound_transport {
+        use rusqlite::OptionalExtension;
+        let saved: Option<String> = db
+            .query_row(
+                "SELECT value FROM inference_options WHERE id=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(saved) = saved {
+            let previous: crate::inference_options::InferenceOptions =
+                serde_json::from_str(&saved)?;
+            anyhow::ensure!(
+                previous.body == options.body,
+                "Provider routing options changed; register a new provider"
+            );
+        }
+    }
+    db.execute("INSERT INTO inference_options(id,value) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET value=excluded.value", params![id,serde_json::to_string(&options)?])?;
+    Ok(())
 }
 impl Manager {
+    pub fn set_integrations(
+        &mut self,
+        integrations: std::sync::Arc<crate::integrations::Configured>,
+    ) -> Result<()> {
+        self.integrations = integrations;
+        let state = self.state.lock().unwrap();
+        let mut stmt = state
+            .db
+            .prepare("SELECT id,value FROM provider_integrations")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        for row in rows {
+            let (id, raw) = row?;
+            self.integrations
+                .configure_provider(&id, &serde_json::from_str(&raw)?)?;
+        }
+        Ok(())
+    }
     /// Trusted server bootstrap only; not exposed by the model or stdio protocol.
     /// A deployment-owned identity lets separate nodes resolve the same session.
     /// Only the key is rotated; changing identity makes existing sessions refuse.
@@ -88,7 +185,7 @@ impl Manager {
         identity: &str,
         key: Zeroizing<String>,
     ) -> Result<()> {
-        self.host(id, provider, identity, Some(key))
+        self.host(id, provider, identity, Some(key), None)
     }
     /// API-only identity reference. Does not read or hold a provider credential.
     pub fn register_host_reference(
@@ -97,7 +194,17 @@ impl Manager {
         provider: crate::provider::Kind,
         identity: &str,
     ) -> Result<()> {
-        self.host(id, provider, identity, None)
+        self.host(id, provider, identity, None, None)
+    }
+    pub fn register_host_endpoint(
+        &self,
+        id: &str,
+        provider: crate::provider::Kind,
+        identity: &str,
+        key: Option<Zeroizing<String>>,
+        endpoint: Option<HostEndpoint>,
+    ) -> Result<()> {
+        self.host(id, provider, identity, key, endpoint)
     }
     fn host(
         &self,
@@ -105,8 +212,10 @@ impl Manager {
         provider: crate::provider::Kind,
         identity: &str,
         key: Option<Zeroizing<String>>,
+        endpoint: Option<HostEndpoint>,
     ) -> Result<()> {
         Choice {
+            notify_on_session_state: None,
             connection: id.into(),
             model: "validation".into(),
         }
@@ -122,9 +231,28 @@ impl Manager {
         {
             bail!("Invalid host model connection");
         }
-        let identity = crate::bundle::digest(
-            format!("host-model-v1:{identity}:{}:{id}", provider.name()).as_bytes(),
-        );
+        let wire_identity = host_identity(id, provider, identity, endpoint.as_ref())?;
+        if let Some(e) = &endpoint {
+            anyhow::ensure!(
+                e.api.kind() == provider,
+                "Host provider and endpoint API disagree"
+            );
+            e.validated_url()?;
+            anyhow::ensure!(
+                e.context_limit
+                    .is_none_or(|n| (1024..=2_000_000).contains(&n)),
+                "Invalid host model context limit"
+            );
+            e.inference_options.validate()?;
+        }
+        self.integrations.configure_provider(
+            id,
+            &endpoint
+                .as_ref()
+                .map(|e| e.integrations.clone())
+                .unwrap_or_default(),
+        )?;
+        let identity = wire_identity;
         let mut state = self.state.lock().unwrap();
         use rusqlite::OptionalExtension;
         let custom_endpoint: bool = state.db.query_row(
@@ -146,6 +274,11 @@ impl Manager {
         }
         state.db.execute("INSERT INTO connections(id,label,identity,persistence,secret,provider) VALUES(?1,?1,?2,'memory',NULL,?3) ON CONFLICT(id) DO UPDATE SET identity=excluded.identity,persistence='memory',secret=NULL",params![id,identity,provider.name()])?;
         state.host_references.insert(id.into());
+        if let Some(endpoint) = endpoint {
+            state.host_endpoints.insert(id.into(), endpoint);
+        } else {
+            state.host_endpoints.remove(id);
+        }
         if let Some(key) = key {
             state.memory.insert(id.into(), key);
         } else {
@@ -159,8 +292,19 @@ impl Manager {
         if path.exists() && crate::platform::linked(&path.symlink_metadata()?) {
             bail!("Credential database cannot be a link");
         }
-        let db = Connection::open(path)?;
-        db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON;
+        Self::with_database(
+            Connection::open(path)?,
+            root.canonicalize()?.to_string_lossy().into(),
+        )
+    }
+    pub fn in_memory() -> Result<Self> {
+        Self::with_database(
+            Connection::open_in_memory()?,
+            "ephemeral-model-connections".into(),
+        )
+    }
+    fn with_database(db: Connection, scope: String) -> Result<Self> {
+        db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; BEGIN IMMEDIATE;
             CREATE TABLE IF NOT EXISTS connections(id TEXT PRIMARY KEY,label TEXT NOT NULL,identity TEXT NOT NULL,persistence TEXT NOT NULL,secret BLOB);
             CREATE TABLE IF NOT EXISTS settings(id INTEGER PRIMARY KEY CHECK(id=1),value TEXT NOT NULL);")?;
         let has_provider = db
@@ -175,6 +319,8 @@ impl Manager {
             )?;
         }
         db.execute_batch("CREATE TABLE IF NOT EXISTS endpoints(id TEXT PRIMARY KEY, api TEXT NOT NULL, base_url TEXT NOT NULL);")?;
+        db.execute_batch("CREATE TABLE IF NOT EXISTS inference_options(id TEXT PRIMARY KEY REFERENCES connections(id) ON DELETE CASCADE, value TEXT NOT NULL);")?;
+        db.execute_batch("CREATE TABLE IF NOT EXISTS provider_integrations(id TEXT PRIMARY KEY, value TEXT NOT NULL);")?;
         db.execute_batch("CREATE TABLE IF NOT EXISTS thinking_options(id TEXT PRIMARY KEY, value TEXT NOT NULL);")?;
         let has_stream_usage = db
             .prepare("PRAGMA table_info(endpoints)")?
@@ -198,12 +344,19 @@ impl Manager {
                 "ALTER TABLE endpoints ADD COLUMN prompt_caching INTEGER NOT NULL DEFAULT 1 CHECK(prompt_caching IN (0,1))",
             )?;
         }
+        // Multiple service controllers may prepare the same immutable child type.
+        // Serialize check-and-alter migrations so a duplicate initializer cannot
+        // turn valid child provisioning into a permanent definition failure.
+        db.execute_batch("COMMIT")?;
         Ok(Self {
-            scope: root.canonicalize()?.to_string_lossy().into(),
+            integrations: Default::default(),
+            scope,
             state: Mutex::new(State {
                 db,
                 memory: BTreeMap::new(),
+                host_endpoints: Default::default(),
                 host_references: Default::default(),
+                host_key_sources: Default::default(),
                 tokens: Default::default(),
             }),
         })
@@ -234,6 +387,10 @@ impl Manager {
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
                 )
                 .optional()?;
+            let host_wire = state
+                .host_endpoints
+                .get(&id)
+                .map(|e| (json!(e.api), e.base_url.clone(), true, true));
             let (api, base_url, stream_usage, prompt_caching) = endpoint
                 .map(|(a, b, usage, caching)| {
                     (
@@ -243,6 +400,7 @@ impl Manager {
                         caching,
                     )
                 })
+                .or(host_wire)
                 .unwrap_or_else(|| {
                     let api = if provider == "anthropic" {
                         crate::model_api::Api::Anthropic
@@ -295,6 +453,9 @@ impl Manager {
         if input.prompt_caching.is_some() && api != crate::model_api::Api::Anthropic {
             bail!("prompt_caching is only supported for Anthropic Messages");
         }
+        if let Some(options) = &input.inference_options {
+            options.validate()?;
+        }
         if let Some(thinking) = &input.thinking {
             anyhow::ensure!(
                 api == crate::model_api::Api::Anthropic,
@@ -306,6 +467,7 @@ impl Manager {
             crate::model_api::base_url(input.base_url.as_deref().unwrap_or(api.default_url()))?;
         let api_json = serde_json::to_string(&api)?;
         Choice {
+            notify_on_session_state: None,
             connection: input.id.clone(),
             model: "validation".into(),
         }
@@ -383,6 +545,28 @@ impl Manager {
         {
             bail!("Existing connection endpoint is immutable; use a new provider name");
         }
+        let saved_integrations: Option<String> = state
+            .db
+            .query_row(
+                "SELECT value FROM provider_integrations WHERE id=?1",
+                [&input.id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let integration_settings = input.integrations.unwrap_or_else(|| {
+            saved_integrations
+                .as_ref()
+                .and_then(|v| serde_json::from_str(v).ok())
+                .unwrap_or_default()
+        });
+        if let Some(raw) = &saved_integrations {
+            anyhow::ensure!(
+                serde_json::from_str::<crate::integrations::Settings>(raw)? == integration_settings,
+                "Provider integration options changed; register a new provider"
+            );
+        }
+        self.integrations
+            .validate_provider(&input.id, &integration_settings)?;
         let encrypted = if input.persistence == "secure" {
             Some(protect(key.as_bytes(), &self.entropy(&input.id), false)?)
         } else {
@@ -396,10 +580,24 @@ impl Manager {
             "INSERT INTO endpoints(id,api,base_url,stream_usage,prompt_caching) VALUES(?1,?2,?3,COALESCE(?4,1),COALESCE(?5,1)) ON CONFLICT(id) DO UPDATE SET stream_usage=COALESCE(?4,endpoints.stream_usage),prompt_caching=COALESCE(?5,endpoints.prompt_caching)",
             params![input.id, api_json, base_url, input.stream_usage, input.prompt_caching],
         )?;
+        if let Some(options) = input.inference_options {
+            save_inference_options(
+                &transaction,
+                &input.id,
+                options,
+                self.integrations.provider(&input.id).is_some(),
+            )?;
+        }
         if let Some(thinking) = input.thinking {
             transaction.execute("INSERT INTO thinking_options(id,value) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET value=excluded.value", params![input.id,serde_json::to_string(&thinking)?])?;
         }
+        transaction.execute(
+            "INSERT INTO provider_integrations(id,value) VALUES(?1,?2) ON CONFLICT(id) DO NOTHING",
+            params![input.id, serde_json::to_string(&integration_settings)?],
+        )?;
         transaction.commit()?;
+        self.integrations
+            .configure_provider(&input.id, &integration_settings)?;
         #[cfg(target_os = "macos")]
         if was_secure && input.persistence != "secure" {
             forget_keychain(&self.entropy(&input.id))?;
@@ -434,6 +632,13 @@ impl Manager {
         state
             .db
             .execute("DELETE FROM endpoints WHERE id=?1", [id])?;
+        state
+            .db
+            .execute("DELETE FROM inference_options WHERE id=?1", [id])?;
+        state
+            .db
+            .execute("DELETE FROM provider_integrations WHERE id=?1", [id])?;
+        self.integrations.remove_provider(id);
         state
             .db
             .execute("DELETE FROM thinking_options WHERE id=?1", [id])?;
@@ -476,6 +681,7 @@ impl Manager {
                 anyhow::anyhow!("Credentials required: configure the selected connection")
             })?;
         let selected = Selection {
+            notify_on_session_state: choice.notify_on_session_state.unwrap_or(false),
             provider: serde_json::from_value(json!(provider))
                 .context("Unsupported stored provider")?,
             connection: choice.connection.clone(),
@@ -493,6 +699,26 @@ impl Manager {
         }
         Ok(selected)
     }
+    pub fn set_host_key_source(&self, id: &str, source: HostKeySource) -> Result<()> {
+        let mut state = self.state.lock().unwrap();
+        anyhow::ensure!(
+            state.host_references.contains(id),
+            "Unknown host model connection"
+        );
+        state.host_key_sources.insert(id.to_owned(), source);
+        Ok(())
+    }
+    pub fn host_identities(&self) -> Result<BTreeMap<String, String>> {
+        let ids = self.state.lock().unwrap().host_references.clone();
+        ids.into_iter()
+            .map(|id| {
+                Ok((
+                    id.clone(),
+                    self.resolve(&Choice::new(id, "validation"))?.identity,
+                ))
+            })
+            .collect()
+    }
     pub fn key(&self, selected: &Selection) -> Result<Zeroizing<String>> {
         let state = self.state.lock().unwrap();
         let (identity, kind, secret, provider): (String, String, Option<Vec<u8>>, String) = state
@@ -505,6 +731,10 @@ impl Manager {
             .map_err(|_| anyhow::anyhow!("Credentials required: selected connection is missing"))?;
         if identity != selected.identity || provider != selected.provider.name() {
             bail!("Connection identity changed; create a new session");
+        }
+        if let Some(source) = state.host_key_sources.get(&selected.connection).cloned() {
+            drop(state);
+            return source();
         }
         if kind == "none" {
             return Ok(Zeroizing::new(String::new()));
@@ -621,6 +851,12 @@ impl Manager {
         if identity != selected.identity {
             bail!("Connection identity changed; create a new session");
         }
+        if let Some(wire) = state.host_endpoints.get(&selected.connection) {
+            return Ok((
+                wire.api,
+                format!("{}/{}", wire.validated_url()?, wire.api.path()),
+            ));
+        }
         let endpoint: Option<(String, String)> = state
             .db
             .query_row(
@@ -662,6 +898,34 @@ impl Manager {
             |r| r.get(0),
         ).context("Selected model provider is missing or its identity changed")
     }
+    pub fn context_limit(&self, selected: &Selection) -> Option<usize> {
+        self.state
+            .lock()
+            .unwrap()
+            .host_endpoints
+            .get(&selected.connection)
+            .and_then(|wire| wire.context_limit)
+    }
+    pub fn inference_options(
+        &self,
+        selected: &Selection,
+    ) -> Result<crate::inference_options::InferenceOptions> {
+        let state = self.state.lock().unwrap();
+        if let Some(wire) = state.host_endpoints.get(&selected.connection) {
+            let same: bool = state.db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM connections WHERE id=?1 AND identity=?2)",
+                params![selected.connection, selected.identity],
+                |r| r.get(0),
+            )?;
+            anyhow::ensure!(same, "Host provider identity changed");
+            return Ok(wire.inference_options.clone());
+        }
+        let value:Option<String>=state.db.query_row("SELECT o.value FROM connections c LEFT JOIN inference_options o ON o.id=c.id WHERE c.id=?1 AND c.identity=?2",params![selected.connection,selected.identity],|row|row.get(0))?;
+        Ok(value
+            .map(|s| serde_json::from_str(&s))
+            .transpose()?
+            .unwrap_or_default())
+    }
     pub fn thinking(&self, selected: &Selection) -> Result<Option<crate::anthropic::Thinking>> {
         let value: Option<String> = self.state.lock().unwrap().db.query_row(
             "SELECT t.value FROM connections c LEFT JOIN thinking_options t ON c.id=t.id WHERE c.id=?1 AND c.identity=?2",
@@ -685,6 +949,8 @@ impl Manager {
             prompt_caching: Option<bool>,
             #[serde(default)]
             thinking: Option<crate::anthropic::Thinking>,
+            inference_options: Option<crate::inference_options::InferenceOptions>,
+            integrations: Option<crate::integrations::Settings>,
             #[serde(default)]
             access_token_auth: bool,
         }
@@ -702,6 +968,9 @@ impl Manager {
         }
         if input.prompt_caching.is_some() && input.api != crate::model_api::Api::Anthropic {
             bail!("prompt_caching is only supported for Anthropic Messages");
+        }
+        if let Some(options) = &input.inference_options {
+            options.validate()?;
         }
         if let Some(thinking) = &input.thinking {
             anyhow::ensure!(
@@ -752,6 +1021,24 @@ impl Manager {
             }
             // An empty Settings key field must never erase an existing credential.
             if input.credentials.is_none() {
+                if let Some(settings) = &input.integrations {
+                    let state = self.state.lock().unwrap();
+                    let saved: Option<String> = state
+                        .db
+                        .query_row(
+                            "SELECT value FROM provider_integrations WHERE id=?1",
+                            [&input.name],
+                            |r| r.get(0),
+                        )
+                        .optional()?;
+                    anyhow::ensure!(
+                        saved.as_ref().is_some_and(|s| serde_json::from_str::<
+                            crate::integrations::Settings,
+                        >(s)
+                        .is_ok_and(|old| old == *settings)),
+                        "Provider integration options changed; register a new provider"
+                    );
+                }
                 if input.access_token_auth {
                     let kind: String = self.state.lock().unwrap().db.query_row(
                         "SELECT persistence FROM connections WHERE id=?1",
@@ -772,6 +1059,14 @@ impl Manager {
                     self.state.lock().unwrap().db.execute(
                         "INSERT INTO endpoints(id,api,base_url,prompt_caching) VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET prompt_caching=excluded.prompt_caching",
                         params![input.name, serde_json::to_string(&input.api)?, base_url, enabled],
+                    )?;
+                }
+                if let Some(options) = input.inference_options {
+                    save_inference_options(
+                        &self.state.lock().unwrap().db,
+                        &input.name,
+                        options,
+                        self.integrations.provider(&input.name).is_some(),
                     )?;
                 }
                 if let Some(thinking) = input.thinking {
@@ -798,7 +1093,7 @@ impl Manager {
                 .into(),
             ),
         };
-        self.set(json!({"id":input.name,"label":input.name,"provider":input.api.kind(),"api":input.api,"base_url":base_url,"stream_usage":input.stream_usage,"prompt_caching":input.prompt_caching,"thinking":input.thinking,"api_key":key,"persistence":storage}))
+        self.set(json!({"id":input.name,"label":input.name,"provider":input.api.kind(),"api":input.api,"base_url":base_url,"stream_usage":input.stream_usage,"prompt_caching":input.prompt_caching,"thinking":input.thinking,"inference_options":input.inference_options,"integrations":input.integrations,"api_key":key,"persistence":storage}))
     }
 }
 #[cfg(not(any(windows, target_os = "macos")))]

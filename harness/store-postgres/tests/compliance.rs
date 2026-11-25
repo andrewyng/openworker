@@ -203,7 +203,7 @@ fn schema_fence_blocks_old_clients_and_preserves_existing_records() {
         PostgresStore::migrate(&c).is_err(),
         "Do not upgrade under a live owner"
     );
-    db.batch_execute("UPDATE version SET version=6 WHERE singleton")
+    db.batch_execute("UPDATE version SET version=7 WHERE singleton")
         .unwrap();
     // Emulate a drained old schema without altering its session payload.
     store.release("upgrade").unwrap();
@@ -215,7 +215,7 @@ fn schema_fence_blocks_old_clients_and_preserves_existing_records() {
         db.query_one("SELECT version FROM version", &[])
             .unwrap()
             .get::<_, i32>(0),
-        6
+        7
     );
     let store = PostgresStore::open(c.clone()).unwrap();
     assert_eq!(

@@ -192,6 +192,7 @@ impl Scanner {
             "Scanner correlation mismatch"
         );
         match result["action"].as_str() {
+            Some("allow") if result["category"] == "malicious" => Ok(Decision::Alert),
             Some("allow") => Ok(Decision::Allow),
             Some("block") => Ok(Decision::block("EXTERNAL_SECURITY_BLOCK")),
             _ => anyhow::bail!("Unknown scanner verdict"),
@@ -204,4 +205,78 @@ impl Handler for Scanner {
             tokio::select! {biased;_=cancel.cancelled()=>anyhow::bail!("Scanner cancelled"),r=tokio::time::timeout(self.timeout,self.scan(context))=>r.map_err(|_|anyhow::anyhow!("Scanner timeout"))?}
         })
     }
+}
+
+/// Register the synchronous scanner for trusted host configuration. Only selected boundaries send data.
+pub fn with_prisma_airs(
+    mut registry: openworker_runtime::integrations::Registry,
+) -> Result<openworker_runtime::integrations::Registry> {
+    use openworker_guardrails::{Config as Checks, HandlerRef, Hook, HookPhase};
+    use openworker_runtime::integrations::{Capability, Instance, Registration};
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct Settings {
+        endpoint: String,
+        credential_env: String,
+        profile_name: String,
+        #[serde(default)]
+        allow_loopback_http: bool,
+        #[serde(default = "timeout")]
+        timeout_ms: u64,
+        boundaries: Vec<HookPhase>,
+    }
+    registry.register(
+        "prisma-airs",
+        Registration {
+            version: "1",
+            capability: Capability::BlockingChecks,
+            configure: |raw, handlers| {
+                let settings: Settings = serde_json::from_value(raw.clone())?;
+
+                let version = openworker_runtime::bundle::digest(&serde_json::to_vec(raw)?);
+                let reference = HandlerRef {
+                    name: "integration.prisma-airs".into(),
+                    version: version[..32].into(),
+                };
+                let timeout_ms = settings.timeout_ms;
+                let scanner = Scanner::from_environment(Config {
+                    endpoint: settings.endpoint,
+                    credential_env: settings.credential_env,
+                    protocol: Protocol::PrismaAirs {
+                        profile: settings.profile_name,
+                    },
+                    allow_loopback_http: settings.allow_loopback_http,
+                    timeout_ms,
+                })?;
+                handlers.register(reference.clone(), Arc::new(scanner))?;
+                let mut checks = Checks::default();
+                for when in settings.boundaries {
+                    ensure!(
+                        matches!(
+                            when,
+                            HookPhase::BeforeInput
+                                | HookPhase::BeforeOutput
+                                | HookPhase::BeforeTool
+                                | HookPhase::AfterTool
+                        ),
+                        "Unsupported scanner boundary"
+                    );
+                    ensure!(
+                        !checks.hooks.iter().any(|h| h.when == when),
+                        "Duplicate scanner boundary"
+                    );
+                    checks.hooks.push(Hook {
+                        name: format!("prisma-airs-{when:?}"),
+                        version: reference.version.clone(),
+                        when,
+                        tools: vec![],
+                        handler: reference.clone(),
+                        timeout_ms,
+                    });
+                }
+                Ok(Instance::Checks(checks))
+            },
+        },
+    )?;
+    Ok(registry)
 }

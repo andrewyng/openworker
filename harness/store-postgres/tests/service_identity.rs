@@ -17,7 +17,7 @@ fn persisted_binding_cannot_change_and_restore_verification_does_not_write() {
     assert!(store.bind_service("cluster", "other").is_err());
     let mut db = postgres::Client::connect(&config.connection, postgres::NoTls).unwrap();
     db.batch_execute(&format!(
-        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        "SET ow.runtime_schema='7'; SET search_path={},pg_catalog",
         config.schema
     ))
     .unwrap();

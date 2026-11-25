@@ -37,6 +37,16 @@ function deployment(out, role) {
       (s) => s.includes("kind: Deployment") && s.includes(`name: test-${role}`),
     );
 }
+test("compliance forwarding projects only the configured API credential reference",async()=>{
+  const config = {...base.config, compliance:{}, compliance_sinks:[
+    {name:"company-audit",endpoint:"https://audit.example.test/collect",credentialEnv:"OW_AUDIT_KEY"},
+  ]};
+  const rendered = await render({config,secrets:{complianceExport:"audit-only"}});
+  assert.match(deployment(rendered,"api"),/name: "OW_AUDIT_KEY"\s+valueFrom: \{secretKeyRef: \{name: "audit-only", key: "OW_AUDIT_KEY"/);
+  for (const role of ["worker","controller","platform"]) assert.doesNotMatch(deployment(rendered,role),/secretKeyRef: \{name: "audit-only"/);
+  assert.doesNotMatch(await render({}),/name: "OW_AUDIT_KEY"/);
+  await assert.rejects(()=>render({config}));
+});
 test("recordings stay opt-in and a separate connection uses an independently mounted secret",async()=>{
   const off=await render({});assert.doesNotMatch(off,/mountPath: \/run\/observability|"database_env": "OW_OBSERVABILITY_URL"/);
   const same=await render({config:{...base.config,schema:"ow_execution",observability:{}}});
@@ -173,6 +183,17 @@ test("invalid ownership, mutable image and inadequate drain grace fail rendering
     }),
   );
 });
+test("Azure trace schema initializer is excluded from workload credential injection", async()=>{
+  const artifacts={kind:"azure",deployment:"ows-test",account:"owteststorage",container:"artifacts",tenant_id:"11111111-1111-4111-8111-111111111111",client_id:"22222222-2222-4222-8222-222222222222",federated_token_file:"/var/run/secrets/azure/tokens/azure-identity-token"};
+  const out=await render({config:{...base.config,artifacts,observability:{retention_days:14}}});
+  for(const role of ["api","worker"]){
+    const d=deployment(out,role);
+    assert.match(d,/azure.workload.identity\/skip-containers: "harness(?:;tls)?;recording-schema"/);
+    const init=d.split("initContainers:")[1].split("      containers:")[0];
+    assert.doesNotMatch(init,/azure-artifact-token|azure-identity-token|AZURE_/);
+    assert.equal((d.match(/name: azure-artifact-token\n/g)||[]).length,1);
+  }
+});
 test("management UI has no execution, database, or cluster authority", async () => {
   const uiValues = {
     enabled: true,
@@ -228,4 +249,65 @@ test("exporter authentication mounts only into harness roles and remains opt-in"
     .find((s) => s.includes("kind: Job") && s.includes("name: test-bootstrap"));
   assert.match(bootstrap, /OW_TELEMETRY_AUTH/);
   assert.match(bootstrap, /secretName: export-auth/);
+});
+test("attachment chunks have a scoped 1 MiB limit, separate from metadata and artifacts",async()=>{
+  const out=await render({});
+  const block=out.match(/location ~ \^\/v1\/sessions\/\[A-Za-z0-9_-\]\+\/attachments\/\[A-Za-z0-9_-\]\+\$ \{[\s\S]*?\}/)?.[0];
+  assert.ok(block,"Only the exact authenticated attachment upload path gets a larger bound");
+  assert.match(block,/client_max_body_size 1m/);
+  assert.match(block,/proxy_request_buffering off/);
+  assert.match(out,/ssl_protocols TLSv1.2 TLSv1.3; client_max_body_size 160k/);
+});
+test("recording enable runs only advisory-locked schema initialization, disable removes it",async()=>{
+  const off=await render({});assert.doesNotMatch(off,/name: recording-schema/);
+  const on=await render({config:{...base.config,observability:{retention_days:14}}});
+  for(const role of ["api","worker","controller","platform"]){
+    const d=deployment(on,role);const init=d.split("initContainers:")[1].split("      containers:")[0];
+    assert.match(init,/args: \[recording-migrate\]/);
+    assert.doesNotMatch(init,/bootstrap|\/models|\/openshell/);
+  }
+});
+test("private management UI preview terminates TLS without giving the UI server the private key",async()=>{
+  const out=await render({managementUI:{enabled:true,image:"ui@sha256:"+"b".repeat(64),publicOrigin:"https://localhost:8444",serviceUrl:"https://test-api.default.svc",caSecret:"ow-service-tls",caKey:"tls.crt",tlsSecret:"ow-service-tls"}});
+  const d=deployment(out,"ui");
+  assert.match(d,/name: tls/);assert.match(d,/key: "tls.crt", path: ca.crt/);
+  const ui=d.split("- name: ui")[1].split("- name: tls")[0];
+  assert.doesNotMatch(ui,/mountPath: \/tls/);
+  assert.match(out,/name: https, port: 443, targetPort: https/);
+  assert.match(out,/proxy_set_header Host \$http_host/);
+});
+
+test("only the API and worker receive the optional model registry key", async () => {
+  const out = await render({secrets: {modelRegistry: "registry-test-key"}});
+  const roles = out.split("\n---").filter(doc => doc.includes("OPENWORKER_MODEL_REGISTRY_KEY"));
+  assert.equal(roles.length, 2);
+  for (const role of ["api", "worker"]) {
+    assert(roles.some(doc => doc.includes("name: test-" + role) && doc.includes('name: "registry-test-key", key: registry-key')));
+  }
+});
+
+test("eval worker is independently sized and only mounts the execution database", async () => {
+  assert.equal(deployment(await render({}), "eval-worker"), undefined);
+  const config = { ...base.config, observability: {} };
+  const rendered = await render({
+    config,
+    secrets: { model: "model-key", observability: "recording-db", telemetry: "otlp-auth" },
+    evalWorker: { replicas: 2, resources: { limits: { memory: "320Mi" } } },
+  });
+  const worker = deployment(rendered, "eval-worker");
+  assert.match(worker, /replicas: 2/);
+  assert.match(worker, /args: \[eval-worker, --health-listen, "127\.0\.0\.1:8082"\]/);
+  assert.match(worker, /memory: 320Mi/);
+  assert.match(worker, /automountServiceAccountToken: false/);
+  assert.match(worker, /key: database-url/);
+  assert.doesNotMatch(worker, /mountPath: \/openshell|mountPath: \/models|\/run\/observability|\/run\/telemetry|registry-key|ports:/);
+  const disabled = await render({ config, evalWorker: { enabled: false } });
+  assert.equal(deployment(disabled, "eval-worker"), undefined);
+  const optedIn = deployment(await render({
+    config: { ...config, observability: { eval_model_judges: true } },
+    secrets: { model: "judge-model", modelRegistry: "model-registry", observability: "recording-db" },
+  }), "eval-worker");
+  assert.match(optedIn, /mountPath: \/models/);
+  assert.match(optedIn, /registry-key/);
+  assert.doesNotMatch(optedIn, /\/openshell|\/run\/observability|\/run\/telemetry/);
 });

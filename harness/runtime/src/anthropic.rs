@@ -78,6 +78,7 @@ fn content(value: &Value) -> Result<Vec<Value>, Error> {
             Some("text" | "input_text" | "output_text") => {
                 Ok(json!({"type":"text","text":v["text"].as_str().ok_or_else(config)?}))
             }
+            Some("input_file") => {let url=v["file_data"].as_str().ok_or_else(config)?;let data=url.strip_prefix("data:application/pdf;base64,").ok_or_else(config)?;Ok(json!({"type":"document","title":v["filename"],"source":{"type":"base64","media_type":"application/pdf","data":data}}))}
             Some("input_image") => {
                 let url = v["image_url"].as_str().ok_or_else(config)?;
                 let (header, data) = url.split_once(",").ok_or_else(config)?;
@@ -464,6 +465,16 @@ pub async fn request(
     body: Value,
     tx: mpsc::Sender<Progress>,
 ) -> Result<(), Error> {
+    request_with_adapter(client, url, key, body, tx, None).await
+}
+pub(crate) async fn request_with_adapter(
+    client: &reqwest::Client,
+    url: &str,
+    key: &str,
+    body: Value,
+    tx: mpsc::Sender<Progress>,
+    mut adapter: Option<Box<dyn crate::provider_adapters::Attempt>>,
+) -> Result<(), Error> {
     let response = client
         .post(url)
         .header("x-api-key", key)
@@ -471,7 +482,7 @@ pub async fn request(
         .json(&body)
         .send()
         .await
-        .map_err(|_| Error::new(Failure::Transport))?;
+        .map_err(Error::request_failed)?;
     let status = response.status().as_u16();
     let request_id = crate::provider::request_id(response.headers(), key);
     let retry_after = response
@@ -509,6 +520,7 @@ pub async fn request(
     let mut decoder = Decoder::default();
     let mut buffer = vec![];
     let mut total = 0;
+    let mut progress = crate::provider::VerifiedProgress::new(tx);
     let mut previous_usage = None;
     let mut first_sent = false;
     while let Some(chunk) = stream.next().await {
@@ -521,34 +533,38 @@ pub async fn request(
         while let Some(index) = buffer.iter().position(|b| *b == b'\n') {
             let line: Vec<_> = buffer.drain(..=index).collect();
             let line = std::str::from_utf8(&line).map_err(|_| invalid())?.trim();
+            if line.starts_with(':') {
+                if let Some(a) = adapter.as_mut() {
+                    a.comment(line)?;
+                }
+                continue;
+            }
             if let Some(data) = line.strip_prefix("data:") {
-                let event: Value = serde_json::from_str(data).map_err(|_| invalid())?;
+                let mut event: Value = serde_json::from_str(data).map_err(|_| invalid())?;
+                if let Some(a) = adapter.as_mut() {
+                    if !a.data(&mut event)? {
+                        continue;
+                    }
+                }
+                let ready = adapter.as_ref().is_none_or(|a| a.ready());
                 let decoded = decoder.event(&event);
                 if let Some(usage) = decoder
                     .usage_report()
                     .filter(|u| u.present() && Some(*u) != previous_usage)
                 {
-                    tx.send(Progress::Usage(usage))
-                        .await
-                        .map_err(|_| Error::new(Failure::Transport))?;
+                    progress.emit(Progress::Usage(usage), ready).await?;
                     previous_usage = Some(usage);
                 }
                 let decoded = decoded?;
                 if let Some(delta) = decoder.take_reasoning() {
-                    tx.send(Progress::Reasoning(delta))
-                        .await
-                        .map_err(|_| Error::new(Failure::Transport))?;
+                    progress.emit(Progress::Reasoning(delta), ready).await?;
                 }
                 if !first_sent && decoder.output_started() {
-                    tx.send(Progress::OutputStarted)
-                        .await
-                        .map_err(|_| Error::new(Failure::Transport))?;
+                    progress.emit(Progress::OutputStarted, ready).await?;
                     first_sent = true;
                 }
                 if let Some(text) = decoded {
-                    tx.send(Progress::Delta(text))
-                        .await
-                        .map_err(|_| Error::new(Failure::Transport))?;
+                    progress.emit(Progress::Delta(text), ready).await?;
                 }
             }
         }
@@ -556,8 +572,10 @@ pub async fn request(
     if !buffer.iter().all(u8::is_ascii_whitespace) {
         return Err(invalid());
     }
-    tx.send(Progress::Complete(decoder.finish()?))
-        .await
-        .map_err(|_| Error::new(Failure::Transport))?;
+    let completion = decoder.finish()?;
+    if let Some(a) = adapter.as_mut() {
+        a.finish()?;
+    }
+    progress.emit(Progress::Complete(completion), true).await?;
     Ok(())
 }

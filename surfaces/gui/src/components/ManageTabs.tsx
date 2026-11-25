@@ -30,6 +30,7 @@ import { LlamaCppPage } from "./models/LlamaCppSetup";
 import { LocalModelsTable, YourSystem } from "./models/LocalModels";
 import { PickModelDialog } from "./models/PickModelDialog";
 import { ProviderGroups } from "./models/ProviderGroups";
+import { ProviderModels } from "./models/ProviderModels";
 import { ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
 import { WalletChips } from "./WalletChips";
 
@@ -265,23 +266,39 @@ export function ModelsTab() {
               {t("manage.azure_deployment_help")}
             </p>
           )}
-          {info?.is_custom && (
-            <div className="flex items-center gap-3 mb-2.5" data-testid="custom-fetch-row">
-              <button className={BTN_BORDERED} data-testid="custom-fetch-models" disabled={fetching} onClick={() => void fetchModels()}>
-                {fetching ? t("manage.custom_fetching") : t("manage.custom_fetch_models")}
-              </button>
-              {fetchNote && <span className="text-meta text-muted" data-testid="custom-fetch-note">{fetchNote}</span>}
-            </div>
+          {info?.is_custom ? (
+            // A user-added OpenAI-compatible server: its ids are typed or fetched by hand.
+            <>
+              <div className="flex items-center gap-3 mb-2.5" data-testid="custom-fetch-row">
+                <button className={BTN_BORDERED} data-testid="custom-fetch-models" disabled={fetching} onClick={() => void fetchModels()}>
+                  {fetching ? t("manage.custom_fetching") : t("manage.custom_fetch_models")}
+                </button>
+                {fetchNote && <span className="text-meta text-muted" data-testid="custom-fetch-note">{fetchNote}</span>}
+              </div>
+              <ModelChecklist
+                provider={ps.sel}
+                knownProviders={knownNames}
+                suggested={[...(info?.suggested_models || []), ...fetched].filter((m, i, a) => a.indexOf(m) === i)}
+                curated={settings.models}
+                defaultModel={settings.model}
+                labels={settings.model_labels}
+                onChanged={(next) => setSettings((s) => (s ? { ...s, models: next.models, model: next.model } : s))}
+              />
+            </>
+          ) : (
+            // A keyed provider: what its own list says this key can call, merged with the
+            // curated rows (OPE-252); the curated checklist when it has no list.
+            <ProviderModels
+              provider={ps.sel}
+              providerTitle={info?.title}
+              knownProviders={knownNames}
+              suggested={info?.suggested_models || []}
+              settings={settings}
+              onChanged={(next) => setSettings((s) => (s ? { ...s, models: next.models, model: next.model } : s))}
+              onConfigure={(m) => setDialog(m)}
+            />
           )}
-          <ModelChecklist
-            provider={ps.sel}
-            knownProviders={knownNames}
-            suggested={[...(info?.suggested_models || []), ...fetched].filter((m, i, a) => a.indexOf(m) === i)}
-            curated={settings.models}
-            defaultModel={settings.model}
-            labels={settings.model_labels}
-            onChanged={(next) => setSettings((s) => (s ? { ...s, models: next.models, model: next.model } : s))}
-          />
+          {dialogEl}
         </div>
       ) : (
         // Unconfigured providers still show their curated models as a read-only preview — what a

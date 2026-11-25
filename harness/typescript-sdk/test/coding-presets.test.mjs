@@ -18,8 +18,9 @@ test("shared preset pins base and default builder worktree without implicit chil
 });
 test("service releases preserve models and require explicit profile compatibility",()=>{
   const profile={id:"shared@1",provider:"openshell",cpu:1,memoryMB:512,sharing:"shared"};
-  const a=codingAgent("solo",{defaultModel:{provider:"Local",name:"chosen"}});
+  const a=codingAgent("solo",{integrations:{"mock-observer":false},defaultModel:{provider:"Local",name:"chosen"}});
   const r=codingRelease(a,"1",profile);assert.deepEqual(r.defaultModel,{connection:"Local",model:"chosen"});
+  assert.deepEqual(r.integrations,{"mock-observer":false});
   assert.throws(()=>codingRelease({...a,approvals:{mode:"never"}},"1",profile));
   assert.throws(()=>codingRelease({...a,memory:true},"1",profile));
   const p=sharedCodingTeam("game",{repository:"source",base:"a".repeat(40)});const team=codingServiceTeam(p,"1");
@@ -42,4 +43,14 @@ test("isolated service preset requires named New profile and exact submission fo
   p.team.coding.source.commit="b".repeat(40);assert.equal(source.commit,"a".repeat(40));
   assert.throws(()=>isolatedCodingServiceTeam("game",source,{mode:"team"},delegation,"1"));
   assert.throws(()=>isolatedCodingServiceTeam("game",source,{...sandbox,profile:"unregistered"},delegation,"1"));
+});
+
+test("service directory grants must match the selected profile", () => {
+  const agent = codingAgent("reader", {
+    approvals: { mode: "always", allowWorkspaceReads: ["src", "docs"] },
+  });
+  const profile = { id: "sandboxedloop@1", provider: "openshell", sharing: "exclusive",
+    cpu: 1, memoryMB: 512, loopPlacement: "sandbox", allowWorkspaceReads: ["docs", "src"] };
+  assert.equal(codingRelease(agent, "1", profile).defaultRuntimeProfile, profile.id);
+  assert.throws(() => codingRelease(agent, "1", { ...profile, allowWorkspaceReads: ["src"] }));
 });

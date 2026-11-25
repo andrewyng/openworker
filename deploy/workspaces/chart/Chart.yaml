@@ -1,0 +1,5 @@
+apiVersion: v2
+name: workspace-provider
+description: Persistent Kubernetes workspaces for OpenWorker sessions
+type: application
+version: 0.1.0

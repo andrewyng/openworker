@@ -15,6 +15,11 @@ struct Args {
 enum Command {
     /// Reconcile durable release/profile provisioning operations. No public port.
     ServiceController,
+    /// Print the non-secret identity pin for an installed OpenShell inference provider.
+    #[cfg(not(windows))]
+    PinLoopProvider {
+        name: String,
+    },
     /// Private worker-pool reconciler, separate from OpenShell provisioning.
     ServicePlatformController,
     /// Schedule all admitted release/profile cohorts within one slot budget.
@@ -28,7 +33,14 @@ enum Command {
         #[arg(long,default_value_t=300,value_parser=clap::value_parser!(u64).range(1..=3600))]
         drain_timeout_seconds: u64,
     },
+    /// Score queued evaluations independently of the API and agent workers.
+    EvalWorker {
+        #[arg(long)]
+        health_listen: Option<SocketAddr>,
+    },
     Migrate,
+    /// Initialize only the optional recording schema, including on feature enable.
+    RecordingMigrate,
     /// Trusted installer aggregate check; no public/session API equivalent.
     ServiceInstallStatus,
     /// Trusted-host operational catalog, not a session-authorized API.
@@ -110,13 +122,19 @@ async fn main() -> Result<()> {
         &args.config,
         64_000,
     )?)?;
+    if matches!(args.command, Command::EvalWorker { .. }) {
+        // This role needs the execution store only. It does not start a
+        // recorder, open an artifact store, or load model credentials.
+        return run(args, config, Default::default()).await;
+    }
     let role = match &args.command {
         Command::Api { .. } => "api",
         Command::Worker { .. } | Command::ServiceWorker { .. } => "worker",
         _ => "admin",
     };
     let recording_config = config.clone();
-    let record = !matches!(args.command, Command::Migrate) && !config.recovery_read_only;
+    let record = !matches!(args.command, Command::Migrate | Command::RecordingMigrate)
+        && !config.recovery_read_only;
     let started = tokio::task::spawn_blocking(move || {
         openworker_server_reference::recording::start(&recording_config, role, record)
     })
@@ -150,16 +168,38 @@ async fn main() -> Result<()> {
     result
 }
 async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Telemetry) -> Result<()> {
+    #[cfg(not(windows))]
+    if let Command::PinLoopProvider { name } = &args.command {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&config.provider()?.pin_credential_provider(name).await?)?
+        );
+        return Ok(());
+    }
     if matches!(
         args.command,
         Command::Worker { .. }
             | Command::ServiceWorker { .. }
+            | Command::EvalWorker { .. }
             | Command::ServiceController
             | Command::ServicePlatformController
             | Command::EnvironmentCreate { .. }
             | Command::EnvironmentReconcile { .. }
     ) {
         config.require_execution()?;
+    }
+    if matches!(args.command, Command::RecordingMigrate) {
+        let options = config
+            .observability
+            .as_ref()
+            .context("Recording is disabled")?;
+        let database = options.database(&config)?;
+        tokio::task::spawn_blocking(move || {
+            openworker_observability::postgres::Postgres::migrate(&database)
+        })
+        .await??;
+        println!("Recording schema ready");
+        return Ok(());
     }
     let mut db = config.database()?;
     db.telemetry = telemetry;
@@ -175,7 +215,6 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
         println!("Schema ready");
         return Ok(());
     }
-    let store = PostgresStore::open(db.clone())?;
     let stop = CancellationToken::new();
     let abort = CancellationToken::new();
     let signal = stop.clone();
@@ -199,6 +238,40 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
             interrupt.cancel();
         }
     });
+    if let Command::EvalWorker { health_listen } = args.command {
+        anyhow::ensure!(
+            config.observability.is_some(),
+            "Enable cluster observability to run evaluations"
+        );
+        let service = config
+            .service
+            .clone()
+            .context("Service configuration required")?;
+        let readiness = openworker_server_reference::readiness::Readiness::new(Default::default());
+        let health = if let Some(address) = health_listen {
+            anyhow::ensure!(
+                address.ip().is_loopback(),
+                "Eval worker readiness must bind loopback"
+            );
+            let listener = tokio::net::TcpListener::bind(address).await?;
+            let router = readiness.router();
+            let stop = stop.clone();
+            Some(tokio::spawn(async move {
+                axum::serve(listener, router)
+                    .with_graceful_shutdown(stop.cancelled_owned())
+                    .await
+            }))
+        } else {
+            None
+        };
+        println!("Evaluation worker started");
+        openworker_server_reference::evals::run_worker(db, service, config, readiness, stop).await;
+        if let Some(health) = health {
+            health.await??;
+        }
+        return Ok(());
+    }
+    let store = PostgresStore::open(db.clone())?;
     match args.command {
         Command::ServiceInstallStatus => {
             println!(
@@ -316,6 +389,11 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
                     config.compliance_sinks.clone(),
                     stop.child_token(),
                 )?;
+                openworker_server_reference::compliance_catalog::start_delivery(
+                    store.clone(),
+                    config.compliance_sinks.clone(),
+                    stop.child_token(),
+                )?;
             }
 
             if let Some(options) = &config.operational_metrics {
@@ -337,6 +415,13 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
             )?;
             let listener = tokio::net::TcpListener::bind(listen).await?;
             println!("API {node} ready at http://{}", listener.local_addr()?);
+            let replays = if config.observability.is_some() && !config.recovery_read_only {
+                Some(tokio::spawn(openworker_server_reference::eval_replay::run(
+                    app.clone(),
+                )))
+            } else {
+                None
+            };
             let monitor_stop = stop.child_token();
             let _monitor_guard = monitor_stop.clone().drop_guard();
             let monitor = config.operational_metrics.clone().map(|options| {
@@ -358,6 +443,9 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
                 _=stop.cancelled()=>tokio::time::timeout(std::time::Duration::from_secs(30),serving).await.context("API drain timed out; closing remaining streams")??,
             }
             runtime.shutdown().await?;
+            if let Some(replays) = replays {
+                replays.abort();
+            }
             monitor_stop.cancel();
             if let Some(task) = monitor {
                 let _ = tokio::time::timeout(std::time::Duration::from_secs(6), task).await;
@@ -400,6 +488,7 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
                     .map(|c| {
                         let selected = template.connections.resolve(
                             &openworker_runtime::connections::Choice {
+                                notify_on_session_state: None,
                                 connection: c.id.clone(),
                                 model: "validation".into(),
                             },
@@ -594,7 +683,9 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
         | Command::EnvironmentReconcile { .. } => {
             bail!("This server reference requires the qualified Kubernetes provider")
         }
-        Command::Migrate => unreachable!(),
+        #[cfg(not(windows))]
+        Command::PinLoopProvider { .. } => unreachable!(),
+        Command::EvalWorker { .. } | Command::Migrate | Command::RecordingMigrate => unreachable!(),
     }
     Ok(())
 }

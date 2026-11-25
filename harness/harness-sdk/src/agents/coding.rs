@@ -87,6 +87,8 @@ pub fn service_release(
         || matches!(agent.approvals, super::Approvals::Only(_))
         || agent.approvals.mode() != profile.approval_mode
         || agent.auto_skip_questions != profile.auto_skip_questions
+        || (agent.never_allow_read_write_outside_workspace
+            && !profile.never_allow_read_write_outside_workspace)
     {
         return Err(Error::InvalidInput("Service releases use the installed coding bundle and RuntimeProfile; local policies, nested agents and unsupported capabilities cannot be silently converted".into()));
     }
@@ -97,7 +99,7 @@ pub fn service_release(
     let release:crate::service::AgentRelease=serde_json::from_value(serde_json::json!({
         "id":format!("{}@{version}",agent.id()),"instructions":agent.instructions,"tools":agent.tools,
         "runtimeProfiles":[profile.id],"defaultRuntimeProfile":profile.id,"allowedPrincipals":profile.allowed_principals,
-        "defaultModel":agent.model,"reviewerModel":reviewer,"modelOverrides":[],"limits":agent.limits
+        "integrations":agent.integrations,"defaultModel":agent.model,"reviewerModel":reviewer,"modelOverrides":[],"limits":agent.limits,"subagents":agent.standalone_subagents
     })).map_err(|e|Error::InvalidInput(e.to_string()))?;
     release
         .validate()

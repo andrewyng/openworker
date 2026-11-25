@@ -1,0 +1,434 @@
+"""Single-writer workspace controller. SQLite intents survive pod and API restarts."""
+import fcntl
+import hmac
+import json
+import os
+import re
+import sqlite3
+import ssl
+import secrets
+import threading
+import time
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from errors import Failure
+
+
+def identity(prefix):
+    return prefix + "-" + uuid.uuid4().hex
+
+
+def required(row):
+    if row is None:
+        raise Failure("workspace_not_found", 404)
+    return row
+
+
+def profile(options, default="small"):
+    if not isinstance(options, dict) or options.keys() - {"podProfile"}:
+        raise Failure("invalid_workspace_request", 400)
+    value = options.get("podProfile", default)
+    if value not in ("small", "medium"):
+        raise Failure("invalid_workspace_request", 400)
+    return value
+
+
+class Controller:
+    def __init__(self, backend_factory=None, state_dir="/state"):
+        # Recreate deployment plus storage lock prevents simultaneous controllers.
+        self.lock_file = open(os.path.join(state_dir, "writer.lock"), "a")
+        fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.lock = threading.Lock()
+        self.inflight = {}
+        self.db = sqlite3.connect(os.path.join(state_dir, "workspaces.sqlite"), check_same_thread=False)
+        self.db.row_factory = sqlite3.Row
+        self.db.executescript("""
+            PRAGMA foreign_keys=ON;
+            CREATE TABLE IF NOT EXISTS installation(id TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS data(id TEXT PRIMARY KEY, uid TEXT, deleting INTEGER DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS keys(key TEXT PRIMARY KEY, data TEXT NOT NULL REFERENCES data ON DELETE CASCADE);
+            CREATE TABLE IF NOT EXISTS compute(id TEXT PRIMARY KEY, key TEXT UNIQUE NOT NULL REFERENCES keys,
+                profile TEXT NOT NULL, uid TEXT, stopping INTEGER DEFAULT 0, idle REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS attachments(workspace TEXT REFERENCES compute ON DELETE CASCADE,
+                session TEXT, active INTEGER NOT NULL, PRIMARY KEY(workspace,session));
+        """)
+        with self.db:
+            if not self.row("SELECT id FROM installation"):
+                self.db.execute("INSERT INTO installation VALUES(?)", (uuid.uuid4().hex,))
+        # Additive migrations preserve registrations created by the file-only service.
+        for table, name, declaration in [
+            ("compute", "runtime", "TEXT NOT NULL DEFAULT '{}'"),
+            ("compute", "instance", "TEXT"),
+            ("keys", "preview_count", "INTEGER NOT NULL DEFAULT 0"),
+        ]:
+            if name not in {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}:
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+        if backend_factory is None:
+            from cluster import Cluster
+            backend_factory = Cluster
+        self.backend = backend_factory(self.row("SELECT id FROM installation")["id"])
+        # Previous releases only supported Kubernetes. Persist the backend identity
+        # so a configuration change cannot silently recreate project data elsewhere.
+        identity = self.backend.identity
+        with self.db:
+            self.db.execute("CREATE TABLE IF NOT EXISTS backend_identity(value TEXT PRIMARY KEY)")
+            stored = self.row("SELECT value FROM backend_identity")
+            if stored is None:
+                if identity != "kubernetes" and self.row("SELECT 1 FROM data LIMIT 1"):
+                    raise ValueError("Existing workspace state belongs to Kubernetes")
+                self.db.execute("INSERT INTO backend_identity VALUES(?)", (identity,))
+            elif stored["value"] != identity:
+                raise ValueError("Workspace backend identity differs from the stored registration")
+        self.preview_domain = os.getenv("PREVIEW_DOMAIN") if hasattr(self.backend, "images") else None
+        if self.preview_domain:
+            if not re.fullmatch(r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9-]+", self.preview_domain):
+                raise ValueError("Invalid preview domain")
+            with self.db:
+                self.db.execute("CREATE TABLE IF NOT EXISTS preview_secret(id INTEGER PRIMARY KEY, key BLOB NOT NULL)")
+                self.db.execute("INSERT OR IGNORE INTO preview_secret VALUES(1,?)", (secrets.token_bytes(32),))
+                self.preview_key = self.row("SELECT key FROM preview_secret WHERE id=1")["key"]
+                self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS ws_instance ON compute(instance)")
+        self.idle = int(os.getenv("IDLE_SECONDS", "600"))
+
+    def row(self, sql, *parameters):
+        return self.db.execute(sql, parameters).fetchone()
+
+    def compute(self, workspace):
+        return required(self.row("""SELECT c.*,k.data,k.preview_count FROM compute c JOIN keys k ON k.key=c.key
+             WHERE c.id=?""", workspace))
+
+    def provision(self, row):
+        if row["stopping"]:
+            raise Failure("workspace_in_use", 409)
+        data = required(self.row("SELECT * FROM data WHERE id=?", row["data"]))
+        if data["deleting"]:
+            raise Failure("workspace_in_use", 409)
+        uid = self.backend.claim(data["id"], data["uid"])
+        if not data["uid"]:
+            with self.db:
+                self.db.execute("UPDATE data SET uid=? WHERE id=?", (uid, data["id"]))
+        previous = row["uid"]
+        if previous and not self.backend.has_compute(row["id"], previous):
+            # The replacement intent is durable before asking Kubernetes to create.
+            with self.db:
+                self.db.execute("UPDATE compute SET uid=NULL WHERE id=?", (row["id"],))
+            previous = None
+        settings = json.loads(row["runtime"])
+        extra = {"settings": settings} if settings else {}
+        physical = self.backend.compute(row["id"], data["id"], row["profile"], previous, uid, **extra)
+        if physical != previous:
+            with self.db:
+                self.db.execute("UPDATE compute SET uid=?, instance=? WHERE id=?", (physical, uuid.uuid4().hex, row["id"]))
+        return physical
+
+    def options(self, options):
+        if not isinstance(options, dict) or options.keys() - {"podProfile", "imageProfile", "previewPortCount"}:
+            raise Failure("invalid_workspace_request", 400)
+        if "podProfile" in options:
+            profile({"podProfile": options["podProfile"]})
+        if "imageProfile" in options:
+            image = options["imageProfile"]
+            if not isinstance(image, str) or image not in getattr(self.backend, "images", {}):
+                raise Failure("invalid_workspace_request", 400)
+        if "previewPortCount" in options:
+            count = options["previewPortCount"]
+            if type(count) is not int or not 0 <= count <= 15 or (count and not self.preview_domain):
+                raise Failure("invalid_workspace_request", 400)
+        return options
+
+    def open(self, req):
+        key = req.get("key")
+        if not isinstance(key, str) or not 0 < len(key.encode()) <= 512 or any(ord(c) < 32 for c in key):
+            raise Failure("invalid_workspace_request", 400)
+        options = {**self.options(req.get("defaults", {})), **self.options(req.get("options", {}))}
+        selected = profile({"podProfile": options.get("podProfile", req["defaultProfile"])})
+        image = options.get("imageProfile")
+        requested = req.get("dataId")
+        with self.db:
+            bound = self.row("SELECT data, preview_count FROM keys WHERE key=?", key)
+            count = options.get("previewPortCount", bound["preview_count"] if bound else 0)
+            if count and not self.preview_domain:
+                raise Failure("invalid_workspace_request", 400)
+            if bound:
+                data_id = bound["data"]
+                if requested is not None and requested != data_id:
+                    raise Failure("workspace_data_mismatch", 409)
+            else:
+                data_id = requested if requested is not None else identity("data")
+                if requested is None:
+                    self.db.execute("INSERT INTO data(id) VALUES(?)", (data_id,))
+                self.db.execute("INSERT INTO keys(key,data,preview_count) VALUES(?,?,?)", (key, self.live_data(data_id), count))
+            self.live_data(data_id)
+            current = self.row("SELECT * FROM compute WHERE key=?", key)
+            if current:
+                pinned = json.loads(current["runtime"])
+                if (current["profile"] != selected or (image is not None and pinned.get("imageProfile") != image)
+                        or bound["preview_count"] != count):
+                    raise Failure("workspace_profile_mismatch", 409)
+                workspace = current["id"]
+            else:
+                if self.backend.single_mount and self.row(
+                    "SELECT 1 FROM compute c JOIN keys k ON k.key=c.key WHERE k.data=?", data_id):
+                    raise Failure("workspace_shared_mount_unsupported", 409)
+                workspace = identity("ws")
+                settings = {"imageProfile": image, "image": self.backend.images[image]} if image else {}
+                if count:
+                    settings["preview"] = True
+                self.db.execute("UPDATE keys SET preview_count=? WHERE key=?", (count, key))
+                self.db.execute("INSERT INTO compute(id,key,profile,idle,runtime) VALUES(?,?,?,?,?)",
+                                (workspace, key, selected, time.time(), json.dumps(settings)))
+        self.provision(self.compute(workspace))
+        with self.db:
+            self.db.execute("UPDATE compute SET idle=? WHERE id=?", (time.time(), workspace))
+        result = {"workspaceId": workspace, "dataId": data_id}
+        if count:
+            instance = self.compute(workspace)["instance"]
+            result["previews"] = [self.slot(instance, i) for i in range(count)]
+        return result
+
+    def slot(self, instance, index):
+        host = f"{instance}-{index:02d}.{self.preview_domain}"
+        return {"port": 5100 + index, "url": "https://" + host,
+                "accessToken": hmac.digest(self.preview_key, host.encode("ascii"), "sha256").hex()}
+
+    def resolve(self, host, token):
+        # No key lookup or compute provisioning as a consequence of browser traffic.
+        if not self.preview_domain or not isinstance(host, str) or not isinstance(token, str):
+            raise Failure("forbidden", 403)
+        match = re.fullmatch(r"([a-f0-9]{32})-(0[0-9]|1[0-4])\." + re.escape(self.preview_domain), host)
+        if not match:
+            raise Failure("forbidden", 403)
+        instance, index = match[1], int(match[2])
+        slot = self.slot(instance, index)
+        if not re.fullmatch("[0-9a-f]{64}", token) or not hmac.compare_digest(slot["accessToken"], token):
+            raise Failure("forbidden", 403)
+        with self.lock:
+            row = self.row("""SELECT c.id,c.uid,k.preview_count FROM compute c JOIN keys k ON c.key=k.key
+                              WHERE instance=? AND stopping=0""", instance)
+            if row is None or index >= row["preview_count"]:
+                raise Failure("preview_expired", 410)
+            try:
+                pod = self.backend.resource("pod", row["id"], row["uid"])
+            except Failure as exc:
+                if exc.code == "workspace_identity_changed":
+                    raise Failure("preview_expired", 410) from None
+                raise
+            if (not pod or pod.metadata.deletion_timestamp or pod.metadata.uid != row["uid"]
+                    or pod.spec.host_network or (pod.metadata.labels or {}).get("ow-workspace-preview") != "enabled"):
+                raise Failure("preview_expired", 410)
+            if not pod.status.pod_ip:
+                raise Failure("preview_waiting", 503)
+            return {"ip": pod.status.pod_ip, "uid": row["uid"], "port": slot["port"]}
+
+    def live_data(self, data):
+        row = required(self.row("SELECT deleting FROM data WHERE id=?", data))
+        if row["deleting"]:
+            raise Failure("workspace_in_use", 409)
+        return data
+
+    def drain(self, kind, name, uid):
+        # Persist intent before dispatch; return busy on timeout so retry operates
+        # on the original UID. Background reconciliation resumes interrupted deletes.
+        deadline = time.monotonic() + 6
+        while not self.backend.remove(kind, name, uid):
+            if time.monotonic() >= deadline:
+                raise Failure("workspace_in_use", 409)
+            time.sleep(.2)
+
+    def stop(self, workspace):
+        row = self.row("SELECT * FROM compute WHERE id=?", workspace)
+        if row is None:
+            return
+        if self.row("SELECT 1 FROM attachments WHERE workspace=? AND active=1", workspace):
+            raise Failure("workspace_in_use", 409)
+        with self.db:
+            self.db.execute("UPDATE compute SET stopping=1 WHERE id=?", (workspace,))
+        self.drain("compute", workspace, row["uid"])
+        with self.db:
+            self.db.execute("DELETE FROM compute WHERE id=?", (workspace,))
+
+    def delete(self, data):
+        row = self.row("SELECT * FROM data WHERE id=?", data)
+        if row is None:
+            return
+        if self.row("SELECT 1 FROM compute c JOIN keys k ON k.key=c.key WHERE k.data=?", data):
+            raise Failure("workspace_in_use", 409)
+        with self.db:
+            self.db.execute("UPDATE data SET deleting=1 WHERE id=?", (data,))
+        self.drain("data", data, row["uid"])
+        with self.db:
+            self.db.execute("DELETE FROM data WHERE id=?", (data,))
+
+    def reconcile(self):
+        while True:
+            time.sleep(3)
+            with self.lock:
+                pending = list(self.db.execute("""SELECT id FROM compute c WHERE stopping=1 OR
+                    (? > 0 AND idle < ? AND NOT EXISTS(
+                        SELECT 1 FROM attachments a WHERE a.workspace=c.id AND a.active=1))""",
+                    (self.idle,time.time()-self.idle)))
+                deleting = list(self.db.execute("SELECT id FROM data WHERE deleting=1"))
+                for fn, rows in [(self.stop, pending), (self.delete, deleting)]:
+                    for row in rows:
+                        try:
+                            fn(row["id"])
+                        except Exception as exc:
+                            print("cleanup retry", row["id"], type(exc).__name__, flush=True)
+
+    def call(self, action, req):
+        with self.lock:
+            if action == "start":
+                options = self.options(req.get("options", {}))
+                return {"profile": options.get("podProfile", "small"), "defaults": options}
+            if action == "open":
+                return self.open(req)
+            if action == "delete":
+                self.delete(req["dataId"])
+                return {}
+            workspace = req["workspaceId"]
+            if action == "stop":
+                self.stop(workspace)
+                return {}
+            if action == "detach":
+                if self.inflight.get((workspace, req["sessionId"]), 0):
+                    raise Failure("workspace_in_use", 409)
+                with self.db:
+                    self.db.execute("""INSERT INTO attachments
+                        SELECT ?,?,0 WHERE EXISTS(SELECT 1 FROM compute WHERE id=?)
+                        ON CONFLICT(workspace,session) DO UPDATE SET active=0""",
+                        (workspace, req["sessionId"], workspace))
+                    self.db.execute("UPDATE compute SET idle=? WHERE id=?", (time.time(), workspace))
+                return {}
+            row = self.compute(workspace)
+            if row["stopping"]:
+                raise Failure("workspace_in_use", 409)
+            if action == "recover":
+                self.provision(row)
+                return {"profile": row["profile"], "processTools": "imageProfile" in json.loads(row["runtime"])}
+            session = req["sessionId"]
+            if not isinstance(session, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", session):
+                raise Failure("invalid_workspace_request", 400)
+            if action == "attach":
+                self.provision(row)
+                with self.db:
+                    self.db.execute("INSERT OR IGNORE INTO attachments VALUES(?,?,1)", (workspace, session))
+            active = self.row("SELECT active FROM attachments WHERE workspace=? AND session=?", workspace, session)
+            if not active or not active["active"]:
+                raise Failure("workspace_not_found", 404)
+            if action == "attach":
+                return {}
+            if action == "process" and "imageProfile" not in json.loads(row["runtime"]):
+                raise Failure("invalid_workspace_request", 400)
+            if action not in {"file", "process"}:
+                raise Failure("invalid_workspace_request", 400)
+            physical = self.provision(row)
+            deadline = time.monotonic() + 15
+            while not self.backend.ready(workspace, physical):
+                if time.monotonic() >= deadline:
+                    raise Failure()
+                time.sleep(.2)
+                physical = self.provision(self.compute(workspace))
+            attachment = (workspace, session)
+            self.inflight[attachment] = self.inflight.get(attachment, 0) + 1
+        # Admission is fenced by the session attachment; independent operations
+        # may now run concurrently. The application coordinates shared edits.
+        try:
+            if action == "process":
+                return self.backend.process(workspace, physical, req["operation"])
+            return self.backend.file(workspace, physical, req["operation"])
+        finally:
+            with self.lock:
+                self.inflight[attachment] -= 1
+                if self.inflight[attachment] == 0:
+                    del self.inflight[attachment]
+
+
+class Server(ThreadingHTTPServer):
+    # A slow TLS client must not hold the accept loop or create unbounded workers.
+    def process_request(self, request, address):
+        if not self.capacity.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, address)
+        except BaseException:
+            self.capacity.release()
+            raise
+
+    def process_request_thread(self, request, address):
+        try:
+            request.settimeout(15)
+            with self.tls.wrap_socket(request, server_side=True) as secure:
+                super().process_request_thread(secure, address)
+        except OSError:
+            request.close()
+        finally:
+            self.capacity.release()
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def send_json(self, status, obj):
+        body = json.dumps(obj, ensure_ascii=False).encode()
+        self.send_response(status)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        self.send_json(200 if self.path == "/health" else 404, {})
+
+    def do_POST(self):
+        try:
+            if self.path == "/v1/preview/resolve":
+                auth = self.headers.get("Authorization", "")
+                if not auth.startswith("Bearer "):
+                    raise Failure("forbidden", 403)
+                result = self.server.controller.resolve(self.headers.get("X-Preview-Host"), auth[7:])
+                self.send_json(200, result)
+                return
+            if not hmac.compare_digest(self.headers.get("Authorization", ""), self.server.auth):
+                raise Failure("forbidden", 403)
+            action = self.path.removeprefix("/v1/")
+            if self.path != "/v1/" + action or action not in {"start","open","recover","attach","detach","file","process","stop","delete"}:
+                raise Failure("invalid_workspace_request", 404)
+            length = int(self.headers.get("content-length", 0))
+            if not 0 < length <= 1_048_576:
+                raise Failure("invalid_workspace_request", 400)
+            req = json.loads(self.rfile.read(length))
+            if not isinstance(req, dict):
+                raise Failure("invalid_workspace_request", 400)
+            result = self.server.controller.call(action, req)
+            self.send_json(200, result)
+        except Failure as exc:
+            self.send_json(exc.status, {"error": exc.code})
+        except (KeyError, ValueError, TypeError):
+            self.send_json(400, {"error": "invalid_workspace_request"})
+        except Exception as exc:
+            print("workspace request failed", type(exc).__name__, flush=True)
+            self.send_json(503, {"error": "workspace_provider_unavailable"})
+
+
+def serve(backend_factory=None):
+    controller = Controller(backend_factory, state_dir=os.getenv("WORKSPACE_STATE_DIR", "/state"))
+    token = os.environ["WORKSPACE_SERVICE_TOKEN"]
+    if len(token) < 32:
+        raise ValueError("Workspace service requires a secret token")
+    server = Server((os.getenv("WORKSPACE_BIND_HOST", ""), int(os.getenv("WORKSPACE_PORT", "8443"))), Handler)
+    server.capacity = threading.BoundedSemaphore(64)
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls_dir = os.getenv("WORKSPACE_TLS_DIR", "/tls")
+    tls.load_cert_chain(os.path.join(tls_dir, "tls.crt"), os.path.join(tls_dir, "tls.key"))
+    server.tls = tls
+    server.auth = "Bearer " + token
+    server.controller = controller
+    threading.Thread(target=controller.reconcile, daemon=True).start()
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    serve()

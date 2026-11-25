@@ -21,7 +21,7 @@ jobs:
         with:
           node-version: 24
       - name: Public layout and retained transport tests
-        run: node --test harness/tests/release-layout.test.mjs harness/tests/stdio-client.test.mjs harness/desktop-starters/test.mjs
+        run: node --test harness/tests/release-layout.test.mjs harness/tests/stdio-client.test.mjs harness/desktop-starters/test.mjs harness/service-ui/test/observability.test.mjs harness/service-ui/test/server.test.mjs
       - name: Build SDK and flagship app without launching Electron
         run: |
           npm --prefix harness/typescript-sdk ci
@@ -62,7 +62,8 @@ jobs:
         timeout-minutes: 25
         run: |
           rustup show active-toolchain
-          cargo test --locked -p openworker-sdk --features test-support --lib --test desktop_api --test agent_team -- --test-threads=1
+          cargo test --locked -p openworker-sdk --features test-support --lib --test registration_errors --test desktop_api --test agent_team --test attachments -- --test-threads=1
+          cargo test --locked -p openworker-sdk --features test-support --test tool_free responses_embedded
           cargo test --locked -p openworker-runtime --lib direct::windows::tests -- --test-threads=1
           cargo test --locked -p openworker-runtime --test windows --test connections --test model_endpoints --test direct_macos --test coding --test coding_extended --test assistant
           cargo test --locked -p openworker-sdk --features test-support --test coding --test assistant -- --test-threads=1
@@ -71,6 +72,7 @@ jobs:
         run: |
           npm --prefix typescript-sdk ci
           npm --prefix typescript-sdk test
+          npm --prefix typescript-sdk run test:observability
           if [ "$RUNNER_OS" = Windows ]; then
             echo "OW_TS_TEST_HOST=$(pwd -W)/target/debug/sdk-test-host.exe" >> "$GITHUB_ENV"
           else
@@ -81,7 +83,7 @@ jobs:
         run: node --test --test-reporter=tap typescript-sdk/test/agent-team.test.mjs
       - name: TypeScript callbacks, approvals and crash recovery
         timeout-minutes: 5
-        run: node --test --test-reporter=tap typescript-sdk/test/desktop-api.test.mjs
+        run: node --test --test-reporter=tap typescript-sdk/test/desktop-api.test.mjs typescript-sdk/test/registration-errors.test.mjs
       - name: TypeScript coding and assistant tools
         timeout-minutes: 5
         run: node --test --test-reporter=tap typescript-sdk/test/coding.test.mjs typescript-sdk/test/assistant.test.mjs
@@ -124,6 +126,10 @@ jobs:
         run: |
           cargo fmt --all --check
           cargo clippy --locked --workspace --all-targets --features openworker-sdk/test-support,openworker-server-reference/team-test -- -D warnings
+      - name: Test lifecycle delivery without security features
+        run: cargo test --locked -p openworker-sdk --no-default-features --features test-support --test runtime_observer
+      - name: Test Prisma AIRS registration and scanning
+        run: cargo test --locked -p openworker-sdk --features test-support,security-adapters --test security_scanner
 
   sdk-storage:
     strategy:
@@ -172,6 +178,18 @@ jobs:
         run: echo "OW_PG_TEST_URL=postgresql://postgres:sdk-test-only@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/sdk_tests" >> "$GITHUB_ENV"
       - name: SDK SQLite/PostgreSQL and embedded/stdio matrix
         run: node tests/sdk-storage-shard.mjs "${{ matrix.shard }}"
+      - name: Workspace provider contract and builder/reviewer sessions
+        if: matrix.shard == 'workspaces'
+        run: |
+          (cd ../deploy/workspaces/gateway && go test ./...)
+          python3 -m unittest discover -s ../deploy/workspaces
+          python3 -m venv "$RUNNER_TEMP/modal-tests"
+          "$RUNNER_TEMP/modal-tests/bin/pip" install -r ../deploy/workspaces/modal_provider/requirements.txt
+          (cd ../deploy/workspaces && "$RUNNER_TEMP/modal-tests/bin/python" -m unittest modal_provider.test_backend)
+          npm --prefix typescript-sdk ci
+          npm --prefix typescript-sdk run build
+          cargo test --locked -p openworker-runtime --features workspace-reference --test workspace_provider
+          cargo test --locked -p openworker-server-reference --features workspace-reference --lib builder_and_reviewer_sessions -- --ignored
 
   typescript-storage-and-packaging:
     runs-on: ubuntu-24.04
@@ -219,16 +237,19 @@ jobs:
           CARGO_PROFILE_RELEASE_LTO: "false"
           CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
-        run: cargo build --locked --release -p openworker-sdk --features test-support --bin sdk-test-host
+        run: cargo build --locked --release -p openworker-sdk --features test-support,recording,evaluation-export --bin sdk-test-host
       - name: TypeScript SDK transport and real-host storage parity
         run: |
           export OW_TS_TEST_HOST="$PWD/target/release/sdk-test-host"
           npm --prefix typescript-sdk ci
           npm --prefix typescript-sdk test
+          node --test typescript-sdk/test/observability-live.test.mjs typescript-sdk/test/evaluation-delivery-live.test.mjs
+          node ../harness/trace-viewer/sync.mjs --check
           npm --prefix typescript-sdk run test:integration
           npm --prefix typescript-sdk run test:dynamic-agents
-          node --test --test-concurrency=2 --test-reporter=tap typescript-sdk/test/chat-usage.test.mjs typescript-sdk/test/openrouter-streaming.test.mjs typescript-sdk/test/anthropic-caching.test.mjs typescript-sdk/test/gemini-compat.test.mjs typescript-sdk/test/session-options.test.mjs typescript-sdk/test/stream-events.test.mjs
-          node --test --test-reporter=tap typescript-sdk/test/desktop-api.test.mjs typescript-sdk/test/agent-team.test.mjs
+          node --test typescript-sdk/test/runtime-integrations.test.mjs
+          node --test --test-concurrency=2 --test-reporter=tap typescript-sdk/test/chat-usage.test.mjs typescript-sdk/test/openrouter-streaming.test.mjs typescript-sdk/test/anthropic-caching.test.mjs typescript-sdk/test/gemini-compat.test.mjs typescript-sdk/test/session-options.test.mjs typescript-sdk/test/application-guidance.test.mjs typescript-sdk/test/approval-decisions.test.mjs typescript-sdk/test/stream-events.test.mjs typescript-sdk/test/attachments.test.mjs
+          node --test --test-reporter=tap typescript-sdk/test/desktop-api.test.mjs typescript-sdk/test/cancel-approval.test.mjs typescript-sdk/test/registration-errors.test.mjs typescript-sdk/test/agent-team.test.mjs typescript-sdk/test/standalone-subagents.test.mjs
           node --test --test-reporter=tap typescript-sdk/test/coding.test.mjs typescript-sdk/test/assistant.test.mjs
       - name: Starter and partner packaging
         run: |
@@ -283,7 +304,13 @@ jobs:
       - name: Runtime and telemetry regressions
         run: |
           cargo test --locked -p openworker-runtime -- --test-threads=1
+          cargo test --locked -p openworker-runtime --no-default-features --test attachment_features
+          cargo test --locked -p openworker-runtime --no-default-features --lib integrations::tests
+          cargo test --locked -p openworker-store-postgres --no-default-features --test service_catalog integration_policy_on_an_existing_session_and_recovered_worker -- --ignored --exact
+          cargo test --locked -p openworker-server-reference --test input_attachments -- --ignored --test-threads=1
           cargo test --locked -p openworker-telemetry --features otlp
+          OW_OBSERVABILITY_TEST_URL="$OW_PG_TEST_URL" cargo test --locked -p openworker-observability --features postgres,evaluations -- --include-ignored --test-threads=1
+          cargo test --locked -p openworker-store-postgres --features test-support --test environments terminal_team_save_ -- --ignored --test-threads=1
           cargo test --locked -p openworker-store-postgres --test store imported_history_and_turn_context_ -- --ignored --test-threads=1
       - name: Shared PostgreSQL team contract
-        run: cargo test --locked -p openworker-store-postgres --features test-support --test team_contract --test agent_team_contract --test agent_team_worker -- --ignored --test-threads=1
+        run: cargo test --locked -p openworker-store-postgres --features test-support --test team_contract --test agent_team_contract --test agent_team_worker --test standalone_subagents -- --ignored --test-threads=1

@@ -1182,3 +1182,482 @@ async fn coding_team_source_templates_membership_and_audit_commit_or_roll_back_t
         assert_eq!(source, coding["source"]);
     });
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires isolated OW_PG_TEST_URL; no gateway or model traffic"]
+async fn uncertain_template_installation_remains_reconcilable_instead_of_rejected() {
+    let mut f = Fixture::new().await;
+    let doc = f.create();
+    let record = f.approve("reader", json!(["coding.read_file"]));
+    let installed = management::installation(&f.config).unwrap();
+    let db = f.db.clone();
+    tokio::task::spawn_blocking(move||{
+        let mut pg=postgres::Client::connect(&db.connection,postgres::NoTls).unwrap();
+        pg.batch_execute(&format!("SET search_path={},pg_catalog; CREATE FUNCTION fail_template() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected transient storage failure'; END $$; CREATE TRIGGER fail_template BEFORE INSERT ON agent_team_templates FOR EACH ROW EXECUTE FUNCTION fail_template();",db.schema)).unwrap();
+    }).await.unwrap();
+    let error = refresh(&f.config, &f.store, &installed, &mut String::new())
+        .await
+        .unwrap_err();
+    assert!(error
+        .downcast_ref::<openworker_store_postgres::StorageUnavailable>()
+        .is_some());
+    // A poisoned/lost connection is replaced before inspecting the original receipt.
+    f.store = PostgresStore::open(f.db.clone()).unwrap();
+    assert!(
+        !f.store
+            .service_team_type_installed(&doc.id, &record.runtime_id())
+            .unwrap(),
+        "Storage failure must not publish a permanent rejection receipt"
+    );
+    let db = f.db.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut pg = postgres::Client::connect(&db.connection, postgres::NoTls).unwrap();
+        pg.batch_execute(&format!(
+            "DROP TRIGGER fail_template ON {}.agent_team_templates",
+            db.schema
+        ))
+        .unwrap();
+    })
+    .await
+    .unwrap();
+    refresh(&f.config, &f.store, &installed, &mut String::new())
+        .await
+        .unwrap();
+    assert!(f
+        .store
+        .service_team_type_ready(&doc.id, &record.runtime_id())
+        .unwrap());
+    refresh(&f.config, &f.store, &installed, &mut String::new())
+        .await
+        .unwrap();
+    assert!(f
+        .store
+        .service_team_type_ready(&doc.id, &record.runtime_id())
+        .unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn rotated_team_credential_requires_explicit_same_owner_reauthorization() {
+    let mut f = Fixture::new().await;
+    f.create();
+    let spec = |principal: &str, scope: Value| {
+        serde_json::from_value(json!({"principal":principal,"role":"operator","scope":scope}))
+            .unwrap()
+    };
+    let old = f
+        .user
+        .authorize(
+            openworker_store_postgres::auth::Action::Identify,
+            None,
+            None,
+        )
+        .unwrap();
+    f.admin.auth_revoke(&old.credential_id).unwrap();
+    let replacement = "replacement-".repeat(5);
+    let other = "other-credential-".repeat(5);
+    let broad = "wider-credential-".repeat(4);
+    for (id, principal, scope, token) in [
+        ("renew", "alice", "owned", &replacement),
+        ("foreign", "bob", "owned", &other),
+        ("broad", "alice", "all", &broad),
+    ] {
+        f.admin
+            .auth_issue(id, spec(principal, json!({"kind":scope})), token)
+            .unwrap();
+    }
+    assert!(f.user.reauthorize_team(&f.lead.id).is_err());
+    assert!(f
+        .store
+        .authorized(&other)
+        .unwrap()
+        .reauthorize_team(&f.lead.id)
+        .is_err());
+    assert!(f
+        .store
+        .authorized(&broad)
+        .unwrap()
+        .reauthorize_team(&f.lead.id)
+        .is_err());
+    f.user = f.store.authorized(&replacement).unwrap();
+    assert!(f.user.read_snapshot(&f.lead.id).is_ok());
+    let installed = management::installation(&f.config).unwrap();
+    f.spawn("builder", "before-reauth", None);
+    assert!(f
+        .store
+        .provision_agent_team_child_for(Some(&installed))
+        .unwrap());
+    let state = f
+        .user
+        .agent_team_api(&f.lead.id, "snapshot", json!({}))
+        .unwrap();
+    assert_eq!(
+        state["roster"]["instances"]["before-reauth"]["phase"],
+        "closed"
+    );
+    assert!(
+        openworker_runtime::agent_team::public_snapshot(state)["failures"]["before-reauth"]
+            .as_str()
+            .unwrap()
+            .contains("reauthorize")
+    );
+    f.user.reauthorize_team(&f.lead.id).unwrap();
+    let spawned = f.spawn("builder", "review-after-rotation", None);
+    f.store
+        .provision_agent_team_child_for(Some(&management::installation(&f.config).unwrap()))
+        .unwrap();
+    let sid = spawned["instance"]["session_id"].as_str().unwrap();
+    assert!(f.user.read_snapshot(sid).is_ok());
+    assert!(f
+        .store
+        .authorized(&other)
+        .unwrap()
+        .read_snapshot(sid)
+        .is_err());
+}
+
+/// Exercise the same HTTP registration endpoint used by the SDK and CLI, then
+/// send two streamed model requests through independent worker runtimes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires OW_PG_TEST_URL and a disposable OPENWORKER_MODEL_REGISTRY_KEY"]
+async fn registered_provider_streams_tools_and_uses_rotated_secret_after_reconnect() {
+    use axum::{http::HeaderMap, routing::post, Json, Router};
+    use openworker_runtime::model::{Model, Progress};
+    use std::sync::{Arc, Mutex};
+    let mut f = Fixture::new().await;
+    std::fs::write(f.config.bundle.join("external-tool"), b"test fixture").unwrap();
+    let file = f.config.bundle.join("tools.json");
+    let mut installed: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    installed["servers"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"external","program":"external-tool","args":[]}));
+    installed["bindings"]["shell"] = json!({"server":"coding","tool":"run_shell"});
+    installed["bindings"]["lookalike"] = json!({"server":"external","tool":"run_shell"});
+    installed["bindings"]["web_search"] = json!({"server":"external","tool":"search"});
+    std::fs::write(file, serde_json::to_vec(&installed).unwrap()).unwrap();
+    f.config.service = Some(
+        serde_json::from_value(
+            json!({"id":"registry-test","namespace":"test","agent":"installed"}),
+        )
+        .unwrap(),
+    );
+    f.config.model_connections.clear();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let received = seen.clone();
+    let inference=Router::new().route("/v1/chat/completions",post(move|headers:HeaderMap,Json(body):Json<Value>|{
+        let received=received.clone();async move{
+            let mut calls=received.lock().unwrap();
+            let credential=headers["authorization"].to_str().unwrap();
+            let expected=if calls.is_empty(){"Bearer first-private-fixture-key"}else{"Bearer second-private-fixture-key"};
+            assert_eq!(credential,expected);assert_eq!(body["model"],"local-code");
+            let first=calls.is_empty();calls.push(body.clone());drop(calls);
+            let delta=if first {json!({"tool_calls":[{"index":0,"id":"tool-one","type":"function","function":{"name":"read_file","arguments":"{}"}}]})} else {assert!(body["messages"].as_array().unwrap().iter().any(|m|m["role"]=="tool" && m["content"]=="verified"));json!({"content":"received verified result"})};
+            let chunk=json!({"choices":[{"index":0,"delta":delta,"finish_reason":if first{"tool_calls"}else{"stop"}}]});
+            let usage=json!({"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":4,"total_tokens":24}});
+            ([("content-type","text/event-stream")],format!("data: {chunk}\n\ndata: {usage}\n\ndata: [DONE]\n\n"))
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+    let mock = tokio::spawn(async move { axum::serve(listener, inference).await.unwrap() });
+    let rt = f
+        .config
+        .api_runtime("registry-api", f.store.clone())
+        .unwrap();
+    let app = crate::http::App::new(
+        &f.config,
+        rt.clone(),
+        f.store.clone(),
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let api = tokio::spawn(async move { axum::serve(listener, app.router()).await.unwrap() });
+    let client = reqwest::Client::new();
+    let admin = "test-admin-".repeat(6);
+    let request = |method, path: &str, token: &str| {
+        client
+            .request(method, format!("{url}/v1/{path}"))
+            .bearer_auth(token)
+            .header("x-openworker-namespace", "test")
+            .header("x-openworker-service-id", "registry-test")
+            .header("idempotency-key", uuid::Uuid::new_v4().simple().to_string())
+    };
+    let body = json!({"provider":{"name":"spark","baseUrl":endpoint,"api":"chat-completions","contextLimit":8192},"apiKey":"first-private-fixture-key"});
+    let register = request(reqwest::Method::POST, "model-providers", &admin)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    let status = register.status();
+    let text = register.text().await.unwrap();
+    assert!(status.is_success(), "{status}: {text}");
+    assert!(!text.contains("fixture-key"));
+    assert_eq!(
+        request(
+            reqwest::Method::POST,
+            "model-providers",
+            &"test-user-".repeat(6)
+        )
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        reqwest::StatusCode::FORBIDDEN
+    );
+    // Qualified names and aliases refer to the same verified installed implementation.
+    let base = f.config.load_bundle().unwrap();
+    let exempt = crate::app_agents::default_tools(&base);
+    assert!(exempt.contains(&"read_file".into()) && exempt.contains(&"coding.read_file".into()));
+    let choice = Choice::new("spark", "local-code");
+    if let Some(cli) = std::env::var_os("OW_CLUSTER_TEST_CLI") {
+        let result = tokio::process::Command::new(cli)
+            .args([
+                "--url",
+                &url,
+                "--namespace",
+                "test",
+                "--token-env",
+                "OW_APP_TEST_ADMIN",
+                "model-provider",
+                "inspect",
+                "spark",
+            ])
+            .env("OW_APP_TEST_ADMIN", &admin)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let shown: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(shown["contextLimit"], 8192);
+        assert!(shown.get("apiKey").is_none());
+    }
+    let apps_profile = json!({"id":"apps@1","provider":"openshell","cpu":1,"memoryMB":512,"sharing":"shared","allowedPrincipals":["app_builder-test","app_preview-test"]});
+    for (path, body) in [
+        ("profiles", apps_profile),
+        ("profiles/apps@1/activate", json!({})),
+    ] {
+        let res = request(reqwest::Method::POST, path, &admin)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            res.status().is_success(),
+            "{path}: {}",
+            res.text().await.unwrap()
+        );
+    }
+    assert!(
+        request(reqwest::Method::PUT, "model-profiles/coding", &admin)
+            .json(&choice)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+    );
+    let builder = "builder-fixture-key-".repeat(3);
+    let preview = "preview-fixture-key-".repeat(3);
+    for (principal, token) in [
+        ("app_builder-test", &builder),
+        ("app_preview-test", &preview),
+    ] {
+        let issue = json!({"token":token,"spec":{"role":"app","scope":{"kind":"owned"},"principal":principal,"expires_at":openworker_runtime::store::now_ms()/1000+3600},"grants":{"modelProfiles":["coding"],"tools":if principal=="app_preview-test"{vec!["web_search"]}else{vec![]}}});
+        assert!(request(reqwest::Method::POST, "credentials", &admin)
+            .json(&issue)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success());
+    }
+    let publish = json!({"instructions":"Use the project files.","tools":["coding.read_file","write_file","shell"],"runtimeProfiles":["apps@1"],"defaultRuntimeProfile":"apps@1","modelProfile":"coding"});
+    for (name, token, expected) in [
+        ("web_search", &builder, 403),
+        ("lookalike", &builder, 403),
+        ("web_search", &preview, 200),
+    ] {
+        let mut proposed = publish.clone();
+        proposed["tools"] = json!([name]);
+        let reply = request(reqwest::Method::POST, "app-agents/search-test", token)
+            .json(&proposed)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(reply.status().as_u16(), expected, "{name}");
+    }
+    let response = request(reqwest::Method::POST, "app-agents/builder", &builder)
+        .json(&publish)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let entry: Value = response.json().await.unwrap();
+    assert!(status.is_success(), "{status}: {entry}");
+    let rid = entry["id"].as_str().unwrap();
+    let detail = format!("releases/{rid}");
+    assert_eq!(
+        request(reqwest::Method::GET, &detail, &preview)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::FORBIDDEN
+    );
+    assert!(request(
+        reqwest::Method::PUT,
+        &format!("app-agents/{rid}/sharing"),
+        &admin
+    )
+    .json(&json!({"sharedWith":["app_preview-test"]}))
+    .send()
+    .await
+    .unwrap()
+    .status()
+    .is_success());
+    assert!(request(reqwest::Method::GET, &detail, &preview)
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .is_success());
+    let submit = request(reqwest::Method::POST, "sessions", &builder)
+        .json(&json!({"agent":rid,"project":"demo"}))
+        .send()
+        .await
+        .unwrap();
+    let status = submit.status();
+    let admit: Value = submit.json().await.unwrap();
+    assert!(status.is_success(), "{status}: {admit}");
+    assert_eq!(
+        f.store
+            .operation_model(admit["operation"]["id"].as_str().unwrap())
+            .unwrap(),
+        Some(choice.clone())
+    );
+
+    let updated = openworker_runtime::connections::Choice::new("spark", "local-code-v2");
+    assert!(
+        request(reqwest::Method::PUT, "model-profiles/coding", &admin)
+            .json(&updated)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+    );
+    let next = request(reqwest::Method::POST, "sessions", &builder)
+        .json(&json!({"agent":rid,"project":"next-run"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(
+        f.store
+            .operation_model(next["operation"]["id"].as_str().unwrap())
+            .unwrap(),
+        Some(updated)
+    );
+    assert_eq!(
+        f.store
+            .operation_model(admit["operation"]["id"].as_str().unwrap())
+            .unwrap(),
+        Some(choice.clone())
+    );
+
+    let mut history = vec![json!({"role":"user","content":"Read the file."})];
+    let tools = [
+        json!({"type":"function","name":"read_file","description":"Read","parameters":{"type":"object","properties":{}}}),
+    ];
+    let mut identity = None;
+    for i in 0..2 {
+        let worker = f
+            .config
+            .runtime(&format!("registry-worker-{i}"), f.store.clone())
+            .unwrap();
+        let selected = worker.connections.resolve(&choice).unwrap();
+        if i == 0 {
+            identity = Some(selected.identity.clone());
+        }
+        assert_eq!(Some(&selected.identity), identity.as_ref());
+        let mut m = Model::new("local-code".into(), false);
+        m.connection = Some((worker.connections.clone(), selected));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        m.next("Use the tool", &history, &tools, tx).await.unwrap();
+        let mut completion = None;
+        while let Some(evt) = rx.recv().await {
+            if let Progress::Complete(c) = evt {
+                completion = Some(c)
+            }
+        }
+        let completed = completion.unwrap();
+        assert_eq!(completed.usage.unwrap().input_tokens, 20);
+        if i == 0 {
+            assert_eq!(completed.output[0]["name"], "read_file");
+            history.extend(completed.output);
+            history.push(
+                json!({"type":"function_call_output","call_id":"tool-one","output":"verified"}),
+            );
+            assert!(request(
+                reqwest::Method::POST,
+                "model-providers/spark/rotate",
+                &admin
+            )
+            .json(&json!({"apiKey":"second-private-fixture-key"}))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success());
+            assert_eq!(
+                &*worker
+                    .connections
+                    .key(&worker.connections.resolve(&choice).unwrap())
+                    .unwrap(),
+                "second-private-fixture-key"
+            );
+        } else {
+            assert_eq!(
+                completed.output[0]["content"][0]["text"],
+                "received verified result"
+            );
+        }
+        worker.shutdown().await.unwrap();
+    }
+    assert!(request(
+        reqwest::Method::POST,
+        "model-providers/spark/disable",
+        &admin
+    )
+    .send()
+    .await
+    .unwrap()
+    .status()
+    .is_success());
+    assert_eq!(seen.lock().unwrap().len(), 2);
+    assert!(f.store.model_key_ciphertext("spark").is_err());
+    let listing = request(reqwest::Method::GET, "model-providers", &admin)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!listing.contains("fixture-key"));
+    assert!(listing.contains("spark"));
+    api.abort();
+    mock.abort();
+    rt.shutdown().await.unwrap();
+}

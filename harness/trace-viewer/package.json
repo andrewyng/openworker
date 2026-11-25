@@ -1,0 +1,26 @@
+{
+  "name": "@openworkerai/harness-trace-viewer",
+  "version": "0.1.0-beta.2",
+  "private": true,
+  "type": "module",
+  "description": "Optional browser trace viewer for OpenWorker SDK applications",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    },
+    "./style.css": "./src/style.css",
+    "./tracing.css": "./src/tracing.css"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "sync": "node sync.mjs",
+    "check": "node sync.mjs --check"
+  },
+  "types": "./src/index.d.ts",
+  "license": "MIT"
+}
