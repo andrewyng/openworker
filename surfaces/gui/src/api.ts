@@ -2802,6 +2802,7 @@ export interface ModelConfigRecord {
   temperature?: number;
   top_p?: number;
   compaction_threshold_pct?: number;
+  compaction_cap_tokens?: number;
   default?: boolean;
 }
 
@@ -2831,6 +2832,7 @@ export interface ModelConfigView {
   temperature?: ModelSettingValue;
   top_p?: ModelSettingValue;
   compaction_threshold_pct?: ModelSettingValue;
+  compaction_cap_tokens?: ModelSettingValue;
   default: ModelSettingValue;
   recommendation?: ModelRecommendation;
 }
