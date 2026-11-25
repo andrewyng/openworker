@@ -12,12 +12,15 @@ owns the wake records + the due/complete logic; the scheduler tick consumes ``du
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 KIND_TIMER = "timer"
 KIND_COMPLETION = "completion"
@@ -55,11 +58,17 @@ class WakeStore:
         self._wakes: dict[str, Wake] = {}
         self.stopped_sessions: set[str] = set()
         if self.path and self.path.is_file():
-            saved = json.loads(self.path.read_text(encoding="utf-8"))
-            self.stopped_sessions = set(saved.get("stopped_sessions", []))
-            for raw in saved.get("wakes", []):
-                w = Wake(**raw)
-                self._wakes[w.id] = w
+            try:
+                saved = json.loads(self.path.read_text(encoding="utf-8"))
+                self.stopped_sessions = set(saved.get("stopped_sessions", []))
+                for raw in saved.get("wakes", []):
+                    w = Wake(**raw)
+                    self._wakes[w.id] = w
+            except (OSError, ValueError, TypeError, AttributeError):
+                # A corrupt file must never block startup (#204).
+                logger.warning("wake file at %s is unreadable; starting empty", self.path)
+                self.stopped_sessions = set()
+                self._wakes = {}
             # Older versions accumulated timers. Keep only the newest pending
             # sleep per session while retaining the replaced records for audit.
             newest = {}

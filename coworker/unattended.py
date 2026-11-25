@@ -19,9 +19,12 @@ value; the fixed replies live here too so every surface says the same thing.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 ATTENDED = "attended"
 INBOX = "inbox"
@@ -66,11 +69,19 @@ class UnattendedRegistry:
         self._lock = threading.Lock()
         self._values: dict[str, str] = {}
         if self.path and self.path.is_file():
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-            for sid, value in dict(raw).items():
-                normalized = normalize_attendance(value)
-                if normalized != ATTENDED:
-                    self._values[str(sid)] = normalized
+            try:
+                raw = json.loads(self.path.read_text(encoding="utf-8"))
+                for sid, value in dict(raw).items():
+                    normalized = normalize_attendance(value)
+                    if normalized != ATTENDED:
+                        self._values[str(sid)] = normalized
+            except (OSError, ValueError, TypeError, AttributeError):
+                # A corrupt file must never block startup (#204). Every session reads as
+                # attended, the default that still asks before acting.
+                logger.warning(
+                    "attendance file at %s is unreadable; starting empty", self.path
+                )
+                self._values = {}
 
     def _save(self) -> None:
         if not self.path:
