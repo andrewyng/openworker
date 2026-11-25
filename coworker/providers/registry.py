@@ -1589,6 +1589,25 @@ def verify_provider_key(
                     },
                     timeout=timeout,
                 )
+        elif name == "atlascloud":
+            # Atlas Cloud's /models is public (a bad key still answers 200) and its
+            # /chat/completions has no GET route (a valid key gets 404 there), so the
+            # generic probe would reject a good key with the "missing /v1" message.
+            # Send a non-persisted one-token completion instead, like Ark below.
+            default_base = next(
+                (f.default for f in d.fields if f.key == "base_url" and f.default), ""
+            )
+            base = (base_url or "").strip().rstrip("/") or default_base.rstrip("/")
+            resp = httpx.post(
+                base + "/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": d.recommended_model,
+                    "messages": [{"role": "user", "content": "Reply with OK."}],
+                    "max_tokens": 1,
+                },
+                timeout=timeout,
+            )
         elif name in ("ark", "ark-agent-plan-cn"):
             default_base = next(
                 (f.default for f in d.fields if f.key == "base_url" and f.default), ""
