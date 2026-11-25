@@ -11,7 +11,8 @@ and stop, instead of running.
 `acquire()` holds an advisory lock on `<state>/engine.lock` for the life of
 the returned handle (the process, in practice) and records the holder's pid
 in the file for the refusal message. POSIX uses flock; Windows uses
-msvcrt.locking on the first byte. Best effort where neither exists: the
+msvcrt.locking on the first byte, with readable PID metadata after it.
+Best effort where neither exists: the
 lock degrades to "always acquired" rather than blocking a launch.
 """
 
@@ -83,7 +84,18 @@ def _try_lock(fh) -> bool:
 def holder_pid(state: Path) -> Optional[int]:
     """Pid recorded by the current holder, if any (informational only)."""
     try:
-        text = (Path(state) / LOCK_NAME).read_text().strip()
+        path = Path(state) / LOCK_NAME
+        if sys.platform == "win32":
+            # Windows locks deny reads even through a second handle in the same
+            # process. Skip byte zero, but never interpret a legacy PID's suffix
+            # as a different PID: only the new '#pid=...' record has this tag.
+            with path.open("rb", buffering=0) as fh:
+                fh.seek(1)
+                record = fh.read()
+            if record.startswith(b"pid="):
+                return int(record[4:])
+        # Legacy numeric records remain readable when unlocked (and on POSIX).
+        text = path.read_text().strip()
         return int(text) if text else None
     except (OSError, ValueError):
         return None
@@ -96,7 +108,7 @@ def acquire(state: Path, *, timeout: float = 0.0) -> EngineLock:
     state = Path(state)
     state.mkdir(parents=True, exist_ok=True)
     path = state / LOCK_NAME
-    # "a+" never truncates: the holder's pid stays readable for the message.
+    # "a+" never truncates a competing holder's diagnostic record.
     fh = open(path, "a+")
     deadline = time.monotonic() + max(0.0, timeout)
     while True:
@@ -110,7 +122,10 @@ def acquire(state: Path, *, timeout: float = 0.0) -> EngineLock:
     try:
         fh.seek(0)
         fh.truncate()
-        fh.write(str(os.getpid()))
+        # Keep the lock at byte zero for exclusion with older Windows engines.
+        # Only the diagnostic format changes; POSIX keeps its numeric record.
+        pid = str(os.getpid())
+        fh.write(f"#pid={pid}" if sys.platform == "win32" else pid)
         fh.flush()
     except OSError:
         pass
