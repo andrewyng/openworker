@@ -81,6 +81,18 @@ class SQLiteMemoryStore(MemoryStore):
             fts_exists = self._conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories_fts'"
             ).fetchone()
+            if fts_exists:
+                fts_cols = {
+                    row["name"]
+                    for row in self._conn.execute(
+                        "PRAGMA table_info(memories_fts)"
+                    ).fetchall()
+                }
+                if "norm_content" not in fts_cols:
+                    for trigger in ("memories_ai", "memories_ad", "memories_au"):
+                        self._conn.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+                    self._conn.execute("DROP TABLE memories_fts")
+                    fts_exists = None
             self._conn.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
                     norm_content,
