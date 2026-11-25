@@ -388,6 +388,33 @@ def test_nebius_verbose_modality_string():
     assert rows["b"].kind == "image" and (rows["c"].kind, rows["c"].kind_source) == ("chat", "none")
 
 
+def test_sarvam_reads_type_window_and_what_the_key_may_call():
+    """Sarvam's /v2/models (fixture read 2026-11-17 with a real key) says per row what the
+    model is for and whether the key is enabled for it (OPE-308)."""
+    payload = _fixture("sarvam")
+    rows = _parsed("sarvam")
+    b105 = rows["sarvam-105b"]
+    assert (b105.kind, b105.kind_source, b105.context, b105.tools, b105.input_image, b105.reasoning) == (
+        "chat", "provider", 128_000, True, False, True
+    )
+    assert rows["sarvam-105b-conversations"].reasoning is False  # `reasoning: null`
+    assert rows["gemma4"].input_image is True and rows["glm5.3"].context == 1_048_576
+    # Decision models go aside with the provider's word; never offered as a coworker's model.
+    prism = rows["sarvam-prism"]
+    assert (prism.kind, prism.kind_source, prism.offered) == ("specialised", "provider", False)
+    assert live_models.as_dict(prism)["reason"] == "Specialised: decision making"
+    # Provisioned models this key is not enabled for are not rows, but a typed id is known.
+    assert "deepseekv4-pro" not in rows and "embeddinggemma-2" not in rows and "clef" not in rows
+    assert "deepseekv4-pro" in live_models.listed_ids("sarvam", payload, list(rows.values()))
+    assert sorted(r.id for r in rows.values() if r.offered) == [
+        "deepseekv4.1-flash-1017", "deepseekv4.1-flash-1017-interactive", "gemma4",
+        "glm5.3", "glm5.3-flash", "sarvam-105b", "sarvam-105b-conversations",
+    ]
+    # An embedding row the key may call is set aside as one.
+    emb = live_models.parse_listing("sarvam", {"data": [{"id": "e", "type": "embedding", "whitelisted": True}]})[0]
+    assert emb.kind == "embedding"
+
+
 def test_garbage_is_tolerated():
     assert live_models.parse_listing("openai", {"data": "nope"}) == []
     assert live_models.parse_listing("openai", {"data": [1, "x", {"id": ""}, {"name": 5}]}) == []

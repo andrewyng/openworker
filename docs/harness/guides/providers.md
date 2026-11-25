@@ -9,6 +9,7 @@ The session saves its resolved model. Unavailable models fail explicitly.
 | OpenAI | Responses | `name: "OpenAI", api: "responses"` |
 | Anthropic | Native Messages | `name: "Anthropic", api: "anthropic"` |
 | Google Gemini | Google OpenAI-compatible Chat Completions | Google's `/v1beta/openai` base URL and a Gemini API key |
+| Sarvam AI | Chat Completions | `https://api.sarvam.ai/v2` base URL and a Sarvam API key |
 | OpenRouter or a compatible proxy | Chat Completions | Custom `baseUrl` and credentials |
 | Ollama / vLLM | Chat Completions | Local base URL and an installed model ID |
 
@@ -62,6 +63,35 @@ await harness.setModelProvider({
   baseUrl: 'http://127.0.0.1:11434/v1',
 });
 ```
+
+**Sarvam AI.** Sarvam serves `sarvam-105b` through an OpenAI-compatible Chat Completions API.
+Use the `/v2` base URL: it accepts the key as a bearer token and supports the
+streaming usage option. Create a key at
+[indus.sarvam.ai](https://indus.sarvam.ai/key-management).
+
+<!-- sdk-tabs -->
+### TypeScript
+
+```typescript
+await harness.setModelProvider({
+  name: 'Sarvam', api: 'chat-completions',
+  baseUrl: 'https://api.sarvam.ai/v2',
+  credentials: { apiKeyEnv: 'SARVAM_API_KEY', storage: 'memory' },
+});
+// Then use { provider: 'Sarvam', name: 'sarvam-105b' } as the agent's defaultModel.
+```
+
+### Rust
+
+```rust,ignore
+harness.set_model_provider(
+    ModelProvider::chat_completions("Sarvam")
+        .base_url("https://api.sarvam.ai/v2")
+        .credentials(Credentials::from_env("SARVAM_API_KEY").memory_only()),
+).await?;
+// Then use Model::new("Sarvam", "sarvam-105b") as the agent's default model.
+```
+<!-- /sdk-tabs -->
 
 Use the [Desktop example](desktop.md#connect-a-model) for OpenAI Responses.
 For an authenticated OpenAI-compatible proxy, use `api: 'chat-completions'`, its

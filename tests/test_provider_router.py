@@ -102,6 +102,22 @@ def test_build_novita_client_uses_base_url(monkeypatch):
     assert captured["api_key"] == "sk-nov"
 
 
+def test_build_sarvam_client_uses_v2_and_its_own_key(monkeypatch):
+    captured: dict = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-must-not-leak")
+    monkeypatch.setenv("SARVAM_API_KEY", "sk-sarvam-env")
+    client = build_provider_client("sarvam", {}, secrets=None)
+    client._ensure_client()  # type: ignore[attr-defined]
+    assert captured["base_url"] == "https://api.sarvam.ai/v2"
+    assert captured["api_key"] == "sk-sarvam-env"
+
+
 # -- router routing -------------------------------------------------------------
 class _Recorder(ProviderClient):
     def __init__(self, name: str):

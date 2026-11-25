@@ -311,7 +311,7 @@ def _build_openrouter_account(profile: dict[str, Any], secrets: Any) -> Provider
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
-    Kimi, MiniMax, Qwen, xAI, Mistral, Novita, Upstage). The key is resolved from the vendor's OWN
+    Kimi, MiniMax, Qwen, xAI, Mistral, Novita, Upstage, Sarvam). The key is resolved from the vendor's OWN
     profile (or its env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a
     configured OpenAI key is never silently sent to a different vendor's endpoint. Missing key ⇒
     fail fast with a vendor-named error (these are only built on demand, when one of their models
@@ -863,6 +863,19 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         base_url="https://api.upstage.ai/v1",
         recommended_model="solar-pro4",
         env_key="UPSTAGE_API_KEY",
+    ),
+    # Sarvam: /v2, not /v1 — /v1 serves (and lists) only sarvam-105b and its conversations
+    # variant, and only /v2 documents stream_options. Bearer auth is accepted on every
+    # endpoint; a bad key is a 403.
+    # sarvam-105b on /v2 with tools, include_usage and reasoning_effort "none" verified live
+    # 2026-11-17 (docs.sarvam.ai/api-reference/authentication, /chat/chat-completions-v2).
+    _compat(
+        "sarvam",
+        "Sarvam AI",
+        base_url="https://api.sarvam.ai/v2",
+        recommended_model="sarvam-105b",
+        env_key="SARVAM_API_KEY",
+        endpoint_help="Prefilled with Sarvam's OpenAI-compatible /v2 endpoint; keep it (the /v1 route serves only the two Sarvam-105B models).",
     ),
     # Resellers: many labs' models behind one key, using THEIR model namespaces (the curated
     # ids + display labels live in providers/matrix.py). Groq was deferred on 2026-07-04 to

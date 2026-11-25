@@ -92,7 +92,7 @@ def capabilities_for(model: str) -> ModelCapabilities:
         )
 
     # OpenAI-compatible vendors (DeepSeek, Z AI/GLM, Kimi, MiniMax, Qwen, xAI/Grok, Mistral,
-    # Upstage/Solar): tool calling + streaming across their current lineups; vision left off
+    # Upstage/Solar, Sarvam): tool calling + streaming across their current lineups; vision left off
     # until probed per-model (several have vision variants, but the text flagships are what
     # we suggest).
     if name.startswith(
@@ -106,6 +106,7 @@ def capabilities_for(model: str) -> ModelCapabilities:
             "mistral",
             "magistral",
             "solar",
+            "sarvam",
         )
     ):
         return ModelCapabilities(

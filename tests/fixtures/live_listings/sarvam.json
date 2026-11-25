@@ -1,0 +1,294 @@
+{
+ "object": "list",
+ "data": [
+  {
+   "id": "glm5.3-flash",
+   "object": "model",
+   "owned_by": "open-source",
+   "type": "chat",
+   "display_name": "GLM 5.3 Flash",
+   "context_length": 1048576,
+   "supports_tools": true,
+   "supports_image_input": true,
+   "access": "standard",
+   "whitelisted": true,
+   "reasoning": {
+    "can_disable": false,
+    "default_on": true,
+    "efforts": [
+     "low",
+     "high",
+     "max"
+    ],
+    "default_effort": "high"
+   }
+  },
+  {
+   "id": "glm5.3",
+   "object": "model",
+   "owned_by": "open-source",
+   "type": "chat",
+   "display_name": "GLM 5.3",
+   "context_length": 1048576,
+   "supports_tools": true,
+   "supports_image_input": false,
+   "access": "standard",
+   "whitelisted": true,
+   "reasoning": {
+    "can_disable": false,
+    "default_on": true,
+    "efforts": [
+     "low",
+     "high",
+     "max"
+    ],
+    "default_effort": "max"
+   }
+  },
+  {
+   "id": "gemma4",
+   "object": "model",
+   "owned_by": "open-source",
+   "type": "chat",
+   "display_name": "Gemma 4 31B",
+   "context_length": 262144,
+   "supports_tools": true,
+   "supports_image_input": true,
+   "access": "standard",
+   "whitelisted": true,
+   "reasoning": null
+  },
+  {
+   "id": "sarvam-105b",
+   "object": "model",
+   "owned_by": "sarvam",
+   "type": "chat",
+   "display_name": "Sarvam 105B",
+   "context_length": 128000,
+   "supports_tools": true,
+   "supports_image_input": false,
+   "access": "standard",
+   "whitelisted": true,
+   "reasoning": {
+    "can_disable": true,
+    "default_on": true,
+    "efforts": [
+     "low",
+     "medium",
+     "high"
+    ],
+    "default_effort": "low"
+   }
+  },
+  {
+   "id": "sarvam-105b-conversations",
+   "object": "model",
+   "owned_by": "sarvam",
+   "type": "chat",
+   "display_name": "Sarvam 105B Conversations",
+   "context_length": 32000,
+   "supports_tools": true,
+   "supports_image_input": false,
+   "access": "standard",
+   "whitelisted": true,
+   "reasoning": null
+  },
+  {
+   "id": "deepseekv4.1-flash-1017",
+   "object": "model",
+   "owned_by": "open-source",
+   "type": "chat",
+   "display_name": "DeepSeek V4.1 Flash 1017",
+   "context_length": 1048576,
+   "supports_tools": true,
+   "supports_image_input": true,
+   "access": "standard",
+   "whitelisted": true,
+   "reasoning": {
+    "can_disable": true,
+    "default_on": true,
+    "efforts": [
+     "low",
+     "high",
+     "max"
+    ],
+    "default_effort": "high"
+   }
+  },
+  {
+   "id": "deepseekv4.1-flash-1017-interactive",
+   "object": "model",
+   "owned_by": "open-source",
+   "type": "chat",
+   "display_name": "DeepSeek V4.1 Flash 1017 Interactive",
+   "context_length": 1048576,
+   "supports_tools": true,
+   "supports_image_input": true,
+   "access": "standard",
+   "whitelisted": true,
+   "reasoning": {
+    "can_disable": true,
+    "default_on": true,
+    "efforts": [
+     "low",
+     "high",
+     "max"
+    ],
+    "default_effort": "high"
+   }
+  },
+  {
+   "id": "clef",
+   "object": "model",
+   "owned_by": "open-source",
+   "type": "decision",
+   "display_name": "Clef",
+   "context_length": 65536,
+   "supports_tools": false,
+   "supports_image_input": false,
+   "access": "provisioned",
+   "whitelisted": false
+  },
+  {
+   "id": "sarvam-prism",
+   "object": "model",
+   "owned_by": "sarvam",
+   "type": "decision",
+   "display_name": "Sarvam Prism",
+   "context_length": 32768,
+   "supports_tools": false,
+   "supports_image_input": false,
+   "access": "standard",
+   "whitelisted": true
+  },
+  {
+   "id": "embeddinggemma-2",
+   "object": "model",
+   "owned_by": "open-source",
+   "type": "embedding",
+   "display_name": "EmbeddingGemma 2",
+   "context_length": 8192,
+   "supports_tools": false,
+   "supports_image_input": false,
+   "access": "provisioned",
+   "whitelisted": false
+  },
+  {
+   "id": "qwen38-27b",
+   "object": "model",
+   "owned_by": "open-source",
+   "type": "chat",
+   "display_name": "Qwen 3.8 27B",
+   "context_length": 262144,
+   "supports_tools": true,
+   "supports_image_input": true,
+   "access": "provisioned",
+   "whitelisted": false,
+   "reasoning": {
+    "can_disable": true,
+    "default_on": true,
+    "efforts": []
+   }
+  },
+  {
+   "id": "deepseekv4-pro",
+   "object": "model",
+   "owned_by": "open-source",
+   "type": "chat",
+   "display_name": "DeepSeek V4 Pro",
+   "context_length": 1000000,
+   "supports_tools": true,
+   "supports_image_input": false,
+   "access": "provisioned",
+   "whitelisted": false,
+   "reasoning": {
+    "can_disable": true,
+    "default_on": true,
+    "efforts": [
+     "low",
+     "high",
+     "max"
+    ],
+    "default_effort": "high"
+   }
+  },
+  {
+   "id": "mimo-v2.6-flash",
+   "object": "model",
+   "owned_by": "open-source",
+   "type": "chat",
+   "display_name": "MiMo V2.6 Flash",
+   "context_length": 1048576,
+   "supports_tools": true,
+   "supports_image_input": true,
+   "access": "provisioned",
+   "whitelisted": false,
+   "reasoning": {
+    "can_disable": true,
+    "default_on": true,
+    "efforts": []
+   }
+  },
+  {
+   "id": "mimo-v2.6-pro",
+   "object": "model",
+   "owned_by": "open-source",
+   "type": "chat",
+   "display_name": "MiMo V2.6 Pro",
+   "context_length": 1048576,
+   "supports_tools": true,
+   "supports_image_input": true,
+   "access": "provisioned",
+   "whitelisted": false,
+   "reasoning": {
+    "can_disable": true,
+    "default_on": true,
+    "efforts": []
+   }
+  },
+  {
+   "id": "kimi-k3",
+   "object": "model",
+   "owned_by": "open-source",
+   "type": "chat",
+   "display_name": "Kimi K3",
+   "context_length": 1048576,
+   "supports_tools": true,
+   "supports_image_input": true,
+   "access": "provisioned",
+   "whitelisted": false,
+   "reasoning": {
+    "can_disable": false,
+    "default_on": true,
+    "efforts": [
+     "low",
+     "high",
+     "max"
+    ],
+    "default_effort": "max"
+   }
+  },
+  {
+   "id": "kimi-k3.1-pro",
+   "object": "model",
+   "owned_by": "open-source",
+   "type": "chat",
+   "display_name": "Kimi K3.1 Pro",
+   "context_length": 1048576,
+   "supports_tools": true,
+   "supports_image_input": true,
+   "access": "provisioned",
+   "whitelisted": false,
+   "reasoning": {
+    "can_disable": false,
+    "default_on": true,
+    "efforts": [
+     "low",
+     "medium",
+     "high",
+     "max"
+    ]
+   }
+  }
+ ]
+}
