@@ -841,6 +841,118 @@ def test_fts5_search_rebuild_index(tmp_path):
     assert len(store.search("vim")) == 1
 
 
+def test_arabic_fts5_normalization(tmp_path):
+    store = _store(tmp_path)
+    item = store.add(
+        "مُحَمَّدٌ يعمل في سـكـاي ديفلوب مع أحمد عام ٢٠٢٦ في المدرسة",
+        scope=Scope.GLOBAL,
+        summary="تقرير أُولى",
+    )
+
+    # Unvocalized <-> vocalized, Tatweel, Alef/Teh-Marbuta/Alef-Maksura variants, Eastern digits
+    for q in (
+        "محمد",
+        "مُحَمَّدٌ",
+        "سكاي",
+        "سـكـاي",
+        "احمد",
+        "أحمد",
+        "2026",
+        "٢٠٢٦",
+        "المدرسه",
+        "المدرسة",
+        "اولي",
+        "أُولى",
+    ):
+        hits = store.search(q)
+        assert [m.id for m in hits] == [item.id], f"Expected match for {q!r}"
+
+    # Verbatim display fields stay intact
+    saved = store.get(item.id)
+    assert saved is not None
+    assert saved.content == "مُحَمَّدٌ يعمل في سـكـاي ديفلوب مع أحمد عام ٢٠٢٦ في المدرسة"
+    assert saved.summary == "تقرير أُولى"
+
+    # LIKE fallback also respects Arabic normalization
+    store._fts_enabled = False
+    assert [m.id for m in store.search("محمد")] == [item.id]
+    assert [m.id for m in store.search("2026")] == [item.id]
+
+
+def test_legacy_fts5_schema_migrates_to_normalized_index(tmp_path):
+    """Databases created with the pre-normalization `memories_fts(content, summary)`
+    schema and triggers must drop the stale FTS virtual table + triggers and rebuild
+    against `norm_content`/`norm_summary` on upgrade."""
+    path = tmp_path / "legacy_arabic_fts.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """CREATE TABLE memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL,
+            key TEXT,
+            content TEXT NOT NULL,
+            summary TEXT,
+            workspace TEXT,
+            session_id TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )"""
+    )
+    conn.execute(
+        """CREATE VIRTUAL TABLE memories_fts USING fts5(
+            content,
+            summary,
+            content=memories,
+            content_rowid=id
+        )"""
+    )
+    conn.execute(
+        """CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
+            INSERT INTO memories_fts(rowid, content, summary)
+            VALUES (new.id, new.content, new.summary);
+        END;"""
+    )
+    conn.execute(
+        """CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
+            INSERT INTO memories_fts(memories_fts, rowid, content, summary)
+            VALUES('delete', old.id, old.content, old.summary);
+        END;"""
+    )
+    conn.execute(
+        """CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
+            INSERT INTO memories_fts(memories_fts, rowid, content, summary)
+            VALUES('delete', old.id, old.content, old.summary);
+            INSERT INTO memories_fts(rowid, content, summary)
+            VALUES (new.id, new.content, new.summary);
+        END;"""
+    )
+    for text in ("كَتَبَ", "أحمد", "المدرسة", "٣", "report"):
+        conn.execute(
+            "INSERT INTO memories (scope, content, summary) VALUES ('global', ?, ?)",
+            (text, f"ملخص {text}"),
+        )
+    conn.commit()
+    conn.close()
+
+    store = SQLiteMemoryStore(path)
+    for q in ("كَتَبَ", "كتب", "أحمد", "احمد", "المدرسة", "المدرسه", "٣", "3", "report"):
+        assert len(store.search(q)) == 1, f"Legacy upgrade failed for query {q!r}"
+
+    # Verify update/delete triggers also use the migrated normalized FTS schema cleanly
+    ahmed = store.search("احمد")[0]
+    store.update(ahmed.id, "إبراهيم", summary="ملخص إبراهيم")
+    assert store.search("احمد") == []
+    assert len(store.search("ابراهيم")) == 1
+    assert store.delete(ahmed.id) is True
+    assert store.search("ابراهيم") == []
+    store.close()
+
+    # Re-opening an already-migrated database is idempotent and preserves results
+    reopened = SQLiteMemoryStore(path)
+    for q in ("كَتَبَ", "كتب", "المدرسة", "المدرسه", "٣", "3", "report"):
+        assert len(reopened.search(q)) == 1, f"Reopen failed for query {q!r}"
+    reopened.close()
+
+
 def test_memory_search_tool(tmp_path):
     store = _store(tmp_path)
     reg = ToolRegistry()
