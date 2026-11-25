@@ -7,6 +7,7 @@ import {
   revokeMachineSecrets,
   type Machine,
 } from "../api";
+import { thisMachineName } from "../tauri";
 
 // Keys wallet (remote-home-design.md §Keys wallet W3): the "Available on" row a
 // provider/connector card grows once ≥1 machine is enrolled. This Mac is fixed
@@ -86,7 +87,7 @@ export function WalletChips({
       <div className="text-meta font-medium text-ink mb-1.5">{t("machines.wallet.available_on")}</div>
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-line bg-paper text-meta text-muted">
-          {t("machines.this_mac")} <span className="text-ok">✓</span>
+          {thisMachineName(t)} <span className="text-ok">✓</span>
         </span>
         {chips.map((c) => (
           <button

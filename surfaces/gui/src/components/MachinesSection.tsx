@@ -35,6 +35,7 @@ import {
 import { profileHash, sealProfiles } from "../seal";
 import { consumeApprovalCode, peekApprovalCode } from "../routes";
 import { keyPushAllowed } from "../cloudAuth";
+import { thisMachineName } from "../tauri";
 import { Icon } from "./Icon";
 import { PanelHead } from "./IntegrationsView";
 
@@ -345,14 +346,14 @@ export function MachinesSection() {
         <div className="text-meta text-red-500 mb-3">{error}</div>
       ) : null}
 
-      {/* Cloud mode: the controller isn't a home — there is no This-Mac row. */}
+      {/* Cloud mode: the controller isn't a home — there is no local-machine row. */}
       {!isCloudMode() && (
         <div className={ROW}>
           <div className="w-8 h-8 rounded-lg bg-paper flex items-center justify-center text-body">
             💻
           </div>
           <div>
-            <div className="text-ui font-medium text-ink">{t("machines.this_mac")}</div>
+            <div className="text-ui font-medium text-ink" data-testid="this-machine-name">{thisMachineName(t)}</div>
             <div className={META}>{t("machines.always_available")}</div>
           </div>
         </div>
