@@ -1,0 +1,119 @@
+[
+ {
+  "id": "moonshotai/Kimi-K3",
+  "uuid": "endpoint-kk-moonshotai-kimi-k3",
+  "object": "model",
+  "created": 1785049898,
+  "type": "chat",
+  "running": false,
+  "display_name": "Kimi K3",
+  "organization": "Moonshot AI",
+  "link": "https://huggingface.co/moonshotai",
+  "license": "other",
+  "context_length": 1048576
+ },
+ {
+  "id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+  "object": "model",
+  "created": 1792377574,
+  "type": "chat",
+  "running": false,
+  "display_name": "DeepSeek V4.1 Flash 1017",
+  "organization": "DeepSeek",
+  "context_length": 1048576
+ },
+ {
+  "id": "black-forest-labs/FLUX.1-kontext-pro",
+  "object": "model",
+  "created": 0,
+  "type": "image",
+  "running": false,
+  "display_name": "FLUX.1 Kontext [pro]",
+  "organization": "Black Forest Labs",
+  "context_length": 0
+ },
+ {
+  "id": "vidu/vidu-q1",
+  "uuid": "endpoint-fea0b805-4d7e-45ec-8b1b-856c932f152c",
+  "object": "model",
+  "created": 1759884996,
+  "type": "video",
+  "running": false,
+  "display_name": "Vidu Q1",
+  "organization": "Vidu"
+ },
+ {
+  "id": "hexgrad/Kokoro-82M",
+  "object": "model",
+  "created": 1773163054,
+  "type": "audio",
+  "running": false,
+  "display_name": "Kokoro 82M",
+  "organization": "Hexgrad",
+  "link": "https://huggingface.co/hexgrad/Kokoro-82M",
+  "license": "apache2"
+ },
+ {
+  "id": "meta-llama/Meta-Llama-3.1-8B",
+  "uuid": "model-59f15f56-68d2-4233-b92d-36f67253c408",
+  "object": "model",
+  "created": 1713420479,
+  "type": "language",
+  "running": false,
+  "display_name": "Meta Llama 3.1 8B",
+  "organization": "Meta",
+  "link": "https://huggingface.co/meta-llama/Meta-Llama-3.1-8B",
+  "license": "Llama-3.1 (Other)",
+  "context_length": 16384
+ },
+ {
+  "id": "openai/whisper-large-v3",
+  "uuid": "endpoint-b0eaec1e-3edb-48c3-85a9-1af9b5ce09fb",
+  "object": "model",
+  "created": 1793313108,
+  "type": "transcribe",
+  "running": false,
+  "display_name": "Whisper large-v3",
+  "organization": "OpenAI",
+  "link": "https://huggingface.co/openai/whisper-large-v3",
+  "license": "apache2",
+  "context_length": 1
+ },
+ {
+  "id": "Salesforce/Llama-Rank-V1",
+  "uuid": "endpoint-ec76d175-b4d5-430a-9b2b-d9a7d45755ec",
+  "object": "model",
+  "created": 1723745254,
+  "type": "rerank",
+  "running": false,
+  "display_name": "Salesforce Llama Rank V1 (8B)",
+  "organization": "salesforce",
+  "license": "llama3",
+  "context_length": 8192
+ },
+ {
+  "id": "BAAI/bge-base-en-v1.5",
+  "uuid": "endpoint-9a567e7b-15a8-40b7-b8b1-b5ae0f2163aa",
+  "object": "model",
+  "created": 1749601524,
+  "type": "embedding",
+  "running": false,
+  "display_name": "BAAI-Bge-Base-1.5",
+  "organization": "BAAI",
+  "link": "https://huggingface.co/api/models/BAAI/bge-base-en-v1.5",
+  "license": "MIT",
+  "context_length": 512
+ },
+ {
+  "id": "facebook/cwm",
+  "object": "model",
+  "created": 1760032935,
+  "type": "code",
+  "running": false,
+  "display_name": "Facebook CWM",
+  "organization": "Meta",
+  "link": "https://huggingface.co/api/models/togethercomputer/facebook-cwm",
+  "license": "fair-noncommercial-research-license",
+  "context_length": 131072
+ }
+]

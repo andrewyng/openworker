@@ -1,0 +1,445 @@
+{
+ "data": [
+  {
+   "type": "model",
+   "id": "claude-haiku-5-5",
+   "display_name": "Claude Haiku 5.5",
+   "created_at": "2026-10-07T18:00:00Z",
+   "line": "haiku",
+   "max_input_tokens": 1000000,
+   "max_tokens": 128000,
+   "capabilities": {
+    "batch": {
+     "supported": true
+    },
+    "citations": {
+     "supported": true
+    },
+    "code_execution": {
+     "supported": true
+    },
+    "context_management": {
+     "supported": true,
+     "clear_tool_uses_20250919": {
+      "supported": true
+     },
+     "clear_thinking_20251015": {
+      "supported": true
+     },
+     "compact_20260112": {
+      "supported": true
+     }
+    },
+    "effort": {
+     "supported": true,
+     "low": {
+      "supported": true
+     },
+     "medium": {
+      "supported": true
+     },
+     "high": {
+      "supported": true
+     },
+     "xhigh": {
+      "supported": true
+     },
+     "max": {
+      "supported": true
+     }
+    },
+    "image_input": {
+     "supported": true
+    },
+    "pdf_input": {
+     "supported": true
+    },
+    "server_tools": {
+     "supported": true,
+     "code_execution": {
+      "supported": true
+     },
+     "web_search": {
+      "supported": true
+     }
+    },
+    "structured_outputs": {
+     "supported": true
+    },
+    "thinking": {
+     "supported": true,
+     "types": {
+      "enabled": {
+       "supported": false
+      },
+      "adaptive": {
+       "supported": true
+      },
+      "disabled": {
+       "supported": true
+      },
+      "between_tools": {
+       "supported": false
+      }
+     }
+    }
+   },
+   "lifecycle": "active",
+   "deprecated_at": null,
+   "retires_at": null
+  },
+  {
+   "type": "model",
+   "id": "claude-sonnet-5-5",
+   "display_name": "Claude Sonnet 5.5",
+   "created_at": "2026-09-28T00:00:00Z",
+   "line": "sonnet",
+   "max_input_tokens": 1000000,
+   "max_tokens": 128000,
+   "capabilities": {
+    "batch": {
+     "supported": true
+    },
+    "citations": {
+     "supported": true
+    },
+    "code_execution": {
+     "supported": true
+    },
+    "context_management": {
+     "supported": true,
+     "clear_tool_uses_20250919": {
+      "supported": true
+     },
+     "clear_thinking_20251015": {
+      "supported": true
+     },
+     "compact_20260112": {
+      "supported": true
+     }
+    },
+    "effort": {
+     "supported": true,
+     "low": {
+      "supported": true
+     },
+     "medium": {
+      "supported": true
+     },
+     "high": {
+      "supported": true
+     },
+     "xhigh": {
+      "supported": true
+     },
+     "max": {
+      "supported": true
+     }
+    },
+    "image_input": {
+     "supported": true
+    },
+    "pdf_input": {
+     "supported": true
+    },
+    "server_tools": {
+     "supported": true,
+     "code_execution": {
+      "supported": true
+     },
+     "web_search": {
+      "supported": true
+     }
+    },
+    "structured_outputs": {
+     "supported": true
+    },
+    "thinking": {
+     "supported": true,
+     "types": {
+      "enabled": {
+       "supported": false
+      },
+      "adaptive": {
+       "supported": true
+      },
+      "disabled": {
+       "supported": false
+      },
+      "between_tools": {
+       "supported": true
+      }
+     }
+    }
+   },
+   "lifecycle": "active",
+   "deprecated_at": null,
+   "retires_at": null
+  },
+  {
+   "type": "model",
+   "id": "claude-opus-5-5",
+   "display_name": "Claude Opus 5.5",
+   "created_at": "2026-09-21T16:24:00Z",
+   "line": "opus",
+   "max_input_tokens": 1000000,
+   "max_tokens": 128000,
+   "capabilities": {
+    "batch": {
+     "supported": true
+    },
+    "citations": {
+     "supported": true
+    },
+    "code_execution": {
+     "supported": true
+    },
+    "context_management": {
+     "supported": true,
+     "clear_tool_uses_20250919": {
+      "supported": true
+     },
+     "clear_thinking_20251015": {
+      "supported": true
+     },
+     "compact_20260112": {
+      "supported": true
+     }
+    },
+    "effort": {
+     "supported": true,
+     "low": {
+      "supported": true
+     },
+     "medium": {
+      "supported": true
+     },
+     "high": {
+      "supported": true
+     },
+     "xhigh": {
+      "supported": true
+     },
+     "max": {
+      "supported": true
+     }
+    },
+    "image_input": {
+     "supported": true
+    },
+    "pdf_input": {
+     "supported": true
+    },
+    "server_tools": {
+     "supported": true,
+     "code_execution": {
+      "supported": true
+     },
+     "web_search": {
+      "supported": true
+     }
+    },
+    "structured_outputs": {
+     "supported": true
+    },
+    "thinking": {
+     "supported": true,
+     "types": {
+      "enabled": {
+       "supported": false
+      },
+      "adaptive": {
+       "supported": true
+      },
+      "disabled": {
+       "supported": false
+      },
+      "between_tools": {
+       "supported": false
+      }
+     }
+    }
+   },
+   "lifecycle": "active",
+   "deprecated_at": null,
+   "retires_at": null
+  },
+  {
+   "type": "model",
+   "id": "claude-haiku-4-5-20251001",
+   "display_name": "Claude Haiku 4.5",
+   "created_at": "2025-10-15T00:00:00Z",
+   "line": "haiku",
+   "max_input_tokens": 200000,
+   "max_tokens": 64000,
+   "capabilities": {
+    "batch": {
+     "supported": true
+    },
+    "citations": {
+     "supported": true
+    },
+    "code_execution": {
+     "supported": false
+    },
+    "context_management": {
+     "supported": true,
+     "clear_tool_uses_20250919": {
+      "supported": true
+     },
+     "clear_thinking_20251015": {
+      "supported": true
+     },
+     "compact_20260112": {
+      "supported": false
+     }
+    },
+    "effort": {
+     "supported": false,
+     "low": {
+      "supported": false
+     },
+     "medium": {
+      "supported": false
+     },
+     "high": {
+      "supported": false
+     },
+     "xhigh": {
+      "supported": false
+     },
+     "max": {
+      "supported": false
+     }
+    },
+    "image_input": {
+     "supported": true
+    },
+    "pdf_input": {
+     "supported": true
+    },
+    "server_tools": {
+     "supported": true,
+     "code_execution": {
+      "supported": true
+     },
+     "web_search": {
+      "supported": true
+     }
+    },
+    "structured_outputs": {
+     "supported": true
+    },
+    "thinking": {
+     "supported": true,
+     "types": {
+      "enabled": {
+       "supported": true
+      },
+      "adaptive": {
+       "supported": false
+      },
+      "disabled": {
+       "supported": true
+      },
+      "between_tools": {
+       "supported": false
+      }
+     }
+    }
+   },
+   "lifecycle": "active",
+   "deprecated_at": null,
+   "retires_at": null
+  },
+  {
+   "type": "model",
+   "id": "claude-sonnet-4-5-20250929",
+   "display_name": "Claude Sonnet 4.5",
+   "created_at": "2025-09-29T00:00:00Z",
+   "line": "sonnet",
+   "max_input_tokens": 200000,
+   "max_tokens": 64000,
+   "capabilities": {
+    "batch": {
+     "supported": true
+    },
+    "citations": {
+     "supported": true
+    },
+    "code_execution": {
+     "supported": true
+    },
+    "context_management": {
+     "supported": true,
+     "clear_tool_uses_20250919": {
+      "supported": true
+     },
+     "clear_thinking_20251015": {
+      "supported": true
+     },
+     "compact_20260112": {
+      "supported": false
+     }
+    },
+    "effort": {
+     "supported": false,
+     "low": {
+      "supported": false
+     },
+     "medium": {
+      "supported": false
+     },
+     "high": {
+      "supported": false
+     },
+     "xhigh": {
+      "supported": false
+     },
+     "max": {
+      "supported": false
+     }
+    },
+    "image_input": {
+     "supported": true
+    },
+    "pdf_input": {
+     "supported": true
+    },
+    "server_tools": {
+     "supported": true,
+     "code_execution": {
+      "supported": true
+     },
+     "web_search": {
+      "supported": true
+     }
+    },
+    "structured_outputs": {
+     "supported": true
+    },
+    "thinking": {
+     "supported": true,
+     "types": {
+      "enabled": {
+       "supported": true
+      },
+      "adaptive": {
+       "supported": false
+      },
+      "disabled": {
+       "supported": true
+      },
+      "between_tools": {
+       "supported": false
+      }
+     }
+    }
+   },
+   "lifecycle": "deprecated",
+   "deprecated_at": "2026-09-30T18:30:00Z",
+   "retires_at": "2026-11-30T17:00:00Z"
+  }
+ ],
+ "has_more": false
+}

@@ -462,16 +462,14 @@ def test_matrix_curates_subscription_models():
     from coworker.providers.capabilities import capabilities_for
     from coworker.providers.matrix import models_for_provider
 
+    # Exactly what the subscription backend listed on 2026-11-09, 272K each; the ids it does
+    # not serve (Sol, the 5.2 and 5.1 Codex rows) left the catalog untested (OPE-252).
     assert models_for_provider("openai-codex") == [
-        "gpt-5.6-sol",
+        "gpt-6-luna",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
-        "gpt-5.2-codex",
-        "gpt-5.2",
-        "gpt-5.1-codex",
-        "gpt-5.1-codex-mini",
     ]
-    caps = capabilities_for("openai-codex:gpt-5.6-sol")
+    caps = capabilities_for("openai-codex:gpt-5.6-terra")
     assert caps.tools and caps.vision and caps.streaming
 
 
@@ -526,7 +524,7 @@ def test_providers_list_shows_oauth_state(tmp_path):
     row = rows["openai-codex"]
     assert row["auth"] == "oauth"
     assert row["signed_in"] is False and row["configured"] is False
-    assert "gpt-5.6-sol" in row["suggested_models"]
+    assert "gpt-5.6-terra" in row["suggested_models"]
 
     manager.secrets.put(
         "provider:openai-codex",

@@ -15,9 +15,33 @@ def capabilities_for(model: str) -> ModelCapabilities:
     # Custom user-added models fall through to the heuristics, at their own risk.
     from .matrix import entry_for
 
+    # What the provider's own model list said about a picker model (OPE-252): per field,
+    # the list's flag for this exact id today beats the reviewed catalog's, and the catalog
+    # fills what the list left out.
+    from .live_models import facts_for
+
     entry = entry_for(model)
+    facts = facts_for(model)
     if entry is not None:
-        return entry.caps
+        caps = entry.caps
+        if not facts:
+            return caps
+        return ModelCapabilities(
+            tools=facts["tools"] if isinstance(facts.get("tools"), bool) else caps.tools,
+            vision=facts["vision"] if isinstance(facts.get("vision"), bool) else caps.vision,
+            pdf=facts["pdf"] if isinstance(facts.get("pdf"), bool) else caps.pdf,
+            parallel_tool_calls=caps.parallel_tool_calls,
+            streaming=caps.streaming,
+        )
+
+    if facts.get("tools") is not None or facts.get("vision") is not None:
+        return ModelCapabilities(
+            tools=facts.get("tools") is not False,
+            vision=bool(facts.get("vision")),
+            pdf=bool(facts.get("pdf")),
+            parallel_tool_calls=True,
+            streaming=True,
+        )
 
     provider = model.split(":", 1)[0].lower() if ":" in model else ""
     name = model.split(":", 1)[-1].lower()  # strip a provider prefix if present
