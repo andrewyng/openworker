@@ -152,6 +152,12 @@ test("remote sessions wear the ⌂ badge and group under their machine", async (
   await seedMachines(page, [HETZNER], { m1: [REMOTE_SESSION] });
   await page.goto("/");
 
+  // Select the layout this assertion exercises instead of racing the saved
+  // grouped-layout setting (whose peek can put this row under Show more).
+  await page.getByRole("button", { name: "Group and filter conversations" }).click();
+  await page.getByRole("menu").getByText("Chronological", { exact: true }).click();
+  await page.mouse.click(640, 400);
+
   // Flat list: the remote row is present with its quiet badge.
   const row = page.getByText("Nightly triage watch").first();
   await expect(row).toBeVisible();
