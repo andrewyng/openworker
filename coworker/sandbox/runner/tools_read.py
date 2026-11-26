@@ -34,6 +34,23 @@ def _home_for(target: Path, root: Path, extra_roots: Sequence[Path]) -> Optional
     return None
 
 
+def _flag(value: object) -> bool:
+    """A boolean argument read by value, not by Python truthiness.
+
+    Every non-empty string is truthy, so `recursive="false"` used to recurse. Same
+    policy as `coworker/tools/shell.py`'s `_flag` — copied because this module must
+    stay standard-library only (it also runs inside the sandbox image), the same
+    reason `_IGNORED_DIRS` above is duplicated: only `True`, the number `1`, and the
+    strings `"true"`, `"1"` and `"yes"` (case-insensitive, whitespace-trimmed) count
+    as true — everything else, `"false"` and `"0"` included, is false.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes")
+    return value == 1
+
+
 def list_files(
     workspace: str,
     path: str = ".",
@@ -63,7 +80,9 @@ def list_files(
 
     results: list[str] = []
     try:
-        iterator = base.rglob(pattern or "*") if recursive else base.glob(pattern or "*")
+        iterator = (
+            base.rglob(pattern or "*") if _flag(recursive) else base.glob(pattern or "*")
+        )
         for item in iterator:
             if any(part in _IGNORED_DIRS for part in item.relative_to(home).parts):
                 continue
