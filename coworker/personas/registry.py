@@ -13,6 +13,7 @@ working. Disable/surface only affect what the *new-session* picker offers.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 from dataclasses import dataclass, field
@@ -24,7 +25,26 @@ from ..agents.code import CODE_CAPABILITIES, code_agent
 from ..agents.cowork import COWORK_CAPABILITIES, cowork_agent
 from .manifest import PersonaManifest, load_manifest_file
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_PERSONA_ID = "cowork"
+
+
+def _quarantine(path: Path) -> Optional[Path]:
+    """Move a file we cannot use to ``<name>.corrupt`` — never deleted, never
+    overwritten by a later save — so the bytes stay recoverable."""
+    spare = path.with_suffix(path.suffix + ".corrupt")
+    try:
+        path.replace(spare)
+    except OSError:
+        return None
+    return spare
+
+
+def _refuse_file(path: Path, reason: str) -> None:
+    spare = _quarantine(path)
+    where = f"; kept the bytes in {spare}" if spare else ""
+    logger.warning("%s: %s%s", path, reason, where)
 
 
 def include_unshipped() -> bool:
@@ -217,29 +237,84 @@ class PersonaRegistry:
                 self._load_dir(sub, builtin=False)
 
     def _load_state(self) -> None:
-        if self.state_path and self.state_path.is_file():
+        if not (self.state_path and self.state_path.is_file()):
+            return
+        try:
             data = json.loads(self.state_path.read_text(encoding="utf-8"))
-            self._enabled = dict(data.get("enabled", {}))
-            self._surfaced = dict(data.get("surfaced", {}))
-            self._installed_meta = dict(data.get("installed_meta", {}))
-            self._default = data.get("default", DEFAULT_PERSONA_ID)
+        except (OSError, json.JSONDecodeError) as exc:
+            # A torn file used to raise JSONDecodeError out of SessionManager.__init__
+            # — the server did not start. Move the bytes aside and keep the defaults.
+            _refuse_file(self.state_path, f"unreadable ({type(exc).__name__})")
+            return
+        if not isinstance(data, dict):
+            _refuse_file(self.state_path, "not a JSON object")
+            return
+        # A wrong-shape FIELD only: the readable ones still load (a restart must not
+        # lose them, so the file stays put), the bad one falls back — with a warning.
+        dropped: list[str] = []
+
+        enabled = data.get("enabled", {})
+        if isinstance(enabled, dict):
+            self._enabled = {str(k): bool(v) for k, v in enabled.items()}
+        else:
+            dropped.append("'enabled' is not a JSON object")
+
+        surfaced = data.get("surfaced", {})
+        if isinstance(surfaced, dict):
+            self._surfaced = {str(k): bool(v) for k, v in surfaced.items()}
+        else:
+            dropped.append("'surfaced' is not a JSON object")
+
+        meta = data.get("installed_meta", {})
+        if isinstance(meta, dict):
+            kept = {str(k): v for k, v in meta.items() if isinstance(v, dict)}
+            if len(kept) != len(meta):
+                dropped.append("'installed_meta' has non-object entries")
+            self._installed_meta = kept
+        else:
+            dropped.append("'installed_meta' is not a JSON object")
+
+        default = data.get("default", DEFAULT_PERSONA_ID)
+        if isinstance(default, str) and default:
+            self._default = default
+        else:
+            dropped.append("'default' is not a non-empty string")
+
+        if dropped:
+            logger.warning(
+                "%s: ignored %d field(s): %s",
+                self.state_path,
+                len(dropped),
+                ", ".join(dropped),
+            )
 
     def save(self) -> None:
         if not self.state_path:
             return
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        self.state_path.write_text(
-            json.dumps(
-                {
-                    "enabled": self._enabled,
-                    "surfaced": self._surfaced,
-                    "installed_meta": self._installed_meta,
-                    "default": self._default,
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+        # Write a sibling and rename over the live file: an interrupted write must
+        # tear the .tmp, never the state the user is looking at.
+        temporary = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(
+                json.dumps(
+                    {
+                        "enabled": self._enabled,
+                        "surfaced": self._surfaced,
+                        "installed_meta": self._installed_meta,
+                        "default": self._default,
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            temporary.replace(self.state_path)
+        except OSError:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+            raise
 
     # -- queries ----------------------------------------------------------------
     def _visible(self, e: PersonaEntry) -> bool:
