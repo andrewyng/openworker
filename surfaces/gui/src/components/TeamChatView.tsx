@@ -50,7 +50,9 @@ export function TeamChatView({
     load();
     const t = setInterval(load, 3000);
     return () => clearInterval(t);
-  }, [teamId]);
+    // The poll reads the session too: the view stays mounted while the user picks
+    // another conversation in the sidebar, and the chat belongs to that session.
+  }, [teamId, sessionId]);
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
   }, [chat?.messages.length]);
