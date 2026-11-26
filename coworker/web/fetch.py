@@ -89,7 +89,7 @@ def make_web_fetch_tool(secrets: Optional[SecretStore] = None) -> Callable[..., 
             ("http://", "https://")
         ):
             return {"error": "url must start with http:// or https://"}
-        cap = max_chars if isinstance(max_chars, int) and max_chars > 0 else _MAX
+        cap = max_chars if isinstance(max_chars, int) and not isinstance(max_chars, bool) and max_chars > 0 else _MAX
         cap = min(cap, 100000)
         notice = ""
         try:

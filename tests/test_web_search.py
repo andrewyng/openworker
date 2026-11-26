@@ -64,6 +64,16 @@ def test_tool_clamps_max_results():
     assert fake.calls[1][1] == 1  # clamped to >=1
 
 
+def test_tool_treats_a_bool_max_results_as_absent():
+    # bool subclasses int, so True would otherwise clamp to 1 instead of the
+    # default 5 — a caller passing a flag must not silently get one result.
+    fake = FakeProvider()
+    make_web_search_tool(provider=fake)(query="q", max_results=True)
+    assert fake.calls[0][1] == 5
+    make_web_search_tool(provider=fake)(query="q", max_results=False)
+    assert fake.calls[1][1] == 5
+
+
 def test_tool_reports_search_errors():
     class Boom(WebSearchProvider):
         name = "boom"
