@@ -685,6 +685,8 @@ def _read_prompt(args: argparse.Namespace) -> str:
     if args.prompt_file is None and sys.stdin.isatty():
         raise NoPrompt("give the task with --prompt, --prompt-file, or pipe it in on standard input")
     text = sys.stdin.buffer.read().decode("utf-8", errors="replace")
+    # Match --prompt-file's universal newlines, including CRLF from Windows pipes.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     if not text.strip():
         raise NoPrompt("standard input was empty; give the task with --prompt or --prompt-file")
     return text
