@@ -595,6 +595,10 @@ class TurnEngine:
         self._step = 0
         self._last_context_tokens: Optional[int] = None
         self.audit_context: dict[str, Any] = {}
+        # Durable tool-execution records (#443): set post-construction by the server,
+        # like the other surface hooks. None ⇒ no recording, behaviour byte-identical
+        # to before the store existed.
+        self.tool_exec: Optional[Any] = None
         # Observability (E1): the turn and step events this engine sends to its recorder.
         # Off until a recorder is set (`engine.recorder = ...`), like the other surface hooks.
         self._obs = TurnRecording(None, lambda: str(self.audit_context.get("session_id") or ""))
@@ -1007,6 +1011,37 @@ class TurnEngine:
                 tool_name, spec.metadata if spec else None, self.permissions.risk_overrides
             ).value
         except Exception:  # noqa: BLE001 - a fact, never a reason to fail a call
+            return None
+
+    # -- durable execution records (#443) ---------------------------------------
+
+    def _exec_session_id(self) -> str:
+        """The key execution records live under, or "" when this engine has no session."""
+        return str(self.audit_context.get("session_id") or "")
+
+    def _guards_execution(self, tool_call: ToolCall) -> bool:
+        """True when this call's side effects must survive a crash: a side-effecting
+        tool (local write, shell, external connector — never a plain read) with a store
+        to write to and a session to key on. Reads re-run harmlessly, so they stay out."""
+        if self.tool_exec is None or not self._exec_session_id():
+            return False
+        return self._risk_class(tool_call.name) in (
+            RiskClass.WRITE_LOCAL.value,
+            RiskClass.EXEC.value,
+            RiskClass.EXTERNAL.value,
+        )
+
+    def _prior_execution(self, tool_call: ToolCall) -> Optional[dict[str, Any]]:
+        """The durable record of a call that already ran in a previous process, if any.
+        Best-effort: a store failure must never block or replay a call by itself."""
+        if self.tool_exec is None or not tool_call.id:
+            return None
+        sid = self._exec_session_id()
+        if not sid:
+            return None
+        try:
+            return self.tool_exec.get(sid, tool_call.id)
+        except Exception:  # noqa: BLE001
             return None
 
     def _add_message(self, message: dict[str, Any], *, at: Optional[int] = None) -> None:
@@ -1959,6 +1994,33 @@ class TurnEngine:
                 {"name": tool_call.name, "arguments": tool_call.arguments, "tool_call_id": tool_call.id},
             )
             self._audit(tool_call, stage="proposed")
+            # A call that already ran in a previous process never runs again (#443).
+            # `succeeded` reconstructs the tool result from its snapshot (the approval
+            # that cleared it is already resolved, so authorize must not re-prompt and
+            # the adapter must not re-fire); `dispatched` with no completion means the
+            # side effect's outcome is unknown, and an unknown side effect is not
+            # silently replayed. Reads are not recorded, so they never land here.
+            prior = self._prior_execution(tool_call)
+            if prior is not None:
+                if prior.get("state") == "succeeded":
+                    yield self._record_result(
+                        tool_call,
+                        prior.get("result"),
+                        str(prior.get("status") or "ok"),
+                    )
+                else:
+                    yield self._record_result(
+                        tool_call,
+                        {
+                            "error": (
+                                "this call was already running when the session "
+                                "restarted; its outcome is unknown, so it was not run "
+                                "again — re-issue it if it is safe to repeat"
+                            )
+                        },
+                        "error",
+                    )
+                continue
             if _is_mangled(tool_call):
                 # The arguments never parsed as JSON (a `{"_raw": …}` fallback from the
                 # provider). Executing would produce a bare parameter error the model
@@ -3096,11 +3158,40 @@ class TurnEngine:
         # A tool that starts its own work (the explore helper, E6) records it under this step.
         outer = set_tool_run(ToolRun(step_id=step_id, turn_id=self._obs.turn_id,
                                      view=self.provider, recording=self._obs, call_id=tool_call.id))
+        # #443: for a side-effecting call, mark the execution durable BEFORE the adapter
+        # runs and again the moment it returns — both before `_record_result` appends the
+        # conversation result — so a crash in between is recoverable instead of a replay.
+        guarded = self._guards_execution(tool_call)
+        sid = self._exec_session_id() if guarded else ""
+        if guarded and tool_call.id:
+            try:
+                self.tool_exec.dispatched(sid, tool_call.id, tool_call.name)
+            except Exception:  # noqa: BLE001 - a store failure never fails a call
+                pass
         try:
             result, status = self._execute_call(tool_call)
         finally:
             set_tool_run(outer)
         blocked = result.pop("_blocked", None) if isinstance(result, dict) else None
+        if guarded and tool_call.id:
+            # Snapshot AFTER the `_blocked` pop, so a reconstructed message matches what
+            # the live path would have appended. Bounded (no spill) to keep the store small.
+            try:
+                self.tool_exec.succeeded(
+                    sid,
+                    tool_call.id,
+                    tool_call.name,
+                    status,
+                    toolresult.bound_tool_result(
+                        result,
+                        max_bytes=self._tool_result_max_bytes,
+                        spill_dir=None,
+                        step=self._step,
+                        tool_name=tool_call.name,
+                    ),
+                )
+            except Exception:  # noqa: BLE001 - best-effort; dispatched still guards replay
+                pass
         if step_id is not None:
             attrs = self._tool_step_attrs(tool_call, {**result, "_blocked": blocked} if blocked else result, status)
             step_status = status

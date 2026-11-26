@@ -568,6 +568,12 @@ class SessionManager:
         self.inbox_routing = InboxRouting(base / "inbox_routing.json")
         self.unattended = UnattendedRegistry(base / "unattended.json")
         self.wakes = WakeStore(base / "wakes.json")
+        # Durable tool-execution records (#443): dispatched/succeeded marks around
+        # side-effecting calls, so a crash between the adapter and its conversation
+        # result reconstructs on resume instead of replaying the side effect.
+        from ..tool_exec import ToolExecutionStore
+
+        self.tool_exec = ToolExecutionStore(base / "tool_executions.json")
         # Async subagents (OPE-253): the supplemental session record for subagent runs —
         # written on task transitions, so a run that ends between turn checkpoints survives.
         from ..tools.agent_tasks import AgentTaskStore
@@ -934,6 +940,7 @@ class SessionManager:
                 engine.team_approver = team_approver
             if items_approver is not None:
                 engine.items_approver = items_approver
+            engine.tool_exec = self.tool_exec
             self._wire_agent_tasks(session_id, engine)
             return engine
 
@@ -1083,6 +1090,7 @@ class SessionManager:
         # Observability (E1): this engine's turns and steps go to the server's recorder,
         # unless recording is off on this machine (OB-6): then new engines record nothing.
         engine.recorder = self.recorder if self.observability.settings.record else None
+        engine.tool_exec = self.tool_exec
         self._note_persona_version(engine)
         engine.resolver_of = lambda call_id, _sid=session_id: self.inbox.resolver_of(_sid, call_id)
         engine.delegated_approval = lambda args: self.worker_review_context(session_id, args)
@@ -8824,6 +8832,7 @@ class SessionManager:
         # Observability (E1): this engine's turns and steps go to the server's recorder,
         # unless recording is off on this machine (OB-6): then new engines record nothing.
         engine.recorder = self.recorder if self.observability.settings.record else None
+        engine.tool_exec = self.tool_exec
         self._note_persona_version(engine)
         engine.resolver_of = lambda call_id, _sid=session_id: self.inbox.resolver_of(_sid, call_id)
         self._seed_task_permissions(engine, task)
