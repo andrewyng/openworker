@@ -172,13 +172,21 @@ def shell_tools(executor: Executor) -> list:
         if run_in_background:
             return executor.run_background(command)
         timeout = None
-        if isinstance(timeout_seconds, (int, float)) and timeout_seconds > 0:
+        if (
+            isinstance(timeout_seconds, (int, float))
+            and not isinstance(timeout_seconds, bool)
+            and timeout_seconds > 0
+        ):
             timeout = min(float(timeout_seconds), _MAX_TIMEOUT)
         return executor.run(command, timeout=timeout)
 
     def shell_task_output(task_id: str, wait_seconds: Optional[int] = None) -> dict:
         wait = 0.0
-        if isinstance(wait_seconds, (int, float)) and wait_seconds > 0:
+        if (
+            isinstance(wait_seconds, (int, float))
+            and not isinstance(wait_seconds, bool)
+            and wait_seconds > 0
+        ):
             wait = min(float(wait_seconds), _MAX_TIMEOUT)
         return executor.background_output(task_id, wait_seconds=wait)
 
