@@ -170,6 +170,61 @@ def test_read_file_rejects_escape_and_non_files(tmp_path):
     assert "not a file" in read_file(path="missing.txt")["error"]
 
 
+# -- bool count arguments ------------------------------------------------------
+# `bool` subclasses `int`, so a count of True/False slips past an `isinstance(x, int)`
+# check. A flag must read as "no count given" (the default), never as 1.
+def test_grep_treats_a_bool_max_results_as_absent(tmp_path):
+    _seed(tmp_path)
+    grep = search_tools(str(tmp_path))[0]
+    out = grep(pattern="hello", max_results=True)
+    assert "error" not in out  # `--max-count True` is not a number ripgrep accepts
+    assert out["count"] == 2
+
+
+def test_git_log_treats_a_bool_max_count_as_absent(tmp_path):
+    ws = tmp_path / "repo"
+    ws.mkdir()
+    run = lambda *a: subprocess.run(
+        ["git", "-C", str(ws), *a], capture_output=True, check=True
+    )
+    run("init", "-q")
+    run("config", "user.email", "t@t.io")
+    run("config", "user.name", "T")
+    (ws / "f.txt").write_text("1", encoding="utf-8")
+    run("add", "-A")
+    run("commit", "-qm", "first")
+
+    git_log = git_tools(str(ws))[0]
+    out = git_log(max_count=True)
+    assert "error" not in out  # `-nTrue` is not a commit count git accepts
+    assert out["count"] == 1
+
+
+def test_read_file_treats_a_bool_max_lines_as_absent(tmp_path):
+    (tmp_path / "big.txt").write_text(
+        "\n".join(f"line{i}" for i in range(1, 51)) + "\n", encoding="utf-8"
+    )
+    read_file = file_tools(str(tmp_path))[0]
+    out = read_file(path="big.txt", max_lines=True)
+    assert out["total_lines"] == 50
+    assert out["end_line"] == 50  # not the single line a count of 1 would give
+    assert len(out["content"].splitlines()) == 50
+
+
+def test_list_files_treats_a_bool_max_results_as_absent(tmp_path):
+    for i in range(3):
+        (tmp_path / f"f{i}.txt").write_text("x", encoding="utf-8")
+    list_files = {t.__name__: t for t in file_tools(str(tmp_path))}["list_files"]
+    assert len(list_files(max_results=True)) == 3
+
+
+def test_the_count_arguments_still_clamp_as_before(tmp_path):
+    _seed(tmp_path)
+    grep = search_tools(str(tmp_path))[0]
+    assert grep(pattern="hello", max_results=1)["count"] == 1
+    assert grep(pattern="hello", max_results=False)["count"] == 2
+
+
 # -- web_fetch -----------------------------------------------------------------
 def test_web_fetch_rejects_non_http():
     web_fetch = make_web_fetch_tool()

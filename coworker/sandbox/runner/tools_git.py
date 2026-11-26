@@ -11,7 +11,13 @@ _SEP = "\x1f"
 
 def git_log(workspace: str, path: Optional[str] = None, max_count: int = 20) -> dict[str, Any]:
     root = str(Path(workspace).resolve())
-    n = max_count if isinstance(max_count, int) and max_count > 0 else 20
+    n = (
+        max_count
+        if isinstance(max_count, int)
+        and not isinstance(max_count, bool)
+        and max_count > 0
+        else 20
+    )
     n = min(n, 200)
     cmd = [
         "git",
