@@ -1903,3 +1903,135 @@ def test_experimental_package_loads_cleanly():
 
     assert EXPERIMENTAL_DESCRIPTORS == []
     assert all(d.experimental is False for d in DESCRIPTORS if d.name != "dangerzone")
+
+
+# -- page/character counts: a caller's count is read by value, not by truthiness
+def _count_tools(tmp_path, monkeypatch, calls):
+    """The connector tools whose page size (or character cap) is the caller's
+    `max_results`/`max_chars`, with `_request` recorded instead of the network."""
+    import coworker.connectors.integration_tools as it
+
+    secrets = SecretStore(tmp_path / "secrets.json")
+    secrets.put("github:default", {"token": "ghp_x"})
+    secrets.put("box:default", {"access_token": "boxtok"})
+    for connector in ("gmail", "google_calendar", "outlook"):
+        secrets.put(f"{connector}:account:testaccount", {"access_token": "tok"})
+    # jira/confluence are `_profile`-shaped (one default profile, not accounts);
+    # any non-empty login works — nothing here reaches a real server.
+    for connector in ("jira", "confluence"):
+        secrets.put(
+            f"{connector}:default",
+            {"base_url": "https://x.atlassian.net", "email": "jira-user", "api_token": "t"},
+        )
+
+    def fake_request(method, url, *, headers=None, params=None, json=None, auth=None):
+        calls.append({"url": url, "params": params})
+        return {"ok": True, "data": {}}
+
+    monkeypatch.setattr(it, "_request", fake_request)
+    return {t.__name__: t for t in it.make_integration_tools(secrets)}
+
+
+def test_clamp_a_bool_is_not_a_count():
+    """`bool` subclasses `int`, so `int(True)` is 1: `true` used to ask for ONE
+    result — or ONE character of output — instead of the default."""
+    from coworker.connectors.integration_tools import _clamp
+
+    assert _clamp(True) == 10
+    assert _clamp(True, default=30) == 30
+    assert _clamp(True, default=20000, ceiling=100000) == 20000
+
+
+def test_clamp_zero_is_one_not_the_default():
+    from coworker.connectors.integration_tools import _clamp
+
+    assert _clamp(0) == 1
+    assert _clamp(0, default=20000, ceiling=100000) == 1
+
+
+def test_clamp_unparsable_is_the_default():
+    """`int("abc")` used to raise into the tool's blanket `except Exception`,
+    which answered with Python's own words instead of a search."""
+    from coworker.connectors.integration_tools import _clamp
+
+    assert _clamp("abc") == 10
+    assert _clamp(None) == 10
+    assert _clamp([1]) == 10
+
+
+def test_clamp_ordinary_values_and_the_ceiling():
+    from coworker.connectors.integration_tools import _clamp
+
+    assert _clamp(5) == 5
+    assert _clamp("25") == 20  # a numeric string still counts
+    assert _clamp(999) == 20  # the ceiling holds
+    assert _clamp(-3) == 1  # at least one
+    assert _clamp(999, default=30, ceiling=100) == 100
+
+
+def test_github_search_page_reads_max_results_by_value(tmp_path, monkeypatch):
+    calls = []
+    search = _count_tools(tmp_path, monkeypatch, calls)["github_search"]
+
+    assert "error" not in search("crash", max_results=True)
+    assert calls[-1]["params"]["per_page"] == 10
+    assert "error" not in search("crash", max_results=0)
+    assert calls[-1]["params"]["per_page"] == 1
+    assert "error" not in search("crash", max_results="abc")
+    assert calls[-1]["params"]["per_page"] == 10
+    # values that already worked keep working
+    assert "error" not in search("crash", max_results=5)
+    assert calls[-1]["params"]["per_page"] == 5
+    assert "error" not in search("crash", max_results=999)
+    assert calls[-1]["params"]["per_page"] == 20
+    assert "error" not in search("crash")
+    assert calls[-1]["params"]["per_page"] == 10
+
+
+def test_github_list_commits_page_reads_max_results_by_value(tmp_path, monkeypatch):
+    calls = []
+    commits = _count_tools(tmp_path, monkeypatch, calls)["github_list_commits"]
+
+    assert "error" not in commits("o", "r", max_results=True)
+    assert calls[-1]["params"]["per_page"] == 30
+    assert "error" not in commits("o", "r", max_results=999)
+    assert calls[-1]["params"]["per_page"] == 100
+
+
+@pytest.mark.parametrize(
+    "tool,args,key",
+    [
+        ("gmail_search_messages", {"query": "q"}, "maxResults"),
+        ("gcal_list_events", {}, "maxResults"),
+        ("outlook_list_events", {}, "$top"),
+        ("jira_search_issues", {"jql": "x"}, "maxResults"),
+        ("confluence_search", {"query": "x"}, "limit"),
+    ],
+)
+def test_page_tools_read_max_results_by_value(tmp_path, monkeypatch, tool, args, key):
+    calls = []
+    call = _count_tools(tmp_path, monkeypatch, calls)[tool]
+
+    assert call(max_results=True, **args)["ok"]
+    assert calls[-1]["params"][key] == 10
+    assert call(max_results=0, **args)["ok"]
+    assert calls[-1]["params"][key] == 1
+    assert call(max_results="abc", **args)["ok"]
+    assert calls[-1]["params"][key] == 10
+
+
+def test_box_read_file_cap_reads_max_chars_by_value(tmp_path, monkeypatch):
+    import coworker.connectors.integration_tools as it
+
+    secrets = SecretStore(tmp_path / "secrets.json")
+    secrets.put("box:default", {"access_token": "boxtok"})
+    monkeypatch.setattr(it, "_request", lambda *a, **k: {"ok": True, "data": "x" * 100})
+    read = {t.__name__: t for t in it.make_integration_tools(secrets)}["box_read_file"]
+
+    assert read("f1", max_chars=True) == {
+        "file_id": "f1",
+        "text": "x" * 100,
+        "truncated": False,
+    }
+    assert read("f1", max_chars=0)["text"] == "x"
+    assert read("f1", max_chars="abc")["text"] == "x" * 100
