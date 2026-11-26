@@ -1,10 +1,10 @@
 """Web search providers — a keyless default + pluggable third-party services.
 
-`duckduckgo` works with no API key (our "starting version of our own"). `you` is also usable
-keyless and takes an optional key to lift the free-tier limits. `tavily`, `brave`, `serper`,
-`exa` and `firecrawl` give better results but need a key (configured via the SecretStore /
-env). All providers return a uniform `list[SearchResult]`; the heavy client libs are
-lazy-imported.
+`duckduckgo` works with no API key (our "starting version of our own"). `you` and `keenable`
+are also usable keyless and take an optional key to lift the free-tier limits. `tavily`,
+`brave`, `serper`, `exa` and `firecrawl` give better results but need a key (configured via
+the SecretStore / env). All providers return a uniform `list[SearchResult]`; the heavy client
+libs are lazy-imported.
 """
 
 from __future__ import annotations
@@ -379,6 +379,74 @@ class FirecrawlProvider(WebSearchProvider):
         return str(text)
 
 
+class KeenableProvider(WebSearchProvider):
+    """Keenable (https://docs.keenable.ai) — keyless out of the box, better with a key.
+
+    Without a key it hits the public endpoints, which need no sign-up and are rate-limited
+    per IP; the `X-Keenable-Title` header names the app on that tier. With a key (from the
+    SecretStore or `KEENABLE_API_KEY`, resolved by `coworker.web.tool`) it hits the keyed
+    endpoints, which lift the limits. Both return the same shape; the result text is in
+    `snippet` (raw page text, often several thousand characters), so it is capped here.
+    """
+
+    name = "keenable"
+    display_name = "Keenable"
+    key_url = "https://keenable.ai/console"
+    key_mode = "optional"
+    requires_key = False
+    accepts_key = True
+    supports_fetch = True
+
+    _BASE_URL = "https://api.keenable.ai/v1"
+    _TITLE = "OpenWorker"
+    _SNIPPET_CHARS = 1000
+
+    def __init__(self, api_key: Optional[str] = None) -> None:
+        self.api_key = api_key or None
+
+    def _endpoint(self, kind: str) -> tuple[str, dict]:
+        headers = {"Accept": "application/json", "X-Keenable-Title": self._TITLE}
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+            return f"{self._BASE_URL}/{kind}", headers
+        return f"{self._BASE_URL}/{kind}/public", headers
+
+    def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+        import httpx
+
+        url, headers = self._endpoint("search")
+        resp = httpx.post(
+            url,
+            headers=headers,
+            json={"query": query, "max_results": max_results},
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return [
+            SearchResult(
+                title=r.get("title") or "",
+                url=r.get("url") or "",
+                snippet=" ".join((r.get("snippet") or "").split())[: self._SNIPPET_CHARS],
+            )
+            for r in (data.get("results") or [])[:max_results]
+        ]
+
+    def fetch_page(self, url: str) -> str:
+        # https://docs.keenable.ai/api-reference — GET /v1/fetch(/public)?url=; the page is
+        # `content`, as markdown. A page it cannot reach comes back as a non-2xx.
+        import httpx
+
+        endpoint, headers = self._endpoint("fetch")
+        resp = httpx.get(endpoint, headers=headers, params={"url": url}, timeout=self.timeout)
+        resp.raise_for_status()
+        data = resp.json()
+        text = data.get("content") if isinstance(data, dict) else None
+        if not text:
+            raise RuntimeError("Keenable could not fetch the page: no content returned")
+        return str(text)
+
+
 _PROVIDERS = {
     "duckduckgo": DuckDuckGoProvider,
     "you": YouProvider,
@@ -387,6 +455,7 @@ _PROVIDERS = {
     "serper": SerperProvider,
     "exa": ExaProvider,
     "firecrawl": FirecrawlProvider,
+    "keenable": KeenableProvider,
 }
 
 
