@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from pathlib import Path
 from typing import Any, Optional
 
 from .connectors import connector_for_tool
+
+logger = logging.getLogger(__name__)
 
 # Matched as substrings of a lowercased key name, at EVERY level of a structure (#397):
 # an HTTP-shaped or MCP tool takes its credential in a nested `headers` / `auth` / `config`
@@ -174,7 +177,12 @@ class AuditStore:
             try:
                 cb(row_id)
             except Exception:
-                pass  # an export hook must never break the audited action
+                # an export hook must never break the audited action — but an
+                # export that silently stopped is exactly the silent failure #31
+                # is about
+                logger.warning(
+                    "an audit export hook failed for row %s", row_id, exc_info=True
+                )
 
     def reviewer_stats(self, session_id: str) -> dict[str, Any]:
         """Per-session Auto-Approve metering (§1.7), computed from the durable rows so it

@@ -22,12 +22,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 KIND_APPROVAL = "approval"
 KIND_QUESTION = "question"
@@ -124,8 +127,11 @@ class InboxStore:
             return
         try:
             self.on_change(item)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception:  # noqa: BLE001 - the store must never break on its observer
+            # every surface's live view of the queue goes stale until this is seen
+            logger.warning(
+                "an inbox on_change observer failed for item %s", item.id, exc_info=True
+            )
 
     # -- persistence ------------------------------------------------------------
     def _load(self) -> None:

@@ -9,11 +9,14 @@ grant); nothing watches the filesystem.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import subprocess
 import threading
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 NAME_KINDS = ("memory", "board")
 MAX_NAME_CHARS = 60
@@ -177,7 +180,11 @@ def resolve_memory_key(
         try:
             memory_store.rekey_workspace(path_key, derived)
         except Exception:
-            pass
+            # the workspace's memories stay under the old key and look lost
+            logger.warning(
+                "could not rekey workspace memory %s → %s", path_key, derived,
+                exc_info=True,
+            )
     return derived
 
 
@@ -206,7 +213,11 @@ def resolve_board_space(
         try:
             team_store.rekey_space(path_key, derived)
         except Exception:
-            pass
+            # the board's history stays under the old key and looks lost
+            logger.warning(
+                "could not rekey board space %s → %s", path_key, derived,
+                exc_info=True,
+            )
     return derived
 
 
