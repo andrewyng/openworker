@@ -601,3 +601,27 @@ async def test_cancelled_completion_notification_preserves_success(
     assert updated is not None
     assert updated.run_count == 1
     assert updated.last_status == "ok"
+
+
+def test_update_enabled_is_read_by_value_not_truthiness(tmp_path):
+    """`enabled="false"` must disable, not enable: Python truthiness reads every
+    non-empty string as True, so a quoted flag inverted what the caller asked for
+    (same policy as the `_flag` helper in coworker/tools/shell.py)."""
+    store = TaskStore(tmp_path / "auto.db")
+    tools = {
+        t.__name__: t
+        for t in scheduling_tools(
+            store, origin={"workspace": "/tmp/ws"}, default_workspace="/tmp/ws"
+        )
+    }
+    tid = tools["create_scheduled_task"](
+        title="X", instructions="do", cron="0 9 * * *"
+    )["id"]
+    assert tools["update_scheduled_task"](id=tid, enabled="false")["task"]["enabled"] is False
+    assert tools["update_scheduled_task"](id=tid, enabled="true")["task"]["enabled"] is True
+    assert tools["update_scheduled_task"](id=tid, enabled="0")["task"]["enabled"] is False
+    assert tools["update_scheduled_task"](id=tid, enabled=0)["task"]["enabled"] is False
+    assert tools["update_scheduled_task"](id=tid, enabled=1)["task"]["enabled"] is True
+    # A real bool still means exactly what it says, and None still means "leave it alone".
+    assert tools["update_scheduled_task"](id=tid, enabled=False)["task"]["enabled"] is False
+    assert tools["update_scheduled_task"](id=tid)["task"]["enabled"] is False
