@@ -1711,6 +1711,37 @@ def test_gitlab_self_hosted_base_url(tmp_path, monkeypatch):
     assert calls[0] == "https://git.example.com/api/v4/search"
 
 
+def test_jira_search_uses_search_jql_endpoint(tmp_path, monkeypatch):
+    import coworker.connectors.integration_tools as it
+
+    secrets = SecretStore(tmp_path / "secrets.json")
+    secrets.put(
+        "jira:default",
+        {
+            "base_url": "https://example.atlassian.net/",
+            "email": "me@example.com",
+            "api_token": "tok",
+            "enabled": True,
+        },
+    )
+    calls = []
+    monkeypatch.setattr(
+        it,
+        "_request",
+        lambda m, url, **kw: calls.append({"method": m, "url": url, **kw})
+        or {"ok": True},
+    )
+    tools = {t.__name__: t for t in it.make_integration_tools(secrets)}
+    tools["jira_search_issues"]("project = OPS", max_results=5)
+    assert calls[0]["method"] == "GET"
+    assert calls[0]["url"] == "https://example.atlassian.net/rest/api/3/search/jql"
+    assert calls[0]["params"] == {
+        "jql": "project = OPS",
+        "maxResults": 5,
+        "fields": "*navigable",
+    }
+
+
 def test_quickbooks_sandbox_environment(tmp_path, monkeypatch):
     import coworker.connectors.integration_tools as it
 
