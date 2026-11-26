@@ -1,9 +1,9 @@
 """`web_fetch` through the search service (Settings ▸ Customization).
 
-No network: httpx is stubbed. Covers the three providers' request/response shapes
-(Exa /contents, Firecrawl /v2/scrape, Tavily /extract), when `fetch_provider` picks one,
-the address guard running before the provider is asked, the fallback to a local fetch
-with a notice, and the approval card's `fetch_provider` extra.
+No network: httpx is stubbed. Covers the four providers' request/response shapes
+(Exa /contents, Firecrawl /v2/scrape, Outcrawl /v1/scrape, Tavily /extract), when
+`fetch_provider` picks one, the address guard running before the provider is asked, the
+fallback to a local fetch with a notice, and the approval card's `fetch_provider` extra.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from coworker.web.providers import (
     BraveProvider,
     ExaProvider,
     FirecrawlProvider,
+    OutcrawlProvider,
     TavilyProvider,
 )
 
@@ -31,8 +32,10 @@ def _post_stub(monkeypatch, status, payload, captured):
     monkeypatch.setattr(httpx, "post", fake_post)
 
 
-def test_only_exa_firecrawl_and_tavily_fetch_pages():
-    assert {n for n, c in _PROVIDERS.items() if c.supports_fetch} == {"exa", "firecrawl", "tavily"}
+def test_only_exa_firecrawl_outcrawl_and_tavily_fetch_pages():
+    assert {n for n, c in _PROVIDERS.items() if c.supports_fetch} == {
+        "exa", "firecrawl", "outcrawl", "tavily",
+    }
     with pytest.raises(NotImplementedError):
         BraveProvider("k").fetch_page("https://example.com")
 
@@ -67,6 +70,26 @@ def test_firecrawl_fetch_page_request_and_response(monkeypatch):
     _post_stub(monkeypatch, 200, {"success": False, "error": "blocked by robots"}, {})
     with pytest.raises(RuntimeError, match="blocked by robots"):
         FirecrawlProvider("fc-k").fetch_page("https://example.com")
+
+
+def test_outcrawl_fetch_page_request_and_response(monkeypatch):
+    got = {}
+    _post_stub(monkeypatch, 200, {
+        "url": "https://example.com", "statusCode": 200, "markdown": "# Hi",
+        "metadata": {"title": "Hi"},
+    }, got)
+    assert OutcrawlProvider("oc-k").fetch_page("https://example.com") == "# Hi"
+    assert got["url"] == "https://api.outcrawl.ai/v1/scrape"
+    assert got["headers"]["Authorization"] == "Bearer oc-k"
+    assert got["json"] == {"url": "https://example.com", "formats": ["markdown"]}
+
+    _post_stub(monkeypatch, 200, {"url": "https://example.com", "markdown": ""}, {})
+    with pytest.raises(RuntimeError, match="no content returned"):
+        OutcrawlProvider("oc-k").fetch_page("https://example.com")
+    _post_stub(monkeypatch, 402, {"error": "out of credits"}, {})
+    with pytest.raises(httpx.HTTPStatusError):
+        OutcrawlProvider("oc-k").fetch_page("https://example.com")
+
 
 
 def test_tavily_fetch_page_request_and_response(monkeypatch):
