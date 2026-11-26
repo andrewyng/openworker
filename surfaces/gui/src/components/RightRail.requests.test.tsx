@@ -1,8 +1,8 @@
 // Async artifact reads are session-owned: late work must never overwrite the active rail.
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ArtifactContent, ArtifactInfo } from "../api";
-import { getArtifacts, readArtifact } from "../api";
+import type { ArtifactContent, ArtifactInfo, AgentTaskInfo, JournalCase, RootInfo } from "../api";
+import { getAgentTasks, getArtifacts, getJournalCases, getRoots, readArtifact } from "../api";
 import { RightRail } from "./RightRail";
 
 vi.mock("../api", () => ({
@@ -30,6 +30,33 @@ const content = (path: string, body: string): ArtifactContent => ({
   kind: "markdown",
   content: body,
 });
+
+const root = (path: string): RootInfo => ({
+  path,
+  writable: true,
+  label: path,
+  primary: false,
+  exists: true,
+});
+
+const agentTask = (id: string): AgentTaskInfo => ({
+  id,
+  label: id,
+  task: id,
+  mode: "read_only",
+  status: "done",
+  created: 1,
+  icon_seed: 1,
+});
+
+const journalCase = (name: string): JournalCase => ({
+  case: name,
+  entries: 1,
+  last_ts: "2026-11-21T00:00:00Z",
+});
+
+// A board is what makes the rail ask for journal cases at all.
+const board = { space: "space-1", name: "Board", items: [] };
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -133,5 +160,69 @@ describe("RightRail artifact request ownership", () => {
     await act(async () => firstRead.resolve(content("first.md", "Stale content")));
     expect(screen.getByText("Current content")).toBeTruthy();
     expect(screen.queryByText("Stale content")).toBeNull();
+  });
+});
+
+// The roots / subagent / journal lists are session-owned too. Only the artifact list
+// carried a request-id guard; a slow session must not paint its rows over a fast one.
+describe("RightRail session-scoped list ownership", () => {
+  it("ignores a roots response from the previous session", async () => {
+    vi.mocked(getArtifacts).mockResolvedValue([]);
+    const oldRoots = deferred<RootInfo[]>();
+    const currentRoots = deferred<RootInfo[]>();
+    vi.mocked(getRoots)
+      .mockReturnValueOnce(oldRoots.promise)
+      .mockReturnValueOnce(currentRoots.promise);
+
+    const { rerender } = render(<RightRail {...baseProps} />);
+    rerender(<RightRail {...baseProps} sessionId="session-b" />);
+
+    await act(async () => currentRoots.resolve([root("b-folder")]));
+    expect(screen.getByTestId("rail-toggle-files").textContent).toContain("1");
+    const shown = screen.getByTestId("rail-toggle-files").textContent;
+
+    await act(async () => oldRoots.resolve([root("a-folder"), root("a-other")]));
+    expect(screen.getByTestId("rail-toggle-files").textContent).toBe(shown);
+    expect(screen.queryByTitle("a-folder")).toBeNull();
+  });
+
+  it("ignores an agent-task response from the previous session", async () => {
+    vi.mocked(getArtifacts).mockResolvedValue([]);
+    const oldTasks = deferred<AgentTaskInfo[]>();
+    const currentTasks = deferred<AgentTaskInfo[]>();
+    vi.mocked(getAgentTasks)
+      .mockReturnValueOnce(oldTasks.promise)
+      .mockReturnValueOnce(currentTasks.promise);
+
+    const { rerender } = render(<RightRail {...baseProps} />);
+    rerender(<RightRail {...baseProps} sessionId="session-b" />);
+
+    await act(async () => currentTasks.resolve([agentTask("b-task")]));
+    const head = screen.getByTestId("rail-toggle-subagents");
+    const shown = head.textContent;
+
+    await act(async () => oldTasks.resolve([agentTask("a-task"), agentTask("a-other-task")]));
+    expect(screen.getByTestId("rail-toggle-subagents").textContent).toBe(shown);
+    expect(screen.queryByTitle("a-task")).toBeNull();
+  });
+
+  it("ignores a journal response from the previous session", async () => {
+    vi.mocked(getArtifacts).mockResolvedValue([]);
+    const oldCases = deferred<JournalCase[]>();
+    const currentCases = deferred<JournalCase[]>();
+    vi.mocked(getJournalCases)
+      .mockReturnValueOnce(oldCases.promise)
+      .mockReturnValueOnce(currentCases.promise);
+
+    const { rerender } = render(<RightRail {...baseProps} board={board} />);
+    rerender(<RightRail {...baseProps} sessionId="session-b" board={board} />);
+
+    await act(async () => currentCases.resolve([journalCase("b-case")]));
+    expect(screen.getByTestId("rail-toggle-journal").textContent).toContain("1");
+    const shown = screen.getByTestId("rail-toggle-journal").textContent;
+
+    await act(async () => oldCases.resolve([journalCase("a-case"), journalCase("a-other")]));
+    expect(screen.getByTestId("rail-toggle-journal").textContent).toBe(shown);
+    expect(screen.queryByText("a-case")).toBeNull();
   });
 });
