@@ -28,8 +28,12 @@ function fromCron(cron?: string | null): { time: string; freq: string } {
   const parts = (cron || "").trim().split(/\s+/);
   if (parts.length !== 5) return { time: "09:00", freq: "daily" };
   const [m, h, , , dow] = parts;
-  const hh = String(Math.min(23, Math.max(0, parseInt(h, 10) || 9))).padStart(2, "0");
-  const mm = String(Math.min(59, Math.max(0, parseInt(m, 10) || 0))).padStart(2, "0");
+  // A cron hour of 0 is midnight, not a missing value: `parseInt(h) || 9` used to
+  // turn "30 0 * * *" into 09:30, and saving the editor then moved the schedule.
+  const hour = parseInt(h, 10);
+  const hh = String(Math.min(23, Math.max(0, Number.isNaN(hour) ? 9 : hour))).padStart(2, "0");
+  const minute = parseInt(m, 10);
+  const mm = String(Math.min(59, Math.max(0, Number.isNaN(minute) ? 0 : minute))).padStart(2, "0");
   const freq = dow === "1-5" ? "weekdays" : dow === "0,6" || dow === "6,0" ? "weekends" : "daily";
   return { time: `${hh}:${mm}`, freq };
 }
