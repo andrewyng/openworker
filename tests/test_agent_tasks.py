@@ -309,3 +309,22 @@ async def test_cancel_stops_a_running_child(tmp_path):
     task_id = registry.snapshot()[0]["id"]
     engine.registry.execute("agent_task_cancel", {"task_id": task_id})
     assert await _wait_for(lambda: registry.snapshot()[0]["status"] in ("canceled", "done"))
+
+
+@pytest.mark.asyncio
+async def test_a_canceled_run_keeps_its_report_readable(tmp_path):
+    """A canceled child's partial report stays readable. `agent_task_cancel` promises
+    it ("its report (if any) stays readable via agent_task_output"), and the delivery
+    path skips canceled runs — so the tool is the only way to see what the child found
+    before it was stopped."""
+    provider = DualRoleProvider({"task": "look around", "label": "looker"})
+    engine, registry = _parent(tmp_path, provider)
+    [e async for e in engine.run("go")]
+    assert await _wait_for(lambda: bool(registry.snapshot()))
+    task_id = registry.snapshot()[0]["id"]
+    # What an interrupted child leaves behind: the last assistant text it produced.
+    task = registry.get(task_id)
+    task.status, task.note, task.report = "canceled", "stopped by request", "PARTIAL: found it"
+    out = engine.registry.execute("agent_task_output", {"task_id": task_id})
+    assert out["status"] == "canceled"
+    assert out["report"] == "PARTIAL: found it"
