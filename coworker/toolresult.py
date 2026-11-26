@@ -14,7 +14,9 @@ Head AND tail because a build log needs both its first error and its final verdi
 
 The marker carries no timestamp, so a bounded result is byte-identical on every later
 request and never disturbs the provider's prompt cache. Structured results stay valid
-JSON: only the largest string field(s) are bounded, everything else is untouched.
+JSON: the largest string field(s) are bounded and everything else is untouched — and
+when the bulk is in a field that is NOT a string (a grep result's `matches`), that field
+is bounded instead, its value becoming text, so the cap applies to every result.
 """
 
 from __future__ import annotations
@@ -140,6 +142,32 @@ def bound_tool_result(
             )
             if _nbytes(serialize_result(out)) <= max_bytes:
                 break
+        # A structured result can carry its bulk in a field that is NOT a string — a
+        # grep result's `matches`, a plan's `todos`. No string field is worth
+        # bounding there, so the cap would not apply at all and the whole payload
+        # would be re-sent on every later turn (the problem this module exists to
+        # fix). Bound the largest remaining field by its serialised size: its value
+        # becomes text (head, marker, tail) and the result stays valid JSON.
+        if _nbytes(serialize_result(out)) > max_bytes:
+            key = max(
+                out,
+                key=lambda k: _nbytes(serialize_result(out[k])),
+                default=None,
+            )
+            if key is not None and _nbytes(serialize_result(out[key])) > _MIN_KEEP:
+                original = serialize_result(out[key])
+                path = spill(
+                    f"{step:04d}-{safe_tool}-{_SAFE_NAME.sub('_', key)[:30]}.json", original
+                )
+                others = _nbytes(serialize_result({k: v for k, v in out.items() if k != key}))
+                budget = max_bytes - others - _MARKER_RESERVE
+                out[key] = _fit(
+                    lambda keep: head_tail(
+                        original, keep, spill_path=path, total_bytes=_nbytes(original)
+                    ),
+                    budget,
+                    lambda b: _nbytes(serialize_result({**out, key: b})) - max_bytes,
+                )
         return out
 
     path = spill(f"{step:04d}-{safe_tool}.txt", text)
