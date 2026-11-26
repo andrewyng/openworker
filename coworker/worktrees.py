@@ -26,6 +26,8 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Optional
 
+from .flags import flag
+
 LOCATIONS = ("in_repo", "sibling", "custom")
 IN_REPO_DIR = Path(".openworker") / "worktrees"
 EXCLUDE_LINE = ".openworker/"
@@ -72,7 +74,7 @@ def settings_from_prefs(prefs: dict[str, Any], project_key: Optional[str] = None
                 if v in LOCATIONS:
                     s.location = v
             elif k in ("fetch_first", "cleanup_on_archive"):
-                setattr(s, k, bool(v))
+                setattr(s, k, flag(v))
             elif k == "prune_days":
                 try:
                     s.prune_days = max(1, int(v))
@@ -102,7 +104,7 @@ def validate_settings(body: dict[str, Any]) -> dict[str, Any]:
         out["branch_prefix"] = prefix
     for k in ("fetch_first", "cleanup_on_archive"):
         if k in body:
-            out[k] = bool(body[k])
+            out[k] = flag(body[k])
     if "prune_days" in body:
         try:
             days = int(body["prune_days"])
