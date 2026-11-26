@@ -41,9 +41,16 @@ export const Spinner = () => (
   <span className="inline-block w-3 h-3 rounded-full border-[1.5px] border-line2 border-t-accent animate-spin" />
 );
 
-const cronFor = (dayKey: string, hhmm: string) => {
-  const [h, m] = hhmm.split(":");
-  return `${Number(m) || 0} ${Number(h) || 9} * * ${DAYS[dayKey]?.dow ?? "*"}`;
+export const cronFor = (dayKey: string, hhmm: string) => {
+  // `Number(h) || 9` treated hour 0 as "missing", so picking 00:30 in the quickstart
+  // wrote `30 9 * * *` and the automation silently moved to 09:30. Parse explicitly:
+  // only a genuinely unparsable hour falls back to 9, and 0 stays 0.
+  const [hRaw, mRaw] = hhmm.split(":");
+  const h = Number.parseInt(hRaw, 10);
+  const m = Number.parseInt(mRaw, 10);
+  const hour = Number.isNaN(h) ? 9 : Math.min(23, Math.max(0, h));
+  const minute = Number.isNaN(m) ? 0 : Math.min(59, Math.max(0, m));
+  return `${minute} ${hour} * * ${DAYS[dayKey]?.dow ?? "*"}`;
 };
 
 interface QuickTemplate {
