@@ -2553,6 +2553,37 @@ class TurnEngine:
         if self._turn_end_tasks:
             await asyncio.gather(*list(self._turn_end_tasks), return_exceptions=True)
 
+    def _unattended_external_floor(
+        self, tool_call: ToolCall, metadata: Any, decision: Any
+    ) -> bool:
+        """#32 rec #1: True when this allow must become a person's card instead.
+
+        An unattended run never auto-allowss an EXTERNAL call to a target the user did
+        not pre-bind: session / config / run / MCP-trust grants are tool-name-only, so
+        an injected call could ride them to a new destination while nobody is watching.
+        A standing rule that matched this call's exact target IS the pre-binding;
+        bypass modes are an explicit opt-out of asking; attended sessions (and a broken
+        attendance getter) never see this floor.
+        """
+        from .permissions import BYPASS_MODES
+
+        if self.permissions.mode in BYPASS_MODES:
+            return False
+        if decision.rule:
+            return False
+        try:
+            if _classify_risk(
+                tool_call.name, metadata, self.permissions.risk_overrides
+            ) is not RiskClass.EXTERNAL:
+                return False
+            # None (no surface wired) reads as attended, like every other attendance
+            # getter in this file: a missing getter must never start asking.
+            if self.attendance is None or self.attendance() == _attendance.ATTENDED:
+                return False
+        except Exception:  # noqa: BLE001 - a broken getter reads as attended
+            return False
+        return True
+
     async def _authorize(self, tool_call: ToolCall) -> "AsyncIterator[Event | bool]":
         """Permission flow for one call (TOOL_PROPOSED is emitted by the caller). Yields
         its events, then True/False (allowed) last. Denied/unknown calls get their
@@ -2603,6 +2634,28 @@ class TurnEngine:
                     needs_user=True,
                     human_only=True,
                 )
+
+        # #32 rec #1: an unattended run never auto-allowss an EXTERNAL call to a target
+        # the user did not pre-bind. Session / config / run / MCP-trust grants are
+        # tool-name-only, so an injected call could ride them to a new destination while
+        # nobody watches; the card then parks in the Inbox (attendance "inbox") or is
+        # refused by rule (attendance "auto") — never allowed in silence. A standing
+        # rule that matched this call's exact target is the pre-binding and stays
+        # allowed; bypass modes are an explicit opt-out; attended sessions never see
+        # this floor. human_only: the point is that a PERSON sees it — the Auto-Approve
+        # reviewer is not the user and cannot clear a target nobody pre-bound.
+        if allowed and self._unattended_external_floor(tool_call, metadata, decision):
+            allowed = False
+            decision = replace(
+                decision,
+                allowed=False,
+                needs_user=True,
+                human_only=True,
+                reason=(
+                    "unattended: this external call names a target you have not "
+                    "pre-bound, so it needs a person"
+                ),
+            )
 
         path = self._decisions[tool_call.id] = DecisionPath()
         path.permission(
