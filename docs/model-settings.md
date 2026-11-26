@@ -24,7 +24,7 @@ desktop app sets them in the model's settings dialog; the CLI reads the same fil
 
 | Setting | What it does |
 |---|---|
-| `context_size` | The window a local model is loaded with. For Ollama it is sent as `num_ctx` on every request. It also sizes auto-compaction. For a cloud model the matrix does not list, it only sizes compaction. |
+| `context_size` | The window a local model is loaded with. For Ollama it is sent as `num_ctx` on every request. It sizes auto-compaction when the model has no window in the matrix, and supplies the context meter when server window metadata is missing. |
 | `max_output_tokens` | The longest reply, sent as `max_tokens`. |
 | `thinking` | On or off, for models with a thinking switch (Ollama's `think`). |
 | `reasoning_effort` | The level for models with effort levels (`low`, `medium`, `high`). |
