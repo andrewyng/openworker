@@ -261,7 +261,19 @@ export function RightRail({
 
   useEffect(() => {
     if (!active) return;
-    getRoots(sessionId).then(setRootDirs).catch(() => setRootDirs([]));
+    const refetch = () => {
+      getRoots(sessionId).then(setRootDirs).catch(() => setRootDirs([]));
+    };
+    refetch();
+    // Adding or removing a folder (the intro task card, the settings drawer)
+    // broadcasts this event; without subscribing, the rail kept its mount-time
+    // root list until a session switch, so a newly added folder never showed up
+    // in Files (#490). Same contract useRoots already relies on.
+    const onChanged = (e: Event) => {
+      if ((e as CustomEvent).detail === sessionId) refetch();
+    };
+    window.addEventListener("coworker:roots-changed", onChanged);
+    return () => window.removeEventListener("coworker:roots-changed", onChanged);
   }, [active, sessionId, refreshKey]);
 
   // Async subagents (OPE-257): the registry view, refetched on every agent_task event.
