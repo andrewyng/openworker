@@ -110,14 +110,14 @@ def test_verify_orcarouter_endpoint(monkeypatch):
     assert cap["headers"]["Authorization"] == "Bearer sk-orca-x"
 
 
-def test_verify_uberllm_endpoint(monkeypatch):
+def test_verify_martllm_endpoint(monkeypatch):
     cap: dict = {}
     _patch_get(monkeypatch, status=200, capture=cap)
-    assert verify_provider_key("uberllm", api_key="ull-x") == {"ok": True}
-    # OpenAI-compatible branch: prefilled vendor endpoint, bearer key. UberLLM's
+    assert verify_provider_key("martllm", api_key="ull-x") == {"ok": True}
+    # OpenAI-compatible branch: prefilled vendor endpoint, bearer key. MartLLM's
     # /v1/models answers without a key but rejects a wrong one with 401, so the plain
     # listing probe tells a good key from a typo.
-    assert cap["url"] == "https://api.uberllm.dev/v1/models"
+    assert cap["url"] == "https://api.martllm.com/v1/models"
     assert cap["headers"]["Authorization"] == "Bearer ull-x"
 
 

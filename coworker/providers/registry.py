@@ -968,14 +968,14 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         env_key="SILICONFLOW_API_KEY",
         endpoint_help="Prefilled with SiliconFlow's international endpoint. China mainland: https://api.siliconflow.cn/v1 (keys from cloud.siliconflow.cn).",
     ),
-    # UberLLM: a reseller like OrcaRouter, one key for many labs' models under their
+    # MartLLM: a reseller like OrcaRouter, one key for many labs' models under their
     # `vendor/model` namespaces (curated rows in matrix.py).
     _compat(
-        "uberllm",
-        "UberLLM",
-        base_url="https://api.uberllm.dev/v1",
+        "martllm",
+        "MartLLM",
+        base_url="https://api.martllm.com/v1",
         recommended_model="anthropic/claude-sonnet-5",
-        env_key="UBERLLM_API_KEY",
+        env_key="MARTLLM_API_KEY",
     ),
     ProviderDescriptor(
         name="ollama",

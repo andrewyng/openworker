@@ -40,7 +40,7 @@ import xai from "./logos/xai.svg";
 import meta from "./logos/meta.svg";
 import nebius from "./logos/nebius.svg";
 import upstage from "./logos/upstage.svg";
-import uberllm from "./logos/uberllm.svg";
+import martllm from "./logos/martllm.svg";
 
 export const PROVIDER_LOGOS: Record<string, string> = {
   anthropic,
@@ -80,7 +80,7 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   minimax,
   xai,
   upstage,
-  uberllm,
+  martllm,
 };
 
 export const PROVIDER_ORDER = [
@@ -127,7 +127,7 @@ export const PROVIDER_ORDER = [
   "huggingface",
   "cohere",
   "siliconflow",
-  "uberllm",
+  "martllm",
 ];
 
 export function providerRank(name: string): number {

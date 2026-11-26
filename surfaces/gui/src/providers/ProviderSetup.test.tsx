@@ -159,17 +159,17 @@ describe("Atlas Cloud provider presentation", () => {
   });
 });
 
-describe("UberLLM provider presentation", () => {
-  it("links to the UberLLM API key page", () => {
-    expect(KEY_HELP.uberllm).toEqual({
-      url: "https://uberllm.dev/dashboard/keys",
-      label: "uberllm.dev",
+describe("MartLLM provider presentation", () => {
+  it("links to the MartLLM API key page", () => {
+    expect(KEY_HELP.martllm).toEqual({
+      url: "https://martllm.com/dashboard/keys",
+      label: "martllm.com",
     });
   });
 
-  it("wears the bundled UberLLM mark", () => {
+  it("wears the bundled MartLLM mark", () => {
     const { container } = render(
-      <ProviderMark name="uberllm" title="UberLLM" />,
+      <ProviderMark name="martllm" title="MartLLM" />,
     );
     expect(container.querySelector("img")).not.toBeNull();
   });
