@@ -2,9 +2,9 @@
 
 `duckduckgo` works with no API key (our "starting version of our own"). `you` is also usable
 keyless and takes an optional key to lift the free-tier limits. `tavily`, `brave`, `serper`,
-`exa` and `firecrawl` give better results but need a key (configured via the SecretStore /
-env). All providers return a uniform `list[SearchResult]`; the heavy client libs are
-lazy-imported.
+`exa`, `firecrawl` and `specstream` give better results but need a key (configured via the
+SecretStore / env). All providers return a uniform `list[SearchResult]`; the heavy client
+libs are lazy-imported.
 """
 
 from __future__ import annotations
@@ -379,6 +379,66 @@ class FirecrawlProvider(WebSearchProvider):
         return str(text)
 
 
+class SpecStreamProvider(WebSearchProvider):
+    """SpecStream web search + page extraction (https://specstream.ai/search-api)."""
+
+    name = "specstream"
+    display_name = "SpecStream"
+    key_url = "https://specstream.ai/signup"
+    key_mode = "required"
+    requires_key = True
+    supports_fetch = True
+
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key
+
+    def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+        import httpx
+
+        resp = httpx.get(
+            "https://api.specstream.ai/v1/web-search",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            params={"q": query},
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        sources = (payload.get("data") or {}).get("sources") or []
+        return [
+            SearchResult(
+                title=s.get("title") or "",
+                url=s.get("url") or "",
+                snippet=s.get("snippet") or "",
+            )
+            for s in sources[:max_results]
+        ]
+
+    def fetch_page(self, url: str) -> str:
+        # https://specstream.ai/search-api — POST /v1/extract {urls, format: "markdown"},
+        # bearer auth; the text is data.results[0].text when the status is "ok", and any
+        # other status (blocked / not_found / empty / failed) means there is no text.
+        import httpx
+
+        resp = httpx.post(
+            "https://api.specstream.ai/v1/extract",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json={"urls": [url], "format": "markdown"},
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        body = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        status = str(body.get("status") or payload.get("status") or "")
+        if status != "ok":
+            detail = status or "no content returned"
+            raise RuntimeError(f"SpecStream could not extract the page: {detail}")
+        results = body.get("results") or []
+        text = results[0].get("text") if results else None
+        if not text:
+            raise RuntimeError("SpecStream could not extract the page: no content returned")
+        return str(text)
+
+
 _PROVIDERS = {
     "duckduckgo": DuckDuckGoProvider,
     "you": YouProvider,
@@ -387,6 +447,7 @@ _PROVIDERS = {
     "serper": SerperProvider,
     "exa": ExaProvider,
     "firecrawl": FirecrawlProvider,
+    "specstream": SpecStreamProvider,
 }
 
 

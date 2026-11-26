@@ -1,7 +1,7 @@
 """Tests for web search — provider abstraction, the tool, and config resolution.
 
 No network: a FakeProvider is injected; third-party key handling and the REST config path
-are exercised without hitting DuckDuckGo/Tavily/Brave/Serper/Exa/Firecrawl.
+are exercised without hitting DuckDuckGo/Tavily/Brave/Serper/Exa/Firecrawl/SpecStream.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from coworker.web.providers import (
     ExaProvider,
     FirecrawlProvider,
     SerperProvider,
+    SpecStreamProvider,
     TavilyProvider,
     WebSearchProvider,
     YouProvider,
@@ -215,6 +216,63 @@ def test_firecrawl_maps_v2_search_response(monkeypatch):
     ]
 
 
+def test_specstream_maps_the_web_search_response(monkeypatch):
+    import httpx
+
+    captured = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "data": {
+                    "sources": [
+                        {"title": "t0", "url": "https://x/0", "snippet": "s0"},
+                        {"title": "t1", "url": "https://x/1", "snippet": "s1"},
+                    ]
+                },
+            }
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        captured.update(url=url, headers=headers, params=params, timeout=timeout)
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    results = SpecStreamProvider("ss-key").search("claude api", max_results=2)
+
+    assert captured["url"] == "https://api.specstream.ai/v1/web-search"
+    assert captured["headers"]["Authorization"] == "Bearer ss-key"
+    assert captured["params"] == {"q": "claude api"}
+    assert [(r.title, r.url, r.snippet) for r in results] == [
+        ("t0", "https://x/0", "s0"),
+        ("t1", "https://x/1", "s1"),
+    ]
+
+
+def test_specstream_never_returns_more_than_max_results(monkeypatch):
+    """The API is asked for the query only; the tool's `max_results` still bounds the list."""
+    import httpx
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "data": {
+                    "sources": [
+                        {"title": f"t{i}", "url": f"https://x/{i}", "snippet": ""}
+                        for i in range(10)
+                    ]
+                },
+            }
+
+    monkeypatch.setattr(httpx, "get", lambda url, **kwargs: _Resp())
+    assert len(SpecStreamProvider("ss-key").search("q", max_results=3)) == 3
+
+
 def test_keyed_providers_raise_on_http_errors(monkeypatch):
     """A 401/429/5xx surfaces as an error instead of an empty result list."""
     import httpx
@@ -230,6 +288,7 @@ def test_keyed_providers_raise_on_http_errors(monkeypatch):
         SerperProvider("k"),
         ExaProvider("k"),
         FirecrawlProvider("k"),
+        SpecStreamProvider("k"),
         YouProvider(),
         YouProvider("k"),
     ):
@@ -423,7 +482,7 @@ def test_web_search_rest_lists_providers_in_registry_order(tmp_path, monkeypatch
         "has_key": False, "key_source": None, "key_env": "", "supports_fetch": False,
     }
     assert by["tavily"]["key_mode"] == "required" and by["tavily"]["supports_fetch"] is True
-    assert {n for n, p in by.items() if p["supports_fetch"]} == {"exa", "firecrawl", "tavily"}
+    assert {n for n, p in by.items() if p["supports_fetch"]} == {"exa", "firecrawl", "specstream", "tavily"}
     assert by["you"]["key_mode"] == "optional" and by["you"]["key_url"]
 
 
