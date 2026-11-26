@@ -513,9 +513,11 @@ class SessionManager:
             self._default_is_guess = False
         # Seed the PDF-fallback module global from prefs so engines see the user's
         # choice from the first turn (set_pdf_settings keeps it in sync after).
+        from .. import ocr as pdf_ocr
         from ..pdf_support import set_fallback_mode
 
         set_fallback_mode(self.pdf_settings()["pdf_fallback"])
+        pdf_ocr.set_backend(self.pdf_settings()["pdf_ocr"])
         # Per-session live-view registry: every socket open on a session id gets the turn's events,
         # whoever drives the turn (foreground user_message, channel delivery, self-wake, resume).
         # Delivery itself is socket-independent — this only governs *live visibility*.
@@ -6403,7 +6405,9 @@ class SessionManager:
 
     def pdf_settings(self) -> dict[str, Any]:
         """Fallback mode for models without native PDF support + the attach-time
-        thresholds (Settings → Token savings: big PDFs quietly eat tokens)."""
+        thresholds (Settings → Token savings: big PDFs quietly eat tokens) +
+        the opt-in local OCR backend for scanned PDFs (#667)."""
+        from .. import ocr as pdf_ocr
         from ..pdf_support import FALLBACK_MODES
 
         mode = self._prefs.get("pdf_fallback")
@@ -6415,10 +6419,14 @@ class SessionManager:
             mb = int(self._prefs.get("pdf_max_mb", self.DEFAULT_PDF_MAX_MB))
         except (TypeError, ValueError):
             mb = self.DEFAULT_PDF_MAX_MB
+        ocr_backend = self._prefs.get("pdf_ocr")
         return {
             "pdf_fallback": mode if mode in FALLBACK_MODES else "text",
             "pdf_max_pages": max(1, min(pages, 100)),
             "pdf_max_mb": max(1, min(mb, 10)),
+            "pdf_ocr": (
+                ocr_backend if ocr_backend in pdf_ocr.known_backends() else ""
+            ),
         }
 
     def compaction_settings(self) -> dict[str, Any]:
@@ -6485,13 +6493,22 @@ class SessionManager:
         fallback: Any = None,
         max_pages: Any = None,
         max_mb: Any = None,
+        ocr: Any = None,
     ) -> dict[str, Any]:
+        from .. import ocr as pdf_ocr
         from ..pdf_support import FALLBACK_MODES, set_fallback_mode
 
         if fallback is not None:
             if fallback not in FALLBACK_MODES:
                 return {"ok": False, "error": "pdf_fallback must be 'text' or 'images'"}
             self._prefs["pdf_fallback"] = fallback
+        if ocr is not None:
+            if ocr not in pdf_ocr.known_backends() and ocr != "":
+                return {
+                    "ok": False,
+                    "error": "pdf_ocr must be a known backend or '' (off)",
+                }
+            self._prefs["pdf_ocr"] = ocr
         for key, value, ceiling in (
             ("pdf_max_pages", max_pages, 100),
             ("pdf_max_mb", max_mb, 10),
@@ -6505,6 +6522,7 @@ class SessionManager:
         self._save_prefs()
         settings = self.pdf_settings()
         set_fallback_mode(settings["pdf_fallback"])  # engines read the module global
+        pdf_ocr.set_backend(settings["pdf_ocr"])
         return {"ok": True, **settings}
 
     def set_model_key(self, api_key: str) -> dict[str, Any]:

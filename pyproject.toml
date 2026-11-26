@@ -56,6 +56,9 @@ browser = ["playwright>=1.44"]
 bedrock = ["boto3>=1.34"]
 # OpenShell sandbox provider: the runner's stream is a gRPC call to the OpenShell gateway.
 openshell = ["grpcio>=1.60"]
+# Local OCR for scanned PDFs (#667): CPU ONNX runtime with the models in the wheel —
+# no system tesseract, no hosted endpoint. Off by default; users opt in via prefs.
+ocr = ["rapidocr-onnxruntime>=1.4"]
 
 # One command on the path. The server, the connectors tool, the acceptor and the team
 # board stay runnable as modules (`python -m coworker.server.run`, …) for development.
