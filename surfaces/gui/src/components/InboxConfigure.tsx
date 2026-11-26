@@ -194,7 +194,7 @@ function DmRouteCard() {
         <span className="text-muted shrink-0">
           <Icon name="chat" size={16} />
         </span>
-        <select className={"flex-1 " + SELECT} value={dm} onChange={(e) => choose(e.target.value)}>
+        <select className={"flex-1 min-w-0 " + SELECT} value={dm} onChange={(e) => choose(e.target.value)}>
           <option value="">{tt("inbox.dm_no_session")}</option>
           {real.map((s) => (
             <option key={s.session_id} value={s.session_id}>
@@ -319,7 +319,7 @@ function SubscriptionsCard() {
 
       <div className="border-t border-line px-4 py-3 flex items-center gap-2 flex-wrap">
         <select
-          className={SELECT}
+          className={"w-56 max-w-full " + SELECT}
           value={addSession}
           onChange={(e) => setAddSession(e.target.value)}
         >
