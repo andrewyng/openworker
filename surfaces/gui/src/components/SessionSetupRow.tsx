@@ -96,7 +96,8 @@ export function SessionSetupRow(props: Props) {
   };
 
   const browse = async () => {
-    const picked = await chooseFolder();
+    setError("");
+    const picked = await chooseFolder(() => setError(t("folder_gate.picker_unavailable")));
     if (picked) await pickFolder(picked);
   };
 
@@ -219,7 +220,7 @@ export function SessionSetupRow(props: Props) {
                   {props.folderName ? t("setup.choose_another_folder") : t("setup.choose_a_folder")}
                 </button>
               </div>
-              {error && <div className="px-2.5 py-1 text-meta text-warnInk">{error}</div>}
+              {error && <div role="alert" className="px-2.5 py-1 text-meta text-warnInk">{error}</div>}
             </div>
           )}
         </div>

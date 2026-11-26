@@ -31,7 +31,8 @@ export function FolderGate({ onChoose, onCancel, create }: Props) {
   };
 
   const browse = async () => {
-    const picked = await chooseFolder();
+    setError("");
+    const picked = await chooseFolder(() => setError(t("folder_gate.picker_unavailable")));
     if (picked) {
       setPath(picked);
       open(picked, create); // a picked folder already exists; create flag is harmless
@@ -64,7 +65,7 @@ export function FolderGate({ onChoose, onCancel, create }: Props) {
             {create ? t("folder_gate.create") : t("folder_gate.open")}
           </button>
         </div>
-        {error && <div className="gate-error">{error}</div>}
+        {error && <div role="alert" className="gate-error">{error}</div>}
 
         {recents.length > 0 && (
           <>

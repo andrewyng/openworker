@@ -1047,6 +1047,7 @@
   },
   "folder_gate": {
     "open_error": "无法打开该文件夹",
+    "picker_unavailable": "文件夹选择器不可用。如果本地服务器在 Linux 上运行，请检查是否已安装 Zenity。",
     "choose_folder": "选择一个项目文件夹",
     "create_sub": "选择一个文件夹或输入路径。若路径不存在，将会创建。",
     "choose_sub": "这位同事需要一个工作区来读取、编辑和运行。",

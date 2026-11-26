@@ -180,15 +180,18 @@ export async function getRecentWorkspaces(machineId?: string | null): Promise<Re
 }
 
 /** Ask the LOCAL sidecar to open the OS folder picker — the browser GUI can't obtain absolute
- * paths from web file dialogs. Blocks until the user picks or cancels; null on cancel/unavailable. */
-export async function pickFolderViaServer(): Promise<string | null> {
+ * paths from web file dialogs. Report unavailability separately from normal cancellation. */
+export async function pickFolderViaServer(onUnavailable?: () => void): Promise<string | null> {
   try {
     const res = await fetch(`${httpBase()}/v1/workspaces/pick`, { method: "POST" });
     const d = await res.json();
-    return d.ok && d.path ? d.path : null;
+    if (d.ok && d.path) return d.path;
+    if (d.canceled) return null;
   } catch {
-    return null;
+    // A request or response failure also leaves the picker unavailable.
   }
+  onUnavailable?.();
+  return null;
 }
 
 export async function openWorkspace(
