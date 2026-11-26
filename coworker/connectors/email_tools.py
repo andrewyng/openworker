@@ -31,8 +31,29 @@ from ..secrets import SecretStore
 
 _TIMEOUT = 30.0
 _BODY_CHAR_LIMIT = 20_000
+_DEFAULT_SEARCH_RESULTS = 10
 _MAX_SEARCH_RESULTS = 25
 _MAX_FOLDERS = 50
+
+
+def _search_limit(value: Any) -> int:
+    """How many messages ``email_search`` returns for a caller's ``max_results``.
+
+    ``bool`` subclasses ``int``, so a JSON ``true`` reached ``int(True)`` and
+    clamped the search to ONE message; ``0`` was swallowed by ``value or 10``
+    and returned the default instead of an empty request; and ``"abc"`` raised
+    out to the blanket ``except Exception``, which answered with Python's own
+    words rather than a search. A bool is not a count — it falls back to the
+    default, matching web_search (#932) — and every other integer is clamped
+    into the legal range, so 0 and negatives come back as at least one message.
+    """
+    if isinstance(value, bool):
+        return _DEFAULT_SEARCH_RESULTS
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_SEARCH_RESULTS
+    return max(1, min(n, _MAX_SEARCH_RESULTS))
 
 
 # -- presets -------------------------------------------------------------------
@@ -427,7 +448,7 @@ def make_email_tools(
         since: str = "",
         before: str = "",
         unread_only: bool = False,
-        max_results: int = 10,
+        max_results: int = _DEFAULT_SEARCH_RESULTS,
     ) -> dict[str, Any]:
         criteria, crit_err = build_search_criteria(
             from_address=from_address,
@@ -451,7 +472,7 @@ def make_email_tools(
             if status != "OK":
                 return {"error": "search failed"}
             uids = (data[0] or b"").split()
-            limit = max(1, min(int(max_results or 10), _MAX_SEARCH_RESULTS))
+            limit = _search_limit(max_results)
             newest = list(reversed(uids[-limit:]))  # UIDs ascend → newest last
             messages = []
             for uid in newest:
