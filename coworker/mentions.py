@@ -40,19 +40,38 @@ class MentionSessionStore:
         self._load()
 
     def _load(self) -> None:
-        if self.path and self.path.is_file():
+        if not (self.path and self.path.is_file()):
+            return
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            raw_threads = data.get("threads", [])
+        except (OSError, ValueError, TypeError, AttributeError):
+            # A corrupt file must never block startup. AttributeError covers a
+            # file that is valid JSON but not an object (`[]`, `null`, a string).
+            logger.warning(
+                "mention_threads.json at %s is unreadable; starting empty", self.path
+            )
+            self._threads = []
+            return
+        # Skip only the records the dataclass refuses and keep the rest. A missing
+        # field, an extra field a newer build wrote, or a non-object entry used to
+        # abort the whole list — one bad row then took every other thread's grant
+        # with it (get_engine re-derives task_rules from this map, and the next save
+        # would have persisted the empty list over the readable records).
+        threads: list[MentionThread] = []
+        skipped = 0
+        for raw in raw_threads if isinstance(raw_threads, list) else []:
             try:
-                data = json.loads(self.path.read_text(encoding="utf-8"))
-                self._threads = [
-                    MentionThread(**raw) for raw in data.get("threads", [])
-                ]
-            except (OSError, ValueError, TypeError, AttributeError):
-                # A corrupt file must never block startup. AttributeError covers a
-                # file that is valid JSON but not an object (`[]`, `null`, a string).
-                logger.warning(
-                    "mention_threads.json at %s is unreadable; starting empty", self.path
-                )
-                self._threads = []
+                threads.append(MentionThread(**raw))
+            except (TypeError, AttributeError):
+                skipped += 1
+        if skipped:
+            logger.warning(
+                "mention_threads.json at %s: %d unreadable record(s) skipped",
+                self.path,
+                skipped,
+            )
+        self._threads = threads
 
     def _save(self) -> None:
         if not self.path:

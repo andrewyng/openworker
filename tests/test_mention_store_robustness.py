@@ -52,6 +52,32 @@ def test_load_survives_a_record_with_a_missing_field(tmp_path):
     assert MentionSessionStore(path).all() == []
 
 
+def test_one_unreadable_record_does_not_discard_the_readable_ones(tmp_path):
+    """The granularity bug: a single record the dataclass refuses — a field a newer
+    build added, a missing required field, a non-object entry — must not take every
+    OTHER thread's grant with it. The records around it stay, only that one is
+    skipped."""
+    bad_extra = {**_RECORD, "field_from_a_newer_build": "x"}
+    other = {**_RECORD, "thread_target": "slack:C9999:1700.000200", "session_id": "zzz999"}
+    path = _write(tmp_path, json.dumps({"threads": [_RECORD, bad_extra, other]}))
+    store = MentionSessionStore(path)
+    # Before the fix the one refused record aborted the comprehension and the
+    # except-clause wiped _threads to [] — every readable grant was lost too.
+    assert sorted(t.thread_target for t in store.all()) == [
+        "slack:C0123:1700.000100", "slack:C9999:1700.000200"]
+    assert store.get("slack:C0123:1700.000100") == "abc123def456"
+
+
+def test_a_non_object_record_is_skipped_not_fatal(tmp_path):
+    # A `threads` list with a bare string / list / null inside used to be the same
+    # one-bad-record aborts-everything shape, through AttributeError instead of TypeError.
+    path = _write(
+        tmp_path,
+        json.dumps({"threads": [_RECORD, "junk", ["not", "a", "record"], None]}))
+    store = MentionSessionStore(path)
+    assert [t.thread_target for t in store.all()] == ["slack:C0123:1700.000100"]
+
+
 def test_load_survives_valid_json_that_is_not_an_object(tmp_path):
     # `[]`, `null` and a bare string all parse, then fail on `.get` (#709).
     for body in ("[]", "null", '"hello"'):
