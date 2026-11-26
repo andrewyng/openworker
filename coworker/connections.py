@@ -23,9 +23,92 @@ Both stores are tiny JSON files mirroring ``SubscriptionStore`` (optional path, 
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+def _quarantine(path: Optional[Path]) -> Optional[Path]:
+    """Move an unreadable file aside so the next save cannot overwrite the only copy of it.
+    Returns the path it moved to, or None if the move failed."""
+    if not path:
+        return None
+    spare = path.with_suffix(path.suffix + ".corrupt")
+    try:
+        path.replace(spare)
+    except OSError:
+        return None
+    return spare
+
+
+def _load_rows(path: Optional[Path], key: str) -> dict[str, dict[str, bool]]:
+    """The rows of a connections file — or an empty set if the file cannot be used.
+
+    A corrupt file must never stop startup: ``SessionManager.__init__`` constructs these
+    stores for every server start, so one truncated file stopped the server from starting.
+
+    Starting empty is NOT neutral — these files hold the user's connector choices, and a
+    dropped *mute* brings a connector back on — so the bytes are kept (moved aside, never
+    deleted) and the path is logged. The same shape the risk-override store uses.
+    """
+    if not (path and path.is_file()):
+        return {}
+    reason: Optional[str] = None
+    rows: dict[str, dict[str, bool]] = {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as e:
+        reason = f"unreadable ({type(e).__name__})"
+    else:
+        if not isinstance(data, dict):
+            reason = "not a JSON object"
+        else:
+            raw = data.get(key)
+            if raw is None:
+                raw = {}
+            if not isinstance(raw, dict):
+                reason = f"'{key}' is not a JSON object"
+            else:
+                rows = {
+                    str(pid): {
+                        str(c): bool(v)
+                        for c, v in (row if isinstance(row, dict) else {}).items()
+                    }
+                    for pid, row in raw.items()
+                }
+    if reason is None:
+        return rows
+    message = f"{path}: {reason}; loaded no connections"
+    spare = _quarantine(path)
+    if spare is not None:
+        message += f" (original kept at {spare})"
+    logger.warning(message)
+    return {}
+
+
+def _write_rows(path: Optional[Path], key: str, rows: dict[str, dict[str, bool]]) -> None:
+    """Persist the rows, writing a sibling .tmp and renaming it over the real file — so a
+    crash mid-write leaves the previous complete file instead of a truncated one (the
+    shape mentions.py uses)."""
+    if not path:
+        return
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(
+            json.dumps({key: rows}, indent=2),
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    except OSError:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise
 
 
 class PersonaConnectionStore:
@@ -38,21 +121,10 @@ class PersonaConnectionStore:
         self._load()
 
     def _load(self) -> None:
-        if self.path and self.path.is_file():
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            self._rows = {
-                pid: {str(c): bool(v) for c, v in (row or {}).items()}
-                for pid, row in data.get("personas", {}).items()
-            }
+        self._rows = _load_rows(self.path, "personas")
 
     def _save(self) -> None:
-        if not self.path:
-            return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"personas": self._rows}, indent=2),
-            encoding="utf-8",
-        )
+        _write_rows(self.path, "personas", self._rows)
 
     # -- queries ----------------------------------------------------------------
     def get(self, persona_id: str) -> dict[str, bool]:
@@ -111,21 +183,10 @@ class SessionConnectionStore:
         self._load()
 
     def _load(self) -> None:
-        if self.path and self.path.is_file():
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            self._rows = {
-                sid: {str(c): bool(v) for c, v in (row or {}).items()}
-                for sid, row in data.get("sessions", {}).items()
-            }
+        self._rows = _load_rows(self.path, "sessions")
 
     def _save(self) -> None:
-        if not self.path:
-            return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"sessions": self._rows}, indent=2),
-            encoding="utf-8",
-        )
+        _write_rows(self.path, "sessions", self._rows)
 
     # -- queries ----------------------------------------------------------------
     def get(self, session_id: str) -> dict[str, bool]:
