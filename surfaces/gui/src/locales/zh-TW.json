@@ -3903,7 +3903,7 @@
     "error_save": "無法儲存。",
     "error_address": "請輸入以 http:// 或 https:// 開頭的位址。",
     "list_sep": "、",
-    "list_and": "和",
+    "list_and": "，以及",
     "callout_item": {
       "messages": "你的訊息和 AI 的回答",
       "tool_io": "工具輸入和結果",
