@@ -10,6 +10,7 @@ The session saves its resolved model. Unavailable models fail explicitly.
 | Anthropic | Native Messages | `name: "Anthropic", api: "anthropic"` |
 | Google Gemini | Google OpenAI-compatible Chat Completions | Google's `/v1beta/openai` base URL and a Gemini API key |
 | Sarvam AI | Chat Completions | `https://api.sarvam.ai/v2` base URL and a Sarvam API key |
+| LLMTR | Chat Completions | `https://llmtr.com/v1` base URL and an LLMTR API key (`LLMTR_API_KEY`) |
 | OpenRouter or a compatible proxy | Chat Completions | Custom `baseUrl` and credentials |
 | Ollama / vLLM | Chat Completions | Local base URL and an installed model ID |
 
@@ -90,6 +91,35 @@ harness.set_model_provider(
         .credentials(Credentials::from_env("SARVAM_API_KEY").memory_only()),
 ).await?;
 // Then use Model::new("Sarvam", "sarvam-105b") as the agent's default model.
+```
+<!-- /sdk-tabs -->
+
+**LLMTR.** LLMTR is an OpenAI-compatible gateway: one API key reaches vendor-prefixed
+models such as `qwen/qwen3.8-flash`. Create a key at
+[llmtr.com/dashboard/keys](https://llmtr.com/dashboard/keys). The public model list is
+at `https://llmtr.com/v1/models`.
+
+<!-- sdk-tabs -->
+### TypeScript
+
+```typescript
+await harness.setModelProvider({
+  name: 'LLMTR', api: 'chat-completions',
+  baseUrl: 'https://llmtr.com/v1',
+  credentials: { apiKeyEnv: 'LLMTR_API_KEY', storage: 'memory' },
+});
+// Then use { provider: 'LLMTR', name: 'qwen/qwen3.8-flash' } as the agent's defaultModel.
+```
+
+### Rust
+
+```rust,ignore
+harness.set_model_provider(
+    ModelProvider::chat_completions("LLMTR")
+        .base_url("https://llmtr.com/v1")
+        .credentials(Credentials::from_env("LLMTR_API_KEY").memory_only()),
+).await?;
+// Then use Model::new("LLMTR", "qwen/qwen3.8-flash") as the agent's default model.
 ```
 <!-- /sdk-tabs -->
 

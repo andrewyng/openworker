@@ -179,3 +179,16 @@ describe("Azure OpenAI provider presentation", () => {
     expect(container.querySelector("img")).not.toBeNull();
   });
 });
+
+describe("LLMTR provider presentation", () => {
+  it("links to the LLMTR API key page and wears the bundled mark", () => {
+    expect(KEY_HELP.llmtr).toEqual({
+      url: "https://llmtr.com/dashboard/keys",
+      label: "llmtr.com",
+    });
+    const { container } = render(
+      <ProviderMark name="llmtr" title="LLMTR" />,
+    );
+    expect(container.querySelector("img")).not.toBeNull();
+  });
+});

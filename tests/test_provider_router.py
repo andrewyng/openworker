@@ -118,6 +118,22 @@ def test_build_sarvam_client_uses_v2_and_its_own_key(monkeypatch):
     assert captured["api_key"] == "sk-sarvam-env"
 
 
+def test_build_llmtr_client_uses_v1_and_its_own_key(monkeypatch):
+    captured: dict = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-must-not-leak")
+    monkeypatch.setenv("LLMTR_API_KEY", "sk-llmtr-env")
+    client = build_provider_client("llmtr", {}, secrets=None)
+    client._ensure_client()  # type: ignore[attr-defined]
+    assert captured["base_url"] == "https://llmtr.com/v1"
+    assert captured["api_key"] == "sk-llmtr-env"
+
+
 # -- router routing -------------------------------------------------------------
 class _Recorder(ProviderClient):
     def __init__(self, name: str):

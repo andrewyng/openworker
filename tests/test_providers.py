@@ -480,6 +480,7 @@ def test_compat_models_route_and_get_tool_capabilities():
         "xai:grok-4.3",
         "mistral:mistral-large-latest",
         "orcarouter:anthropic/claude-sonnet-5",
+        "llmtr:qwen/qwen3.8-flash",
         "atlascloud:zai-org/glm-5.2",
         "upstage:solar-pro4",
         "sarvam:sarvam-105b",
@@ -520,6 +521,8 @@ def test_matrix_answers_capabilities_for_reseller_ids():
         "openrouter:meta-llama/llama-4-maverick",
         "nebius:zai-org/GLM-5.2",
         "orcarouter:anthropic/claude-sonnet-5",
+        "llmtr:qwen/qwen3.8-flash",
+        "llmtr:qwen/qwen3.8-max",
         # NIM ids are `vendor/model`, so NVIDIA's own models repeat the word in the
         # routed id. Deliberate: the `z-ai/` and `deepseek-ai/` rows in matrix.py don't.
         "nvidia:nvidia/nemotron-3-super-120b-a12b",
@@ -600,7 +603,7 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
     from coworker.providers.registry import get_descriptor
 
     for name in (
-        "together", "fireworks", "openrouter", "nebius", "orcarouter", "sambanova",
+        "together", "fireworks", "openrouter", "nebius", "orcarouter", "llmtr", "sambanova",
         "novita", "groq",
     ):
         d = get_descriptor(name)
