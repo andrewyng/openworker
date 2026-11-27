@@ -1677,6 +1677,9 @@ def verify_provider_key(
     if resp.status_code == 400 and name == "xai" and "incorrect api key" in str(getattr(resp, "text", "") or "").lower():
         # xAI answers a wrong key with 400 and a sentence, not 401 (seen live 2026-11-09, OPE-268).
         return {"ok": False, "error": "Invalid API key."}
+    if resp.status_code == 400 and name == "gemini" and "api_key_invalid" in str(getattr(resp, "text", "") or "").lower():
+        # So does Google: 400 INVALID_ARGUMENT with reason API_KEY_INVALID.
+        return {"ok": False, "error": "Invalid API key."}
     if resp.status_code == 404 and name == "ollama":
         return {
             "ok": False,

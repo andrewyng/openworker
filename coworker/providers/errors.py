@@ -52,6 +52,7 @@ _AUTH_FAILURE = (
     "incorrect api key provided",
     "authentication_error",
     "authenticationerror",
+    "api_key_invalid",  # Google's reason on its 400 for a wrong Gemini key
 )
 
 
