@@ -927,6 +927,13 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="anthropic/claude-sonnet-5",
         env_key="ORCAROUTER_API_KEY",
     ),
+    _compat(
+        "llmtr",
+        "LLMTR",
+        base_url="https://llmtr.com/v1",
+        recommended_model="qwen/qwen3.8-flash",
+        env_key="LLMTR_API_KEY",
+    ),
     # NVIDIA NIM: NVIDIA's own Nemotron line plus other labs' models, all under NVIDIA's
     # `vendor/model` namespace (hence a routed id like `nvidia:nvidia/nemotron-…`). Same
     # reseller shape as Together/Fireworks; the endpoint also fronts self-hosted NIM
@@ -1573,6 +1580,33 @@ def verify_provider_key(
 
             headers = {"Authorization": f"Bearer {key}"} if key else {}
             resp = httpx.get(v1_base(name, base_url) + "/models", headers=headers, timeout=timeout)
+        elif name == "llmtr":
+            # LLMTR's /v1/models is public: it answers 200 without a key, so a list-models
+            # probe cannot tell a good key from a typo. Auth is enforced on inference, and
+            # only once the model id routes, so Test spends a single token on the
+            # recommended model. A typed endpoint other than the official one may hide
+            # /models behind the key and may not serve that id, so those use the listing.
+            default_base = next(
+                (f.default for f in d.fields if f.key == "base_url" and f.default), ""
+            )
+            base = (base_url or "").strip().rstrip("/") or default_base.rstrip("/")
+            if base != default_base.rstrip("/"):
+                resp = httpx.get(
+                    base + "/models",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=timeout,
+                )
+            else:
+                resp = httpx.post(
+                    base + "/chat/completions",
+                    headers={"Authorization": f"Bearer {key}"},
+                    json={
+                        "model": d.recommended_model,
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 1,
+                    },
+                    timeout=timeout,
+                )
         elif name == "nvidia":
             # NIM's /v1/models is PUBLIC: it answers 200 for any key, including an empty
             # one, so the usual list-models probe can't tell a good key from a typo. Auth

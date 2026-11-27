@@ -767,6 +767,27 @@
         }
       }
     },
+    "llmtr": {
+      "note": "llmtr.com/v1/models is public. Context, max output and input modalities for these two rows come from that listing as previously recorded (qwen/qwen3.8-flash and qwen/qwen3.8-max: 1,000,000 context, 131,072 max output, text+image). PDF unverified over compat. The listing was not re-fetched in this change.",
+      "models": {
+        "qwen/qwen3.8-flash": {
+          "label": "Qwen3.8 Flash · via LLMTR",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "qwen/qwen3.8-max": {
+          "label": "Qwen3.8 Max · via LLMTR",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        }
+      }
+    },
     "nvidia": {
       "note": "integrate.api.nvidia.com/v1/models (keyless, read 2026-10-25); windows from the build.nvidia.com model pages the same day (1M for all three). Text-only.",
       "models": {

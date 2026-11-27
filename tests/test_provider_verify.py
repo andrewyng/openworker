@@ -115,6 +115,62 @@ def test_verify_novita_uses_openai_compatible_endpoint(monkeypatch):
     assert cap["headers"]["Authorization"] == "Bearer sk-nov"
 
 
+def _patch_llmtr_post_refusing_get(monkeypatch, status=200, capture=None):
+    _patch_post(monkeypatch, status=status, capture=capture)
+
+    def refuse_get(*_a, **_kw):
+        raise AssertionError("LLMTR verify must not GET /models — it is unauthenticated")
+
+    monkeypatch.setattr("httpx.get", refuse_get)
+
+
+def test_verify_llmtr_posts_a_one_token_completion(monkeypatch):
+    """LLMTR's /v1/models is public, so a list-models probe would greenlight a typo.
+    Auth is only enforced on inference, hence the POST. The GET stub above fails the
+    test if this ever regresses to the generic branch."""
+    from coworker.providers.registry import get_descriptor
+
+    cap: dict = {}
+    _patch_llmtr_post_refusing_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("llmtr", api_key="sk-llmtr-x") == {"ok": True}
+    assert cap["url"] == "https://llmtr.com/v1/chat/completions"
+    assert cap["headers"]["Authorization"] == "Bearer sk-llmtr-x"
+    assert cap["json"]["model"] == get_descriptor("llmtr").recommended_model
+    assert cap["json"]["max_tokens"] == 1
+
+
+def test_verify_llmtr_bad_key_is_invalid(monkeypatch):
+    _patch_llmtr_post_refusing_get(monkeypatch, status=401)
+    assert verify_provider_key("llmtr", api_key="sk-wrong") == {
+        "ok": False,
+        "error": "Invalid API key.",
+    }
+
+
+def test_verify_llmtr_custom_endpoint_lists_models(monkeypatch):
+    """A typed endpoint may not serve the official recommended id, so Test lists
+    models instead and never POSTs a completion."""
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+
+    def refuse_post(*_a, **_kw):
+        raise AssertionError("a custom LLMTR endpoint is probed with GET /models, not a completion")
+
+    monkeypatch.setattr("httpx.post", refuse_post)
+    assert verify_provider_key(
+        "llmtr", api_key="sk-llmtr-x", base_url="https://gateway.example/llmtr/v1/"
+    ) == {"ok": True}
+    assert cap["url"] == "https://gateway.example/llmtr/v1/models"
+    assert cap["headers"]["Authorization"] == "Bearer sk-llmtr-x"
+
+
+def test_verify_llmtr_custom_endpoint_rejected_key_is_invalid(monkeypatch):
+    _patch_get(monkeypatch, status=401)
+    assert verify_provider_key(
+        "llmtr", api_key="sk-wrong", base_url="https://gateway.example/llmtr/v1"
+    ) == {"ok": False, "error": "Invalid API key."}
+
+
 @pytest.mark.parametrize("name", ["kimi", "groq", "minimax"])
 def test_verify_a_vendors_default_endpoint_skips_the_completions_route_probe(monkeypatch, name):
     """Moonshot, Groq and MiniMax answer 404 to a GET on /chat/completions while serving
