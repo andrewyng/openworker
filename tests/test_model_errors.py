@@ -165,6 +165,18 @@ def test_generic_auth_error_for_non_qwen_provider():
     assert "dashscope" not in msg.lower()
 
 
+def test_gemini_bad_key_gets_the_key_check_message():
+    # google-genai's ClientError for a wrong key: 400 INVALID_ARGUMENT, reason API_KEY_INVALID.
+    exc = RuntimeError(
+        "400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'API key not valid. "
+        "Please pass a valid API key.', 'status': 'INVALID_ARGUMENT', 'details': "
+        "[{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_INVALID'}]}}"
+    )
+    msg = friendly_model_error("gemini:gemini-3.6-flash", exc)
+    assert msg is not None
+    assert "rejected your API key" in msg
+
+
 def test_permission_error_is_not_treated_as_auth_failure():
     # A 403 permission_error is about model access, not key validity — it must be
     # caught by _NO_ACCESS, not by the auth-failure path.

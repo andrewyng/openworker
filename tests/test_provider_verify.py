@@ -143,6 +143,14 @@ def test_verify_xai_answers_a_bad_key_with_400_and_a_sentence(monkeypatch):
     assert verify_provider_key("xai", api_key="xai-1")["error"] == "xAI (Grok) returned HTTP 400."
 
 
+def test_verify_gemini_answers_a_bad_key_with_400(monkeypatch):
+    body = '{"error": {"code": 400, "message": "API key not valid. Please pass a valid API key.", "status": "INVALID_ARGUMENT", "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "API_KEY_INVALID", "domain": "googleapis.com"}]}}'
+    monkeypatch.setattr("httpx.get", lambda url, **kw: SimpleNamespace(status_code=400, text=body))
+    assert verify_provider_key("gemini", api_key="AIza-bad") == {"ok": False, "error": "Invalid API key."}
+    monkeypatch.setattr("httpx.get", lambda url, **kw: SimpleNamespace(status_code=400, text='{"error": {"status": "INVALID_ARGUMENT"}}'))
+    assert verify_provider_key("gemini", api_key="AIza-1")["error"] == "Gemini (Google) returned HTTP 400."
+
+
 def test_verify_sarvam_lists_models_on_v2(monkeypatch):
     cap: dict = {}
     _patch_get(monkeypatch, status=200, capture=cap)
