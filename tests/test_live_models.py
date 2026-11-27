@@ -415,6 +415,20 @@ def test_sarvam_reads_type_window_and_what_the_key_may_call():
     assert emb.kind == "embedding"
 
 
+def test_straitly_reads_openrouter_shaped_listing():
+    rows = _parsed("straitly")
+    sonnet = rows["claude-sonnet-5-5"]
+    assert (sonnet.kind, sonnet.kind_source, sonnet.context, sonnet.max_output, sonnet.tools, sonnet.input_image, sonnet.reasoning) == (
+        "chat", "provider", 1_000_000, 32_768, True, True, True
+    )
+    ds = rows["deepseek/deepseek-v4-1-flash-1017"]
+    assert (ds.kind, ds.context, ds.tools, ds.input_image) == ("chat", 1_048_576, True, True)
+    gpt = rows["gpt-6.2-sol"]
+    assert (gpt.kind, gpt.context, gpt.max_output, gpt.tools, gpt.reasoning) == (
+        "chat", 1_050_000, 128_000, True, True
+    )
+
+
 def test_garbage_is_tolerated():
     assert live_models.parse_listing("openai", {"data": "nope"}) == []
     assert live_models.parse_listing("openai", {"data": [1, "x", {"id": ""}, {"name": 5}]}) == []

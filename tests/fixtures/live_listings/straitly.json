@@ -1,0 +1,174 @@
+{
+ "object": "list",
+ "data": [
+  {
+   "id": "gpt-6.2-sol",
+   "name": "OpenAI: GPT-6.2 Sol",
+   "created": 1794938371,
+   "context_length": 1050000,
+   "architecture": {
+    "modality": "text+image->text",
+    "input_modalities": [
+     "text",
+     "image"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "tokenizer": "GPT",
+    "instruct_type": null
+   },
+   "top_provider": {
+    "context_length": 1050000,
+    "max_completion_tokens": 128000,
+    "is_moderated": false
+   },
+   "supported_parameters": [
+    "frequency_penalty",
+    "logit_bias",
+    "logprobs",
+    "max_completion_tokens",
+    "max_tokens",
+    "prediction",
+    "presence_penalty",
+    "reasoning",
+    "reasoning_effort",
+    "response_format",
+    "seed",
+    "stop",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_logprobs",
+    "top_p"
+   ],
+   "reasoning": {
+    "mandatory": false,
+    "default_enabled": false,
+    "default_effort": null
+   },
+   "expiration_date": null
+  },
+  {
+   "id": "deepseek/deepseek-v4-1-flash-1017",
+   "name": "DeepSeek V4.1 Flash 1017",
+   "created": 0,
+   "context_length": 1048576,
+   "architecture": {
+    "modality": "text+image->text",
+    "input_modalities": [
+     "text",
+     "image"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "tokenizer": "Other",
+    "instruct_type": null
+   },
+   "top_provider": {
+    "context_length": 1048576,
+    "max_completion_tokens": 1048576,
+    "is_moderated": false
+   },
+   "supported_parameters": [
+    "max_completion_tokens",
+    "max_tokens",
+    "response_format",
+    "stop",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_p"
+   ],
+   "reasoning": null,
+   "expiration_date": null
+  },
+  {
+   "id": "claude-sonnet-5-5",
+   "name": "Claude Sonnet 5.5",
+   "created": 0,
+   "context_length": 1000000,
+   "architecture": {
+    "modality": "text+image->text",
+    "input_modalities": [
+     "text",
+     "image"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "tokenizer": "Claude",
+    "instruct_type": null
+   },
+   "top_provider": {
+    "context_length": 1000000,
+    "max_completion_tokens": 32768,
+    "is_moderated": false
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_completion_tokens",
+    "max_tokens",
+    "reasoning",
+    "reasoning_effort",
+    "response_format",
+    "stop",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_p"
+   ],
+   "reasoning": {
+    "mandatory": false,
+    "default_enabled": true,
+    "default_effort": "high"
+   },
+   "expiration_date": null
+  },
+  {
+   "id": "claude-haiku-5-5",
+   "name": "Claude Haiku 5.5",
+   "created": 0,
+   "context_length": 1000000,
+   "architecture": {
+    "modality": "text+image->text",
+    "input_modalities": [
+     "text",
+     "image"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "tokenizer": "Claude",
+    "instruct_type": null
+   },
+   "top_provider": {
+    "context_length": 1000000,
+    "max_completion_tokens": 16384,
+    "is_moderated": false
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_completion_tokens",
+    "max_tokens",
+    "reasoning",
+    "reasoning_effort",
+    "response_format",
+    "stop",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_p"
+   ],
+   "reasoning": {
+    "mandatory": false,
+    "default_enabled": true,
+    "default_effort": "medium"
+   },
+   "expiration_date": null
+  }
+ ]
+}

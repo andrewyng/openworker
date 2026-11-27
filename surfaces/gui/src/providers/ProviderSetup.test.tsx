@@ -179,3 +179,16 @@ describe("Azure OpenAI provider presentation", () => {
     expect(container.querySelector("img")).not.toBeNull();
   });
 });
+
+describe("Straitly provider presentation", () => {
+  it("links to the Straitly API key page and wears the bundled mark", () => {
+    expect(KEY_HELP.straitly).toEqual({
+      url: "https://straitly.ai/app/keys",
+      label: "straitly.ai",
+    });
+    const { container } = render(
+      <ProviderMark name="straitly" title="Straitly" />,
+    );
+    expect(container.querySelector("img")).not.toBeNull();
+  });
+});

@@ -927,6 +927,13 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="anthropic/claude-sonnet-5",
         env_key="ORCAROUTER_API_KEY",
     ),
+    _compat(
+        "straitly",
+        "Straitly",
+        base_url="https://api.straitly.ai/v1",
+        recommended_model="claude-sonnet-5-5",
+        env_key="STRAITLY_API_KEY",
+    ),
     # NVIDIA NIM: NVIDIA's own Nemotron line plus other labs' models, all under NVIDIA's
     # `vendor/model` namespace (hence a routed id like `nvidia:nvidia/nemotron-…`). Same
     # reseller shape as Together/Fireworks; the endpoint also fronts self-hosted NIM
@@ -1616,6 +1623,18 @@ def verify_provider_key(
                     "max_output_tokens": 1,
                     "store": False,
                 },
+                timeout=timeout,
+            )
+        elif name == "straitly":
+            # Straitly's /v1/models is public (returns 200 without auth); /v1/key validates
+            # the bearer token with zero inference cost (200 valid, 401 invalid).
+            default_base = next(
+                (f.default for f in d.fields if f.key == "base_url" and f.default), ""
+            )
+            base = (base_url or "").strip().rstrip("/") or default_base.rstrip("/")
+            resp = httpx.get(
+                base + "/key",
+                headers={"Authorization": f"Bearer {key}"},
                 timeout=timeout,
             )
         else:  # openai + any OpenAI-compatible endpoint (Azure, OpenRouter, vendors, vLLM…)

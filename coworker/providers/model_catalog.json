@@ -767,6 +767,27 @@
         }
       }
     },
+    "straitly": {
+      "note": "api.straitly.ai/v1/models (read 2026-11-26): context_length 1,000,000 and 1,048,576; both list tools and text+image input modalities; PDF unverified over compat.",
+      "models": {
+        "claude-sonnet-5-5": {
+          "label": "Claude Sonnet 5.5 · via Straitly",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "deepseek/deepseek-v4-1-flash-1017": {
+          "label": "DeepSeek V4.1 Flash · via Straitly",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        }
+      }
+    },
     "nvidia": {
       "note": "integrate.api.nvidia.com/v1/models (keyless, read 2026-10-25); windows from the build.nvidia.com model pages the same day (1M for all three). Text-only.",
       "models": {
