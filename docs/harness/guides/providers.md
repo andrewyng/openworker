@@ -10,6 +10,7 @@ The session saves its resolved model. Unavailable models fail explicitly.
 | Anthropic | Native Messages | `name: "Anthropic", api: "anthropic"` |
 | Google Gemini | Google OpenAI-compatible Chat Completions | Google's `/v1beta/openai` base URL and a Gemini API key |
 | Sarvam AI | Chat Completions | `https://api.sarvam.ai/v2` base URL and a Sarvam API key |
+| Straitly | Chat Completions | `https://api.straitly.ai/v1` base URL and a Straitly API key (`STRAITLY_API_KEY`) |
 | OpenRouter or a compatible proxy | Chat Completions | Custom `baseUrl` and credentials |
 | Ollama / vLLM | Chat Completions | Local base URL and an installed model ID |
 
@@ -90,6 +91,32 @@ harness.set_model_provider(
         .credentials(Credentials::from_env("SARVAM_API_KEY").memory_only()),
 ).await?;
 // Then use Model::new("Sarvam", "sarvam-105b") as the agent's default model.
+```
+<!-- /sdk-tabs -->
+
+**Straitly.** Straitly is an OpenAI-compatible AI gateway giving one API key access to 100+ models including Claude, GPT, Gemini, Grok and DeepSeek. Create a key at [straitly.ai/app/keys](https://straitly.ai/app/keys) and see the [Straitly quickstart](https://straitly.ai/docs/quickstart).
+
+<!-- sdk-tabs -->
+### TypeScript
+
+```typescript
+await harness.setModelProvider({
+  name: 'Straitly', api: 'chat-completions',
+  baseUrl: 'https://api.straitly.ai/v1',
+  credentials: { apiKeyEnv: 'STRAITLY_API_KEY', storage: 'memory' },
+});
+// Then use { provider: 'Straitly', name: 'claude-sonnet-5-5' } as the agent's defaultModel.
+```
+
+### Rust
+
+```rust,ignore
+harness.set_model_provider(
+    ModelProvider::chat_completions("Straitly")
+        .base_url("https://api.straitly.ai/v1")
+        .credentials(Credentials::from_env("STRAITLY_API_KEY").memory_only()),
+).await?;
+// Then use Model::new("Straitly", "claude-sonnet-5-5") as the agent's default model.
 ```
 <!-- /sdk-tabs -->
 

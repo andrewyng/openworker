@@ -23,6 +23,7 @@ import bedrock from "./logos/bedrock.svg";
 import vertex from "./logos/vertex.svg";
 import openrouter from "./logos/openrouter.svg";
 import orcarouter from "./logos/orcarouter.svg";
+import straitly from "./logos/straitly.svg";
 import fireworks from "./logos/fireworks.svg";
 import together from "./logos/together.svg";
 import nvidia from "./logos/nvidia.svg";
@@ -63,6 +64,7 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   // Same mark for the signed-in OpenRouter provider: same models, billed to the account.
   "openrouter-account": openrouter,
   orcarouter,
+  straitly,
   fireworks,
   together,
   nebius,
@@ -114,6 +116,7 @@ export const PROVIDER_ORDER = [
   "xai",
   "nebius",
   "orcarouter",
+  "straitly",
   "nvidia",
   "sambanova",
   "atlascloud",

@@ -982,6 +982,7 @@ _READERS: dict[str, Callable[[list[dict[str, Any]], list[dict[str, Any]]], list[
     "openrouter": _read_openrouter,
     "openrouter-account": _read_openrouter,
     "orcarouter": _read_orcarouter,
+    "straitly": _read_openrouter,
     "huggingface": _read_huggingface,
     "novita": _read_novita,
     "atlascloud": _read_atlascloud,

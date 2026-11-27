@@ -107,6 +107,22 @@ def test_verify_orcarouter_endpoint(monkeypatch):
     assert cap["headers"]["Authorization"] == "Bearer sk-orca-x"
 
 
+def test_verify_straitly_validates_key_endpoint(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("straitly", api_key="sk-straitly-x") == {"ok": True}
+    assert cap["url"] == "https://api.straitly.ai/v1/key"
+    assert cap["headers"]["Authorization"] == "Bearer sk-straitly-x"
+
+
+def test_verify_straitly_bad_key_is_rejected(monkeypatch):
+    _patch_get(monkeypatch, status=401)
+    assert verify_provider_key("straitly", api_key="sk-wrong") == {
+        "ok": False,
+        "error": "Invalid API key.",
+    }
+
+
 def test_verify_novita_uses_openai_compatible_endpoint(monkeypatch):
     cap: dict = {}
     _patch_get(monkeypatch, status=200, capture=cap)
