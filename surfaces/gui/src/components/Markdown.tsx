@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import remarkGfm from "remark-gfm";
 import { TaskChip } from "./TaskChip";
 import { Icon } from "./Icon";
+import { openExternal } from "../tauri";
 
 // §34 (UX-016): the agent ends a deliverable turn with plain markdown —
 // [Title](artifact:relative/path) — and the renderer turns it into a chip that opens the
@@ -63,8 +64,8 @@ function ArtifactChip({ path, title }: { path: string; title: string }) {
 }
 
 // Assistant messages rendered as GitHub-flavored markdown (headings, lists, tables, code,
-// links). Links open externally — never navigate the app shell — except artifact: links,
-// which open the session's artifact viewer.
+// links). Links open externally through the opener — never navigating the app shell — except
+// artifact: links, which open the session's artifact viewer.
 export function Markdown({ text }: { text: string }) {
   return (
     <div className="md">
@@ -87,7 +88,21 @@ export function Markdown({ text }: { text: string }) {
               return <BoardChip label={label} />;
             }
             return (
-              <a href={href} {...props} target="_blank" rel="noreferrer">
+              <a
+                href={href}
+                {...props}
+                target="_blank"
+                rel="noreferrer"
+                // The desktop webview opens nothing by itself (#607): target=_blank is
+                // intercepted there and silently no-ops, so the click rides the opener
+                // plugin out to the browser instead (SandboxSection's links do the
+                // same). In a browser build openExternal is window.open, so nothing
+                // changes for dev.
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (href) openExternal(href);
+                }}
+              >
                 {children}
               </a>
             );
